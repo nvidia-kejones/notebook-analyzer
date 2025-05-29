@@ -41,6 +41,17 @@ class GPURequirement:
     structure_assessment: Dict[str, str] = None
     content_quality_issues: List[str] = None
     technical_recommendations: List[str] = None
+    
+    def __post_init__(self):
+        # Ensure lists are properly initialized
+        if self.llm_reasoning is None:
+            self.llm_reasoning = []
+        if self.structure_assessment is None:
+            self.structure_assessment = {}
+        if self.content_quality_issues is None:
+            self.content_quality_issues = []
+        if self.technical_recommendations is None:
+            self.technical_recommendations = []
 
 class LLMAnalyzer:
     def __init__(self, base_url: str, model: str, api_key: str):
@@ -1278,7 +1289,7 @@ class GPUAnalyzer:
             else:
                 print("⚠️ LLM compliance evaluation failed, using static analysis")
         
-        # Static compliance evaluation (always run as fallback)
+        # Static compliance evaluation (always run as fallback/baseline)
         structure_assessment = self.evaluate_notebook_structure(code_cells, markdown_cells)
         content_quality_issues = self.assess_content_quality(code_cells, markdown_cells)
         technical_recommendations = self.check_technical_standards(code_cells)
@@ -1405,6 +1416,43 @@ Examples:
     print(f"   Quantity: {result.optimal_quantity}")
     print(f"   VRAM: {result.optimal_vram_gb} GB")
     print(f"   Estimated Runtime: {result.optimal_runtime_estimate}")
+    
+    print(f"\n📋 NVIDIA NOTEBOOK COMPLIANCE: {result.nvidia_compliance_score:.0f}/100")
+    
+    # Color-code compliance score
+    if result.nvidia_compliance_score >= 85:
+        compliance_icon = "🟢"
+    elif result.nvidia_compliance_score >= 70:
+        compliance_icon = "🟡"
+    else:
+        compliance_icon = "🔴"
+    
+    print(f"{compliance_icon} Overall Quality Score")
+    
+    # Always show structure assessment (even in non-verbose mode for compliance)
+    if hasattr(result, 'structure_assessment') and result.structure_assessment:
+        print("\n📚 Structure & Layout Assessment:")
+        for category, status in result.structure_assessment.items():
+            print(f"     {category.title()}: {status}")
+    
+    # Show top content and technical recommendations (even in non-verbose)
+    if hasattr(result, 'content_quality_issues') and result.content_quality_issues:
+        print("\n🎯 Content Quality Recommendations:")
+        # Show first 3 issues in non-verbose, all in verbose
+        issues_to_show = result.content_quality_issues[:3] if not args.verbose else result.content_quality_issues
+        for issue in issues_to_show:
+            print(f"     • {issue}")
+        if not args.verbose and len(result.content_quality_issues) > 3:
+            print(f"     • ... and {len(result.content_quality_issues) - 3} more (use -v for all)")
+    
+    if hasattr(result, 'technical_recommendations') and result.technical_recommendations:
+        print("\n🔧 Technical Standards Recommendations:")
+        # Show first 3 recommendations in non-verbose, all in verbose
+        recs_to_show = result.technical_recommendations[:3] if not args.verbose else result.technical_recommendations
+        for rec in recs_to_show:
+            print(f"     • {rec}")
+        if not args.verbose and len(result.technical_recommendations) > 3:
+            print(f"     • ... and {len(result.technical_recommendations) - 3} more (use -v for all)")
     
     print(f"\n💡 ADDITIONAL INFO:")
     print(f"   SXM Form Factor Required: {'Yes' if result.sxm_required else 'No'}")
