@@ -32,6 +32,7 @@ A comprehensive tool for analyzing Jupyter notebooks to determine NVIDIA GPU req
 - **Private Repository Access**: Built-in GitHub authentication for private repos
 - **Automatic URL Handling**: Smart parsing of URLs with query parameters (no manual quoting needed)
 - **Flexible Input**: Supports GitHub URLs, raw URLs, and local file paths
+- **JSON Output**: Machine-readable output for automation and integration
 
 ## 📋 Requirements
 
@@ -127,7 +128,24 @@ export OPENAI_MODEL="llama3:8b"
 python notebook-analyzer.py -v ./local-notebook.ipynb
 ```
 
+### JSON Output for Automation
+```bash
+# Pure JSON output (no status messages)
+python notebook-analyzer.py --json https://github.com/user/repo/blob/main/notebook.ipynb
+
+# Pretty-printed JSON with verbose flag
+python notebook-analyzer.py --json --verbose ./notebook.ipynb
+
+# Pipeline integration with jq
+python notebook-analyzer.py --json notebook.ipynb | jq '.min_vram_gb'
+
+# Save results to file
+python notebook-analyzer.py --json notebook.ipynb > analysis_results.json
+```
+
 ## 📊 Sample Output
+
+### Human-Readable Format (Default)
 
 ```
 ✅ LLM enhancement enabled using nvidia/llama-3.1-nemotron-ultra-253b-v1
@@ -185,6 +203,49 @@ GPU REQUIREMENTS ANALYSIS
 ======================================================================
 ```
 
+### JSON Format (--json flag)
+
+```json
+{
+  "min_gpu_type": "L4",
+  "min_quantity": 1,
+  "min_vram_gb": 24,
+  "optimal_gpu_type": "A100 SXM 80G",
+  "optimal_quantity": 1,
+  "optimal_vram_gb": 80,
+  "min_runtime_estimate": "4.2 hours",
+  "optimal_runtime_estimate": "1.1 hours",
+  "sxm_required": false,
+  "sxm_reasoning": [],
+  "arm_compatibility": "Likely Compatible",
+  "arm_reasoning": ["Uses 3 ARM-compatible frameworks"],
+  "confidence": 0.87,
+  "reasoning": ["LLM: LLM estimated 28GB vs static analysis 16GB"],
+  "llm_enhanced": true,
+  "llm_reasoning": ["Memory optimizations detected: LoRA, gradient_checkpointing"],
+  "nvidia_compliance_score": 78.0,
+  "structure_assessment": {
+    "title": "✅ Good title format",
+    "introduction": "⚠️ Introduction present but could be enhanced",
+    "navigation": "✅ Good use of headers for navigation",
+    "conclusion": "✅ Has summary/conclusion"
+  },
+  "content_quality_issues": [
+    "Consider adding more links to relevant documentation",
+    "Some code cells lack explanatory text"
+  ],
+  "technical_recommendations": [
+    "Pin package versions (e.g., torch==2.1.0)",
+    "Set seeds for reproducibility"
+  ],
+  "analysis_metadata": {
+    "analyzed_url_or_path": "./fine-tune-analysis.ipynb",
+    "timestamp": "2024-12-19T10:30:45.123456",
+    "version": "3.0.0"
+  }
+}
+```
+
 ## 🎯 Supported GPU Models
 
 ### Consumer GPUs
@@ -222,7 +283,7 @@ GPU REQUIREMENTS ANALYSIS
 ### Command Line Arguments
 
 ```bash
-python notebook-analyzer.py [-h] [-v] [URL_OR_PATH ...]
+python notebook-analyzer.py [-h] [-v] [-j] [URL_OR_PATH ...]
 
 positional arguments:
   URL_OR_PATH          URL to notebook, local file path, or multiple URL fragments
@@ -230,6 +291,7 @@ positional arguments:
 optional arguments:
   -h, --help          show help message and exit
   -v, --verbose       verbose output with detailed reasoning
+  -j, --json          output results in JSON format (pure JSON, no status messages)
 ```
 
 ### 🔧 Automatic URL Handling Examples
@@ -241,6 +303,10 @@ The tool automatically handles complex URLs that might be split by the shell:
 python notebook-analyzer.py https://raw.githubusercontent.com/repo/file.ipynb?token=abc123&ref=main
 python notebook-analyzer.py https://github.com/org/repo/blob/feature/branch-name/notebook.ipynb
 python notebook-analyzer.py ./notebooks/analysis.ipynb
+
+# JSON output examples:
+python notebook-analyzer.py --json https://github.com/user/repo/blob/main/notebook.ipynb
+python notebook-analyzer.py --json --verbose ./local-notebook.ipynb
 ```
 
 ## 🧠 Analysis Methodology
@@ -381,6 +447,7 @@ For enterprise GitLab instances:
 - **Runtime Planning**: Estimate project completion times
 - **Platform Selection**: Choose between different cloud GPU offerings
 - **Local Development**: Analyze notebooks before committing to repositories
+- **Automation Integration**: Use JSON output for CI/CD pipelines and tooling
 
 ### For NVIDIA Teams
 - **Content Quality Assurance**: Ensure notebooks meet company standards
@@ -394,8 +461,78 @@ For enterprise GitLab instances:
 - **Performance Monitoring**: Validate actual vs predicted performance
 - **Platform Compatibility**: Assess ARM/Grace system compatibility
 - **Batch Analysis**: Process multiple notebooks for infrastructure planning
+- **Automated Workflows**: Integrate JSON output into monitoring and provisioning systems
+- **Cost Management**: Aggregate VRAM requirements across projects for budgeting
 
-## 🚨 Limitations
+## 🔄 Integration Examples
+
+### CI/CD Pipeline Integration
+```bash
+#!/bin/bash
+# Check notebook GPU compliance in CI/CD
+
+RESULT=$(python notebook-analyzer.py --json "$NOTEBOOK_PATH")
+COMPLIANCE_SCORE=$(echo "$RESULT" | jq '.nvidia_compliance_score')
+
+if (( $(echo "$COMPLIANCE_SCORE < 70" | bc -l) )); then
+  echo "❌ Notebook compliance score too low: $COMPLIANCE_SCORE"
+  exit 1
+fi
+
+MIN_VRAM=$(echo "$RESULT" | jq '.min_vram_gb')
+if (( MIN_VRAM > 32 )); then
+  echo "⚠️ High VRAM requirement detected: ${MIN_VRAM}GB"
+fi
+
+echo "✅ Notebook analysis passed"
+```
+
+### Batch Processing
+```bash
+# Analyze multiple notebooks and aggregate results
+for notebook in notebooks/*.ipynb; do
+  python notebook-analyzer.py --json "$notebook" >> batch_results.jsonl
+done
+
+# Extract insights with jq
+jq -s 'map(select(.nvidia_compliance_score < 80))' batch_results.jsonl > low_compliance.json
+jq -s 'map(.min_vram_gb) | add / length' batch_results.jsonl  # Average VRAM requirement
+```
+
+### Monitoring Integration
+```bash
+# Send results to monitoring system
+RESULT=$(python notebook-analyzer.py --json notebook.ipynb)
+curl -X POST https://monitoring.company.com/metrics \
+  -H "Content-Type: application/json" \
+  -d "$RESULT"
+```
+
+### Infrastructure Provisioning
+```python
+import subprocess
+import json
+
+def analyze_and_provision(notebook_path):
+    result = subprocess.run(
+        ["python", "notebook-analyzer.py", "--json", notebook_path],
+        capture_output=True, text=True
+    )
+    
+    analysis = json.loads(result.stdout)
+    
+    # Auto-configure cloud instance
+    gpu_type = analysis["optimal_gpu_type"]
+    vram_gb = analysis["optimal_vram_gb"]
+    
+    instance_config = {
+        "gpu_type": gpu_type,
+        "vram_requirement": vram_gb,
+        "estimated_runtime": analysis["optimal_runtime_estimate"]
+    }
+    
+    return provision_cloud_instance(instance_config)
+```
 
 - **Estimation Accuracy**: Runtime estimates are approximations based on patterns
 - **Dynamic Content**: Cannot analyze notebooks with runtime-dependent behavior
@@ -405,7 +542,7 @@ For enterprise GitLab instances:
 - **Token Expiration**: GitHub/GitLab tokens may expire and need renewal
 - **Platform Differences**: GitLab and GitHub have different URL formats and authentication methods
 
-## 🛠️ Troubleshooting
+## 🚨 Limitations
 
 ### Common Issues
 
@@ -435,7 +572,7 @@ For enterprise GitLab instances:
 - Ensure GitLab URLs use `/-/blob/` not `/blob/`
 - Self-hosted GitLab instances should work with proper authentication
 
-## 🤝 Contributing
+## 🛠️ Troubleshooting
 
 This tool is designed to be extensible. Areas for contribution:
 - Additional GPU model support
@@ -449,7 +586,7 @@ This tool is designed to be extensible. Areas for contribution:
 
 ## 📄 License
 
-Apache 2.0 For external use, please ensure compliance with relevant licensing terms.
+Apache 2.0 - For external use, please ensure compliance with relevant licensing terms.
 
 ## 🆘 Support
 
