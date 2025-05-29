@@ -1,0 +1,34 @@
+# NVIDIA GPU Requirements Analyzer Dependencies
+# Install with: pip install -r requirements.txt
+
+# Core dependencies for HTTP requests and JSON processing
+requests==2.31.0
+
+# Required for Python 3.8+ compatibility and type hints
+typing-extensions==4.8.0
+
+# Optional: Enhanced JSON parsing (fallback for complex notebook formats)
+# jsonschema==4.20.0
+
+# Development dependencies (optional)
+# pytest==7.4.3
+# black==23.11.0
+# flake8==6.1.0
+
+# Note: No additional dependencies required for:
+# - ast (built-in Python module for code parsing)
+# - re (built-in Python module for regex)
+# - json (built-in Python module for JSON processing)
+# - os (built-in Python module for environment variables)
+# - argparse (built-in Python module for command-line parsing)
+# - dataclasses (built-in since Python 3.7)
+# - urllib.parse (built-in Python module for URL handling)
+
+# For LLM enhancement (optional):
+# Set environment variables instead of installing additional packages:
+# export OPENAI_BASE_URL="https://api.openai.com"
+# export OPENAI_API_KEY="your-api-key"
+# export OPENAI_MODEL="gpt-4"  # optional
+
+# The tool uses standard HTTP requests to communicate with OpenAI-compatible APIs
+# No additional OpenAI SDK installation required
