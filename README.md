@@ -254,7 +254,7 @@ This tool is designed to be extensible. Areas for contribution:
 
 ## 📄 License
 
-This tool follows NVIDIA's internal development guidelines. For external use, please ensure compliance with relevant licensing terms.
+Apache 2.0. Please ensure compliance with relevant licensing terms.
 
 ## 🆘 Support
 
