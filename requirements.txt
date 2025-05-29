@@ -2,7 +2,7 @@
 # Install with: pip install -r requirements.txt
 
 # Core dependencies for HTTP requests and JSON processing
-requests==2.31.0
+requests>=2.32.0
 
 # Required for Python 3.8+ compatibility and type hints
 typing-extensions==4.8.0
@@ -23,6 +23,7 @@ typing-extensions==4.8.0
 # - argparse (built-in Python module for command-line parsing)
 # - dataclasses (built-in since Python 3.7)
 # - urllib.parse (built-in Python module for URL handling)
+# - pathlib (built-in Python module for file system paths)
 
 # For LLM enhancement (optional):
 # Set environment variables instead of installing additional packages:
@@ -32,3 +33,6 @@ typing-extensions==4.8.0
 
 # The tool uses standard HTTP requests to communicate with OpenAI-compatible APIs
 # No additional OpenAI SDK installation required
+
+# Security Note: Updated to requests>=2.32.0 to address vulnerability CVE-2024-35195
+# This version fixes the Session verify=False persistence issue
