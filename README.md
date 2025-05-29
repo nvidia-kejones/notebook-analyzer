@@ -67,24 +67,25 @@ python notebook-analyzer.py -v https://github.com/user/repo/blob/main/notebook.i
 
 ### With LLM Enhancement
 ```bash
-export OPENAI_BASE_URL="https://api.openai.com"
+export OPENAI_BASE_URL="https://integrate.api.nvidia.com"
 export OPENAI_API_KEY="your-api-key"
-python notebook-analyzer.py -v https://github.com/user/repo/blob/main/notebook.ipynb
+export OPENAI_MODEL="nvidia/llama-3.1-nemotron-ultra-253b-v1"
+python notebook-analyzer.py -v https://github.com/brevdev/launchables/blob/main/llama3_finetune_inference.ipynb
 ```
 
 ### Using Local LLM (e.g., Ollama)
 ```bash
-export OPENAI_BASE_URL="http://localhost:11434"
+export OPENAI_BASE_URL="http://localhost:8080"
 export OPENAI_API_KEY="dummy"
-export OPENAI_MODEL="llama3:8b"
-python notebook-analyzer.py -v https://github.com/user/repo/blob/main/notebook.ipynb
+export OPENAI_MODEL="llama3-8b"
+python notebook-analyzer.py -v https://github.com/brevdev/launchables/blob/main/llama3_finetune_inference.ipynb
 ```
 
 ## 📊 Sample Output
 
 ```
-✅ LLM enhancement enabled using gpt-4
-Fetching notebook from: https://github.com/example/llama-finetune.ipynb
+✅ LLM enhancement enabled using nvidia/llama-3.1-nemotron-ultra-253b-v1
+Fetching notebook from: https://github.com/brevdev/launchables/blob/main/llama3_finetune_inference.ipynb
 🤖 Enhancing analysis with LLM...
 ✅ LLM analysis complete (confidence: 87%)
 📋 Evaluating NVIDIA compliance...
@@ -148,8 +149,8 @@ GPU REQUIREMENTS ANALYSIS
 - L40S (48GB), L40 (48GB), L4 (24GB)
 
 ### Data Center GPUs
-- **H200**: SXM (141GB), NVL (141GB)
 - **B200**: SXM (192GB), PCIe (192GB)
+- **H200**: SXM (141GB), NVL (141GB)
 - **H100**: SXM (80GB), PCIe (80GB), NVL (188GB)
 - **A100**: SXM 80G/40G, PCIe 80G/40G
 - **V100** (32GB), **T4** (16GB)
