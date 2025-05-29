@@ -297,7 +297,9 @@ Respond in JSON format:
             return None
 
 class GPUAnalyzer:
-    def __init__(self):
+    def __init__(self, quiet_mode=False):
+        self.quiet_mode = quiet_mode  # Suppress output for JSON mode
+        
         # Initialize LLM analyzer if environment variables are set
         self.llm_analyzer = None
         openai_base_url = os.getenv('OPENAI_BASE_URL')
@@ -307,30 +309,37 @@ class GPUAnalyzer:
         if openai_base_url and openai_api_key:
             try:
                 self.llm_analyzer = LLMAnalyzer(openai_base_url, openai_model, openai_api_key)
-                print(f"✅ LLM enhancement enabled using {openai_model}")
+                if not self.quiet_mode:
+                    print(f"✅ LLM enhancement enabled using {openai_model}")
             except Exception as e:
-                print(f"⚠️ LLM initialization failed: {e}")
+                if not self.quiet_mode:
+                    print(f"⚠️ LLM initialization failed: {e}")
                 self.llm_analyzer = None
         else:
-            print("ℹ️ LLM enhancement disabled (set OPENAI_BASE_URL and OPENAI_API_KEY to enable)")
+            if not self.quiet_mode:
+                print("ℹ️ LLM enhancement disabled (set OPENAI_BASE_URL and OPENAI_API_KEY to enable)")
         
         # GitHub authentication setup
         self.github_token = os.getenv('GITHUB_TOKEN')
         self.github_headers = {}
         if self.github_token:
             self.github_headers['Authorization'] = f'token {self.github_token}'
-            print("✅ GitHub authentication enabled")
+            if not self.quiet_mode:
+                print("✅ GitHub authentication enabled")
         else:
-            print("ℹ️ GitHub authentication disabled (set GITHUB_TOKEN for private repos)")
+            if not self.quiet_mode:
+                print("ℹ️ GitHub authentication disabled (set GITHUB_TOKEN for private repos)")
         
         # GitLab authentication setup
         self.gitlab_token = os.getenv('GITLAB_TOKEN')
         self.gitlab_headers = {}
         if self.gitlab_token:
             self.gitlab_headers['Authorization'] = f'Bearer {self.gitlab_token}'
-            print("✅ GitLab authentication enabled")
+            if not self.quiet_mode:
+                print("✅ GitLab authentication enabled")
         else:
-            print("ℹ️ GitLab authentication disabled (set GITLAB_TOKEN for private repos)")
+            if not self.quiet_mode:
+                print("ℹ️ GitLab authentication disabled (set GITLAB_TOKEN for private repos)")
         
         # GPU specifications (simplified mapping)
         self.gpu_specs = {
@@ -512,24 +521,30 @@ class GPUAnalyzer:
         try:
             path = Path(file_path)
             if not path.exists():
-                print(f"❌ File not found: {file_path}")
+                if not self.quiet_mode:
+                    print(f"❌ File not found: {file_path}")
                 return None
             
             if not path.suffix.lower() == '.ipynb':
-                print(f"⚠️ Warning: File doesn't have .ipynb extension: {file_path}")
+                if not self.quiet_mode:
+                    print(f"⚠️ Warning: File doesn't have .ipynb extension: {file_path}")
             
-            print(f"📁 Loading local notebook: {file_path}")
+            if not self.quiet_mode:
+                print(f"📁 Loading local notebook: {file_path}")
             with open(path, 'r', encoding='utf-8') as f:
                 notebook_data = json.load(f)
             
-            print(f"✅ Successfully loaded local notebook")
+            if not self.quiet_mode:
+                print(f"✅ Successfully loaded local notebook")
             return notebook_data
             
         except json.JSONDecodeError as e:
-            print(f"❌ Invalid JSON in notebook file: {e}")
+            if not self.quiet_mode:
+                print(f"❌ Invalid JSON in notebook file: {e}")
             return None
         except Exception as e:
-            print(f"❌ Error reading local file: {e}")
+            if not self.quiet_mode:
+                print(f"❌ Error reading local file: {e}")
             return None
 
     def fetch_notebook(self, url_or_path: str) -> Optional[Dict]:
@@ -544,64 +559,77 @@ class GPUAnalyzer:
             
             # GitHub URL conversion with authentication support
             if 'github.com' in url and '/blob/' in url:
-                print(f"🔄 Converting GitHub URL...")
+                if not self.quiet_mode:
+                    print(f"🔄 Converting GitHub URL...")
                 
                 # Simple conversion: github.com/owner/repo/blob/branch/path → raw.githubusercontent.com/owner/repo/branch/path
                 raw_url = url.replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/')
                 
-                print(f"🔗 Trying: {raw_url}")
+                if not self.quiet_mode:
+                    print(f"🔗 Trying: {raw_url}")
                 
                 # Use GitHub token if available
                 headers = self.github_headers.copy()
                 response = requests.get(raw_url, headers=headers, timeout=30)
                 
                 if response.status_code == 200:
-                    print(f"✅ Successfully fetched notebook")
+                    if not self.quiet_mode:
+                        print(f"✅ Successfully fetched notebook")
                     return response.json()
                 elif response.status_code == 404:
-                    print(f"❌ Not found (404) - Repository may be private or file doesn't exist")
-                    if not self.github_token:
-                        print(f"💡 For private repositories, set GITHUB_TOKEN environment variable")
-                    print(f"🔧 Alternative: Get the raw URL with auth token from GitHub and use it directly")
+                    if not self.quiet_mode:
+                        print(f"❌ Not found (404) - Repository may be private or file doesn't exist")
+                        if not self.github_token:
+                            print(f"💡 For private repositories, set GITHUB_TOKEN environment variable")
+                        print(f"🔧 Alternative: Get the raw URL with auth token from GitHub and use it directly")
                 elif response.status_code == 403:
-                    print(f"❌ Forbidden (403) - Authentication required or rate limited")
-                    print(f"💡 Set GITHUB_TOKEN environment variable for authentication")
+                    if not self.quiet_mode:
+                        print(f"❌ Forbidden (403) - Authentication required or rate limited")
+                        print(f"💡 Set GITHUB_TOKEN environment variable for authentication")
                 else:
-                    print(f"❌ HTTP Error {response.status_code}")
+                    if not self.quiet_mode:
+                        print(f"❌ HTTP Error {response.status_code}")
                 
                 return None
             
             # GitLab URL conversion with authentication support
             elif 'gitlab.' in url and '/-/blob/' in url:
-                print(f"🔄 Converting GitLab URL...")
+                if not self.quiet_mode:
+                    print(f"🔄 Converting GitLab URL...")
                 
                 # GitLab conversion: gitlab.com/owner/repo/-/blob/branch/path → gitlab.com/owner/repo/-/raw/branch/path
                 raw_url = url.replace('/-/blob/', '/-/raw/')
                 
-                print(f"🔗 Trying: {raw_url}")
+                if not self.quiet_mode:
+                    print(f"🔗 Trying: {raw_url}")
                 
                 # Use GitLab token if available
                 headers = self.gitlab_headers.copy()
                 response = requests.get(raw_url, headers=headers, timeout=30)
                 
                 if response.status_code == 200:
-                    print(f"✅ Successfully fetched notebook")
+                    if not self.quiet_mode:
+                        print(f"✅ Successfully fetched notebook")
                     return response.json()
                 elif response.status_code == 404:
-                    print(f"❌ Not found (404) - Repository may be private or file doesn't exist")
-                    if not self.gitlab_token:
-                        print(f"💡 For private repositories, set GITLAB_TOKEN environment variable")
-                    print(f"🔧 Alternative: Get the raw URL with auth token from GitLab and use it directly")
+                    if not self.quiet_mode:
+                        print(f"❌ Not found (404) - Repository may be private or file doesn't exist")
+                        if not self.gitlab_token:
+                            print(f"💡 For private repositories, set GITLAB_TOKEN environment variable")
+                        print(f"🔧 Alternative: Get the raw URL with auth token from GitLab and use it directly")
                 elif response.status_code == 403:
-                    print(f"❌ Forbidden (403) - Authentication required or rate limited")
-                    print(f"💡 Set GITLAB_TOKEN environment variable for authentication")
+                    if not self.quiet_mode:
+                        print(f"❌ Forbidden (403) - Authentication required or rate limited")
+                        print(f"💡 Set GITLAB_TOKEN environment variable for authentication")
                 else:
-                    print(f"❌ HTTP Error {response.status_code}")
+                    if not self.quiet_mode:
+                        print(f"❌ HTTP Error {response.status_code}")
                 
                 return None
             
             # For raw URLs or other direct URLs
-            print(f"🔗 Fetching: {url}")
+            if not self.quiet_mode:
+                print(f"🔗 Fetching: {url}")
             
             # Use appropriate token for raw URLs
             headers = {}
@@ -615,23 +643,27 @@ class GPUAnalyzer:
             return response.json()
             
         except requests.exceptions.HTTPError as e:
-            if e.response.status_code == 404:
-                print(f"❌ Notebook not found (404)")
-                print(f"💡 Check that the URL is correct and the repository/file exists")
-            elif e.response.status_code == 403:
-                print(f"❌ Access forbidden (403)")
-                print(f"💡 Repository may be private - set GITHUB_TOKEN or GITLAB_TOKEN environment variable")
-            else:
-                print(f"❌ HTTP Error {e.response.status_code}: {e}")
+            if not self.quiet_mode:
+                if e.response.status_code == 404:
+                    print(f"❌ Notebook not found (404)")
+                    print(f"💡 Check that the URL is correct and the repository/file exists")
+                elif e.response.status_code == 403:
+                    print(f"❌ Access forbidden (403)")
+                    print(f"💡 Repository may be private - set GITHUB_TOKEN or GITLAB_TOKEN environment variable")
+                else:
+                    print(f"❌ HTTP Error {e.response.status_code}: {e}")
             return None
         except requests.exceptions.RequestException as e:
-            print(f"❌ Network error: {e}")
+            if not self.quiet_mode:
+                print(f"❌ Network error: {e}")
             return None
         except json.JSONDecodeError as e:
-            print(f"❌ Invalid JSON response - file may not be a valid notebook: {e}")
+            if not self.quiet_mode:
+                print(f"❌ Invalid JSON response - file may not be a valid notebook: {e}")
             return None
         except Exception as e:
-            print(f"❌ Unexpected error: {e}")
+            if not self.quiet_mode:
+                print(f"❌ Unexpected error: {e}")
             return None
 
     def extract_code_cells(self, notebook: Dict) -> Tuple[List[str], List[str]]:
@@ -1209,7 +1241,8 @@ class GPUAnalyzer:
 
     def analyze_notebook(self, url_or_path: str) -> GPURequirement:
         """Main analysis function."""
-        print(f"Analyzing: {url_or_path}")
+        if not self.quiet_mode:
+            print(f"Analyzing: {url_or_path}")
         notebook = self.fetch_notebook(url_or_path)
         
         if not notebook:
@@ -1302,7 +1335,8 @@ class GPUAnalyzer:
         llm_compliance_evaluation = None
         
         if self.llm_analyzer:
-            print("🤖 Enhancing analysis with LLM...")
+            if not self.quiet_mode:
+                print("🤖 Enhancing analysis with LLM...")
             llm_context = self.llm_analyzer.analyze_notebook_context(code_cells, markdown_cells)
             
             if llm_context:
@@ -1317,17 +1351,22 @@ class GPUAnalyzer:
                 llm_reasoning = llm_reasons
                 reasoning.extend([f"LLM: {reason}" for reason in llm_reasons])
                 
-                print(f"✅ LLM analysis complete (confidence: {llm_context.get('confidence', 0.5):.1%})")
+                if not self.quiet_mode:
+                    print(f"✅ LLM analysis complete (confidence: {llm_context.get('confidence', 0.5):.1%})")
             else:
-                print("⚠️ LLM analysis failed, using static analysis only")
+                if not self.quiet_mode:
+                    print("⚠️ LLM analysis failed, using static analysis only")
             
             # NVIDIA Compliance Evaluation with LLM
-            print("📋 Evaluating NVIDIA compliance...")
+            if not self.quiet_mode:
+                print("📋 Evaluating NVIDIA compliance...")
             llm_compliance_evaluation = self.llm_analyzer.evaluate_notebook_compliance(code_cells, markdown_cells)
             if llm_compliance_evaluation:
-                print(f"✅ Compliance evaluation complete (score: {llm_compliance_evaluation.get('total_score', 0)}/100)")
+                if not self.quiet_mode:
+                    print(f"✅ Compliance evaluation complete (score: {llm_compliance_evaluation.get('total_score', 0)}/100)")
             else:
-                print("⚠️ LLM compliance evaluation failed, using static analysis")
+                if not self.quiet_mode:
+                    print("⚠️ LLM compliance evaluation failed, using static analysis")
         
         # Static compliance evaluation (always run as fallback/baseline)
         structure_assessment = self.evaluate_notebook_structure(code_cells, markdown_cells)
@@ -1421,11 +1460,18 @@ Examples:
   
   # Use raw URL with token (automatically handles shell quoting)
   python notebook-analyzer.py https://raw.githubusercontent.com/repo/file.ipynb?token=...
+  
+  # Get JSON output for automation/scripting
+  python notebook-analyzer.py --json https://github.com/user/repo/blob/main/notebook.ipynb
+  
+  # Verbose JSON output (pretty-printed)
+  python notebook-analyzer.py --json --verbose ./notebook.ipynb
         """,
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument('url_or_path', nargs='*', help='URL to notebook or local file path')
     parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output with detailed reasoning')
+    parser.add_argument('--json', '-j', action='store_true', help='Output results in JSON format')
     
     args = parser.parse_args()
     
@@ -1434,17 +1480,55 @@ Examples:
         parser.print_help()
         sys.exit(1)
     
-    analyzer = GPUAnalyzer()
+    analyzer = GPUAnalyzer(quiet_mode=args.json)
     
     # Automatically handle URL reconstruction from shell arguments
     if len(args.url_or_path) > 1:
-        print("🔧 Multiple arguments detected - reconstructing URL...")
+        if not args.json:
+            print("🔧 Multiple arguments detected - reconstructing URL...")
         url_or_path = analyzer.sanitize_url_args(args.url_or_path)
-        print(f"📝 Reconstructed: {url_or_path}")
+        if not args.json:
+            print(f"📝 Reconstructed: {url_or_path}")
     else:
         url_or_path = args.url_or_path[0]
     
     result = analyzer.analyze_notebook(url_or_path)
+    
+    # Handle JSON output
+    if args.json:
+        import json as json_module
+        
+        # Convert dataclass to dictionary
+        result_dict = {
+            'min_gpu_type': result.min_gpu_type,
+            'min_quantity': result.min_quantity,
+            'min_vram_gb': result.min_vram_gb,
+            'optimal_gpu_type': result.optimal_gpu_type,
+            'optimal_quantity': result.optimal_quantity,
+            'optimal_vram_gb': result.optimal_vram_gb,
+            'min_runtime_estimate': result.min_runtime_estimate,
+            'optimal_runtime_estimate': result.optimal_runtime_estimate,
+            'sxm_required': result.sxm_required,
+            'sxm_reasoning': result.sxm_reasoning,
+            'arm_compatibility': result.arm_compatibility,
+            'arm_reasoning': result.arm_reasoning,
+            'confidence': result.confidence,
+            'reasoning': result.reasoning,
+            'llm_enhanced': result.llm_enhanced,
+            'llm_reasoning': result.llm_reasoning,
+            'nvidia_compliance_score': result.nvidia_compliance_score,
+            'structure_assessment': result.structure_assessment,
+            'content_quality_issues': result.content_quality_issues,
+            'technical_recommendations': result.technical_recommendations,
+            'analysis_metadata': {
+                'analyzed_url_or_path': url_or_path,
+                'timestamp': __import__('datetime').datetime.now().isoformat(),
+                'version': '3.0.0'
+            }
+        }
+        
+        print(json_module.dumps(result_dict, indent=2 if args.verbose else None))
+        return
     
     print("\n" + "="*70)
     print("GPU REQUIREMENTS ANALYSIS")
@@ -1533,3 +1617,4 @@ Examples:
 
 if __name__ == "__main__":
     main()
+
