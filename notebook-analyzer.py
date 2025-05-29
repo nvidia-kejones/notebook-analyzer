@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 """
 NVIDIA GPU Requirements Analyzer for Jupyter Notebooks
@@ -13,9 +12,11 @@ import re
 import ast
 import argparse
 import os
+import sys
+from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote_plus
 import sys
 
 @dataclass
@@ -302,6 +303,15 @@ class GPUAnalyzer:
         else:
             print("ℹ️ LLM enhancement disabled (set OPENAI_BASE_URL and OPENAI_API_KEY to enable)")
         
+        # GitHub authentication setup
+        self.github_token = os.getenv('GITHUB_TOKEN')
+        self.github_headers = {}
+        if self.github_token:
+            self.github_headers['Authorization'] = f'token {self.github_token}'
+            print("✅ GitHub authentication enabled")
+        else:
+            print("ℹ️ GitHub authentication disabled (set GITHUB_TOKEN for private repos)")
+        
         # GPU specifications (simplified mapping)
         self.gpu_specs = {
             # Consumer RTX 50 Series
@@ -447,20 +457,130 @@ class GPUAnalyzer:
             'diffusers',
         ]
 
-    def fetch_notebook(self, url: str) -> Optional[Dict]:
-        """Fetch notebook content from URL."""
+    def sanitize_url_args(self, args: List[str]) -> str:
+        """
+        Automatically handle shell quoting issues by reconstructing URLs from command line arguments.
+        This handles cases where URLs with query parameters get split by the shell.
+        """
+        if not args:
+            return ""
+        
+        # If we have multiple arguments that look like URL fragments, join them
+        url_parts = []
+        for arg in args:
+            url_parts.append(arg)
+        
+        # Join all parts and look for URL patterns
+        combined = ' '.join(url_parts)
+        
+        # Look for URL patterns that got split
+        url_patterns = [
+            r'(https?://[^\s]+)',  # Basic URL
+            r'(https?://[^\s]+\?[^\s]*)',  # URL with query params
+        ]
+        
+        for pattern in url_patterns:
+            match = re.search(pattern, combined)
+            if match:
+                return match.group(1)
+        
+        # If no URL pattern found, return the first argument (could be a file path)
+        return args[0]
+
+    def load_local_notebook(self, file_path: str) -> Optional[Dict]:
+        """Load notebook from local file system."""
         try:
-            # Handle GitHub URLs
-            if 'github.com' in url and '/blob/' in url:
-                url = url.replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/')
+            path = Path(file_path)
+            if not path.exists():
+                print(f"❌ File not found: {file_path}")
+                return None
             
-            response = requests.get(url, timeout=30)
-            response.raise_for_status()
+            if not path.suffix.lower() == '.ipynb':
+                print(f"⚠️ Warning: File doesn't have .ipynb extension: {file_path}")
             
-            # Try to parse as JSON (notebook format)
-            return response.json()
+            print(f"📁 Loading local notebook: {file_path}")
+            with open(path, 'r', encoding='utf-8') as f:
+                notebook_data = json.load(f)
+            
+            print(f"✅ Successfully loaded local notebook")
+            return notebook_data
+            
+        except json.JSONDecodeError as e:
+            print(f"❌ Invalid JSON in notebook file: {e}")
+            return None
         except Exception as e:
-            print(f"Error fetching notebook: {e}")
+            print(f"❌ Error reading local file: {e}")
+            return None
+
+    def fetch_notebook(self, url_or_path: str) -> Optional[Dict]:
+        """Fetch notebook content from URL or load from local file."""
+        try:
+            # Check if it's a local file path
+            if not url_or_path.startswith(('http://', 'https://')):
+                return self.load_local_notebook(url_or_path)
+            
+            # Handle URLs
+            url = url_or_path
+            
+            # GitHub URL conversion with authentication support
+            if 'github.com' in url and '/blob/' in url:
+                print(f"🔄 Converting GitHub URL...")
+                
+                # Simple conversion: github.com/owner/repo/blob/branch/path → raw.githubusercontent.com/owner/repo/branch/path
+                raw_url = url.replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/')
+                
+                print(f"🔗 Trying: {raw_url}")
+                
+                # Use GitHub token if available
+                headers = self.github_headers.copy()
+                response = requests.get(raw_url, headers=headers, timeout=30)
+                
+                if response.status_code == 200:
+                    print(f"✅ Successfully fetched notebook")
+                    return response.json()
+                elif response.status_code == 404:
+                    print(f"❌ Not found (404) - Repository may be private or file doesn't exist")
+                    if not self.github_token:
+                        print(f"💡 For private repositories, set GITHUB_TOKEN environment variable")
+                    print(f"🔧 Alternative: Get the raw URL with auth token from GitHub and use it directly")
+                elif response.status_code == 403:
+                    print(f"❌ Forbidden (403) - Authentication required or rate limited")
+                    print(f"💡 Set GITHUB_TOKEN environment variable for authentication")
+                else:
+                    print(f"❌ HTTP Error {response.status_code}")
+                
+                return None
+            
+            # For raw URLs or other direct URLs
+            print(f"🔗 Fetching: {url}")
+            
+            # Use GitHub token for raw.githubusercontent.com URLs
+            headers = {}
+            if 'raw.githubusercontent.com' in url and self.github_token:
+                headers = self.github_headers
+            
+            response = requests.get(url, headers=headers, timeout=30)
+            response.raise_for_status()
+            return response.json()
+            
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 404:
+                print(f"❌ Notebook not found (404)")
+                print(f"💡 Check that the URL is correct and the repository/file exists")
+            elif e.response.status_code == 403:
+                print(f"❌ Access forbidden (403)")
+                print(f"💡 Repository may be private - set GITHUB_TOKEN environment variable")
+            else:
+                print(f"❌ HTTP Error {e.response.status_code}: {e}")
+            return None
+        except requests.exceptions.RequestException as e:
+            print(f"❌ Network error: {e}")
+            return None
+        except json.JSONDecodeError as e:
+            print(f"❌ Invalid JSON response - file may not be a valid notebook: {e}")
+            return None
+        except Exception as e:
+            print(f"❌ Unexpected error: {e}")
             return None
 
     def extract_code_cells(self, notebook: Dict) -> Tuple[List[str], List[str]]:
@@ -1036,10 +1156,10 @@ class GPUAnalyzer:
         tier_gpus.sort(key=lambda x: (x[1]['compute_capability'], x[1]['vram']), reverse=True)
         return tier_gpus[0][0]
 
-    def analyze_notebook(self, url: str) -> GPURequirement:
+    def analyze_notebook(self, url_or_path: str) -> GPURequirement:
         """Main analysis function."""
-        print(f"Fetching notebook from: {url}")
-        notebook = self.fetch_notebook(url)
+        print(f"Analyzing: {url_or_path}")
+        notebook = self.fetch_notebook(url_or_path)
         
         if not notebook:
             return GPURequirement(
@@ -1223,14 +1343,52 @@ class GPUAnalyzer:
         )
 
 def main():
-    parser = argparse.ArgumentParser(description='Analyze Jupyter notebook GPU requirements')
-    parser.add_argument('url', help='URL to the Jupyter notebook')
-    parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
+    parser = argparse.ArgumentParser(
+        description='Analyze Jupyter notebook GPU requirements',
+        epilog="""
+Environment Variables:
+  OPENAI_BASE_URL    OpenAI API endpoint (for LLM enhancement)
+  OPENAI_API_KEY     OpenAI API key (for LLM enhancement)  
+  OPENAI_MODEL       Model name (default: gpt-4)
+  GITHUB_TOKEN       GitHub personal access token (for private repos)
+
+Examples:
+  # Analyze public notebook
+  python notebook-analyzer.py https://github.com/user/repo/blob/main/notebook.ipynb
+  
+  # Analyze private notebook (set GITHUB_TOKEN first)
+  export GITHUB_TOKEN=your_token_here
+  python notebook-analyzer.py https://github.com/private/repo/blob/main/notebook.ipynb
+  
+  # Analyze local notebook file
+  python notebook-analyzer.py ./path/to/notebook.ipynb
+  
+  # Use raw URL with token (automatically handles shell quoting)
+  python notebook-analyzer.py https://raw.githubusercontent.com/repo/file.ipynb?token=...
+        """,
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument('url_or_path', nargs='*', help='URL to notebook or local file path')
+    parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output with detailed reasoning')
     
     args = parser.parse_args()
     
+    # Handle shell quoting issues and multiple arguments
+    if not args.url_or_path:
+        parser.print_help()
+        sys.exit(1)
+    
     analyzer = GPUAnalyzer()
-    result = analyzer.analyze_notebook(args.url)
+    
+    # Automatically handle URL reconstruction from shell arguments
+    if len(args.url_or_path) > 1:
+        print("🔧 Multiple arguments detected - reconstructing URL...")
+        url_or_path = analyzer.sanitize_url_args(args.url_or_path)
+        print(f"📝 Reconstructed: {url_or_path}")
+    else:
+        url_or_path = args.url_or_path[0]
+    
+    result = analyzer.analyze_notebook(url_or_path)
     
     print("\n" + "="*70)
     print("GPU REQUIREMENTS ANALYSIS")

@@ -1,3 +1,8 @@
+*.env
+bin/
+*.TAG
+*.cfg
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

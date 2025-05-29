@@ -20,18 +20,25 @@ A comprehensive tool for analyzing Jupyter notebooks to determine NVIDIA GPU req
 - **Structure & Layout Assessment**: Evaluates title format, introduction completeness, navigation
 - **Content Quality Analysis**: Checks documentation ratio, code explanations, educational value
 - **Technical Standards**: Reviews requirements management, environment variables, reproducibility
-- **Compliance Scoring**: 0-100 score based on NVIDIA's notebook guidelines
+- **Compliance Scoring**: 0-100 score based on NVIDIA's official notebook guidelines
 
 ### LLM Enhancement (Optional)
 - **Context-Aware Analysis**: Deep understanding of notebook intent and workflow
 - **Enhanced Accuracy**: Combines static analysis with LLM reasoning for better recommendations
 - **Compliance Evaluation**: Advanced assessment of content quality and best practices
 
+### 🆕 Enhanced Input Support
+- **Local File Analysis**: Analyze notebooks directly from your file system
+- **Private Repository Access**: Built-in GitHub authentication for private repos
+- **Automatic URL Handling**: Smart parsing of URLs with query parameters (no manual quoting needed)
+- **Flexible Input**: Supports GitHub URLs, raw URLs, and local file paths
+
 ## 📋 Requirements
 
 - Python 3.8+
-- Internet connection (for fetching notebooks and optional LLM analysis)
+- Internet connection (for fetching remote notebooks and optional LLM analysis)
 - OpenAI-compatible API access (optional, for enhanced analysis)
+- GitHub Personal Access Token (optional, for private repositories)
 
 ## 🛠️ Installation
 
@@ -46,18 +53,40 @@ A comprehensive tool for analyzing Jupyter notebooks to determine NVIDIA GPU req
    pip install -r requirements.txt
    ```
 
-3. **Optional: Configure LLM Enhancement**:
+3. **Optional: Configure Environment Variables**:
    ```bash
+   # For LLM Enhancement
    export OPENAI_BASE_URL="https://api.openai.com"
    export OPENAI_API_KEY="your-api-key-here"
    export OPENAI_MODEL="gpt-4"  # optional, defaults to gpt-4
+   
+   # For Private GitHub Repositories
+   export GITHUB_TOKEN="ghp_your_personal_access_token"
    ```
 
 ## 📖 Usage
 
 ### Basic Analysis
 ```bash
+# Public GitHub notebook
 python notebook-analyzer.py https://github.com/user/repo/blob/main/notebook.ipynb
+
+# Local notebook file
+python notebook-analyzer.py ./my-notebook.ipynb
+python notebook-analyzer.py /path/to/notebook.ipynb
+```
+
+### Private Repository Access
+```bash
+# Set GitHub token for private repos
+export GITHUB_TOKEN=ghp_your_personal_access_token
+python notebook-analyzer.py https://github.com/private-org/private-repo/blob/main/notebook.ipynb
+```
+
+### Raw URLs with Authentication Tokens
+```bash
+# No manual quoting needed - tool handles it automatically!
+python notebook-analyzer.py https://raw.githubusercontent.com/org/repo/file.ipynb?token=GHSAT0AAAAAADDFMT5FA...
 ```
 
 ### Verbose Analysis with Detailed Reasoning
@@ -75,17 +104,19 @@ python notebook-analyzer.py -v https://github.com/brevdev/launchables/blob/main/
 
 ### Using Local LLM (e.g., Ollama)
 ```bash
-export OPENAI_BASE_URL="http://localhost:8080"
+export OPENAI_BASE_URL="http://localhost:11434"
 export OPENAI_API_KEY="dummy"
-export OPENAI_MODEL="llama3-8b"
-python notebook-analyzer.py -v https://github.com/brevdev/launchables/blob/main/llama3_finetune_inference.ipynb
+export OPENAI_MODEL="llama3:8b"
+python notebook-analyzer.py -v ./local-notebook.ipynb
 ```
 
 ## 📊 Sample Output
 
 ```
 ✅ LLM enhancement enabled using nvidia/llama-3.1-nemotron-ultra-253b-v1
-Fetching notebook from: https://github.com/brevdev/launchables/blob/main/llama3_finetune_inference.ipynb
+✅ GitHub authentication enabled
+📁 Loading local notebook: ./fine-tune-analysis.ipynb
+✅ Successfully loaded local notebook
 🤖 Enhancing analysis with LLM...
 ✅ LLM analysis complete (confidence: 87%)
 📋 Evaluating NVIDIA compliance...
@@ -164,20 +195,33 @@ GPU REQUIREMENTS ANALYSIS
 | `OPENAI_BASE_URL` | OpenAI API endpoint | No* | None |
 | `OPENAI_API_KEY` | API authentication key | No* | None |
 | `OPENAI_MODEL` | Model name to use | No | gpt-4 |
+| `GITHUB_TOKEN` | GitHub Personal Access Token | No** | None |
 
-*Required for LLM enhancement
+*Required for LLM enhancement  
+**Required for private GitHub repositories
 
 ### Command Line Arguments
 
 ```bash
-python notebook-analyzer.py [-h] [-v] URL
+python notebook-analyzer.py [-h] [-v] [URL_OR_PATH ...]
 
 positional arguments:
-  URL                   URL to the Jupyter notebook
+  URL_OR_PATH          URL to notebook, local file path, or multiple URL fragments
 
 optional arguments:
-  -h, --help           show help message and exit
-  -v, --verbose        verbose output with detailed reasoning
+  -h, --help          show help message and exit
+  -v, --verbose       verbose output with detailed reasoning
+```
+
+### 🔧 Automatic URL Handling Examples
+
+The tool automatically handles complex URLs that might be split by the shell:
+
+```bash
+# These all work without manual quoting:
+python notebook-analyzer.py https://raw.githubusercontent.com/repo/file.ipynb?token=abc123&ref=main
+python notebook-analyzer.py https://github.com/org/repo/blob/feature/branch-name/notebook.ipynb
+python notebook-analyzer.py ./notebooks/analysis.ipynb
 ```
 
 ## 🧠 Analysis Methodology
@@ -202,11 +246,31 @@ Based on official NVIDIA notebook guidelines:
 - **Technical (25%)**: Requirements, environment variables, reproducibility
 - **Brand (25%)**: NVIDIA messaging, professional presentation
 
-## 🔗 Supported Notebook Sources
+## 🔗 Supported Input Sources
 
-- **GitHub**: Direct links to `.ipynb` files (automatically converts to raw URLs)
-- **Raw URLs**: Direct access to notebook JSON content
-- **Any HTTP/HTTPS URL** serving Jupyter notebook JSON format
+### Local Files
+```bash
+python notebook-analyzer.py ./notebook.ipynb
+python notebook-analyzer.py /Users/username/projects/analysis.ipynb
+python notebook-analyzer.py ~/Documents/research/model-training.ipynb
+```
+
+### Public GitHub Repositories
+```bash
+python notebook-analyzer.py https://github.com/user/repo/blob/main/notebook.ipynb
+```
+
+### Private GitHub Repositories
+```bash
+export GITHUB_TOKEN=ghp_your_personal_access_token
+python notebook-analyzer.py https://github.com/private-org/repo/blob/branch/notebook.ipynb
+```
+
+### Raw URLs with Authentication
+```bash
+# Tool automatically handles query parameters and tokens
+python notebook-analyzer.py https://raw.githubusercontent.com/org/repo/file.ipynb?token=GHSAT0AAA...
+```
 
 ### GitHub URL Conversion
 The tool automatically converts GitHub blob URLs to raw content:
@@ -216,6 +280,21 @@ https://github.com/user/repo/blob/main/notebook.ipynb
 https://raw.githubusercontent.com/user/repo/main/notebook.ipynb
 ```
 
+## 🔐 GitHub Authentication Setup
+
+For analyzing private repositories, create a GitHub Personal Access Token:
+
+1. **Go to GitHub Settings** → Developer settings → Personal access tokens → Tokens (classic)
+2. **Generate new token** with `repo` scope
+3. **Set environment variable**:
+   ```bash
+   export GITHUB_TOKEN=ghp_your_token_here
+   ```
+4. **Verify access**:
+   ```bash
+   python notebook-analyzer.py https://github.com/your-private-org/private-repo/blob/main/notebook.ipynb
+   ```
+
 ## 🎓 Use Cases
 
 ### For Data Scientists & ML Engineers
@@ -223,17 +302,20 @@ https://raw.githubusercontent.com/user/repo/main/notebook.ipynb
 - **Cost Optimization**: Balance performance vs budget with min/optimal recommendations
 - **Runtime Planning**: Estimate project completion times
 - **Platform Selection**: Choose between different cloud GPU offerings
+- **Local Development**: Analyze notebooks before committing to repositories
 
 ### For NVIDIA Teams
 - **Content Quality Assurance**: Ensure notebooks meet company standards
 - **Launchable Validation**: Verify notebooks before publication
 - **Developer Experience**: Improve notebook quality for better user experience
 - **Brand Consistency**: Maintain unified voice across NVIDIA content
+- **Private Repository Analysis**: Analyze internal notebooks securely
 
 ### For DevOps & Infrastructure
 - **Resource Allocation**: Plan GPU cluster requirements
 - **Performance Monitoring**: Validate actual vs predicted performance
 - **Platform Compatibility**: Assess ARM/Grace system compatibility
+- **Batch Analysis**: Process multiple notebooks for infrastructure planning
 
 ## 🚨 Limitations
 
@@ -242,26 +324,54 @@ https://raw.githubusercontent.com/user/repo/main/notebook.ipynb
 - **API Dependencies**: LLM features require internet access and API availability
 - **Language Support**: Primarily designed for Python notebooks
 - **Complex Workflows**: May not capture intricate distributed training setups
+- **Token Expiration**: GitHub tokens may expire and need renewal
+
+## 🛠️ Troubleshooting
+
+### Common Issues
+
+**❌ "Not found (404)" for GitHub URLs**
+- Repository may be private (set `GITHUB_TOKEN`)
+- File may not exist at the specified path
+- Branch name may be incorrect
+
+**❌ "Forbidden (403)" errors**
+- Authentication required for private repository
+- GitHub token may be expired or have insufficient permissions
+- Rate limiting (wait and retry)
+
+**❌ Shell quoting issues with URLs**
+- Tool automatically handles most cases
+- For complex URLs, the tool will reconstruct them automatically
+- Use verbose mode (`-v`) to see URL reconstruction
+
+**❌ Local file not found**
+- Check file path spelling and existence
+- Ensure file has `.ipynb` extension
+- Verify file permissions
 
 ## 🤝 Contributing
 
 This tool is designed to be extensible. Areas for contribution:
 - Additional GPU model support
-- Enhanced pattern recognition
+- Enhanced pattern recognition for new frameworks
 - Improved runtime estimation models
 - Better compliance rule definitions
 - Support for additional notebook formats
+- Enhanced GitHub authentication methods
 
 ## 📄 License
 
-Apache 2.0. Please ensure compliance with relevant licensing terms.
+Apache 2.0. For external use, please ensure compliance with relevant licensing terms.
 
 ## 🆘 Support
 
 For issues with the tool:
-1. Check verbose output for detailed analysis
-2. Verify environment variable configuration
-3. Test with a simple notebook first
-4. Review the analysis methodology section
+1. **Check verbose output** (`-v`) for detailed analysis
+2. **Verify environment variables** are set correctly
+3. **Test with a simple public notebook** first
+4. **Check GitHub token permissions** for private repositories
+5. **Review the troubleshooting section** above
 
-For NVIDIA-specific notebook guidelines, refer to the official NVIDIA notebook standards documentation.
+For NVIDIA notebook guidelines, refer to the NVIDIA notebook standards documentation.
+
