@@ -62,6 +62,9 @@ A comprehensive tool for analyzing Jupyter notebooks to determine NVIDIA GPU req
    
    # For Private GitHub Repositories
    export GITHUB_TOKEN="ghp_your_personal_access_token"
+   
+   # For Private GitLab Repositories
+   export GITLAB_TOKEN="glpat_your_personal_access_token"
    ```
 
 ## 📖 Usage
@@ -81,6 +84,20 @@ python notebook-analyzer.py /path/to/notebook.ipynb
 # Set GitHub token for private repos
 export GITHUB_TOKEN=ghp_your_personal_access_token
 python notebook-analyzer.py https://github.com/private-org/private-repo/blob/main/notebook.ipynb
+
+# Set GitLab token for private repos
+export GITLAB_TOKEN=glpat_your_personal_access_token
+python notebook-analyzer.py https://gitlab.com/private-group/private-project/-/blob/main/notebook.ipynb
+```
+
+### GitLab Repository Analysis
+```bash
+# Public GitLab repository
+python notebook-analyzer.py https://gitlab.com/user/repo/-/blob/main/notebook.ipynb
+
+# Self-hosted GitLab instance
+export GITLAB_TOKEN=your_token_here
+python notebook-analyzer.py https://gitlab.company.com/team/project/-/blob/develop/analysis.ipynb
 ```
 
 ### Raw URLs with Authentication Tokens
@@ -196,9 +213,11 @@ GPU REQUIREMENTS ANALYSIS
 | `OPENAI_API_KEY` | API authentication key | No* | None |
 | `OPENAI_MODEL` | Model name to use | No | gpt-4 |
 | `GITHUB_TOKEN` | GitHub Personal Access Token | No** | None |
+| `GITLAB_TOKEN` | GitLab Personal Access Token | No*** | None |
 
 *Required for LLM enhancement  
-**Required for private GitHub repositories
+**Required for private GitHub repositories  
+***Required for private GitLab repositories
 
 ### Command Line Arguments
 
@@ -260,16 +279,36 @@ python notebook-analyzer.py ~/Documents/research/model-training.ipynb
 python notebook-analyzer.py https://github.com/user/repo/blob/main/notebook.ipynb
 ```
 
+### Public GitLab Repositories
+```bash
+python notebook-analyzer.py https://gitlab.com/user/repo/-/blob/main/notebook.ipynb
+```
+
 ### Private GitHub Repositories
 ```bash
 export GITHUB_TOKEN=ghp_your_personal_access_token
 python notebook-analyzer.py https://github.com/private-org/repo/blob/branch/notebook.ipynb
 ```
 
+### Private GitLab Repositories
+```bash
+export GITLAB_TOKEN=glpat_your_personal_access_token
+python notebook-analyzer.py https://gitlab.com/private-group/repo/-/blob/branch/notebook.ipynb
+```
+
+### Self-Hosted GitLab Instances
+```bash
+export GITLAB_TOKEN=your_enterprise_token
+python notebook-analyzer.py https://gitlab.company.com/team/project/-/blob/main/notebook.ipynb
+```
+
 ### Raw URLs with Authentication
 ```bash
-# Tool automatically handles query parameters and tokens
+# GitHub raw URLs with tokens
 python notebook-analyzer.py https://raw.githubusercontent.com/org/repo/file.ipynb?token=GHSAT0AAA...
+
+# GitLab raw URLs  
+python notebook-analyzer.py https://gitlab.com/user/repo/-/raw/main/notebook.ipynb
 ```
 
 ### GitHub URL Conversion
@@ -280,9 +319,19 @@ https://github.com/user/repo/blob/main/notebook.ipynb
 https://raw.githubusercontent.com/user/repo/main/notebook.ipynb
 ```
 
-## 🔐 GitHub Authentication Setup
+### GitLab URL Conversion
+The tool automatically converts GitLab blob URLs to raw content:
+```
+https://gitlab.com/user/repo/-/blob/main/notebook.ipynb
+↓ (automatically converted to)
+https://gitlab.com/user/repo/-/raw/main/notebook.ipynb
+```
 
-For analyzing private repositories, create a GitHub Personal Access Token:
+## 🔐 Git Platform Authentication Setup
+
+### GitHub Authentication
+
+For analyzing private GitHub repositories, create a GitHub Personal Access Token:
 
 1. **Go to GitHub Settings** → Developer settings → Personal access tokens → Tokens (classic)
 2. **Generate new token** with `repo` scope
@@ -293,6 +342,35 @@ For analyzing private repositories, create a GitHub Personal Access Token:
 4. **Verify access**:
    ```bash
    python notebook-analyzer.py https://github.com/your-private-org/private-repo/blob/main/notebook.ipynb
+   ```
+
+### GitLab Authentication
+
+For analyzing private GitLab repositories (GitLab.com or self-hosted):
+
+1. **Go to GitLab** → User Settings → Access Tokens (or Project Settings → Access Tokens)
+2. **Create token** with `read_repository` scope
+3. **Set environment variable**:
+   ```bash
+   export GITLAB_TOKEN=glpat_your_token_here
+   ```
+4. **Verify access**:
+   ```bash
+   python notebook-analyzer.py https://gitlab.com/your-private-group/private-project/-/blob/main/notebook.ipynb
+   ```
+
+### Self-Hosted GitLab
+
+For enterprise GitLab instances:
+
+1. **Create token** on your GitLab instance with appropriate permissions
+2. **Set environment variable** with your enterprise token:
+   ```bash
+   export GITLAB_TOKEN=your_enterprise_token
+   ```
+3. **Analyze notebooks** from your self-hosted instance:
+   ```bash
+   python notebook-analyzer.py https://gitlab.company.com/team/project/-/blob/develop/analysis.ipynb
    ```
 
 ## 🎓 Use Cases
@@ -324,21 +402,24 @@ For analyzing private repositories, create a GitHub Personal Access Token:
 - **API Dependencies**: LLM features require internet access and API availability
 - **Language Support**: Primarily designed for Python notebooks
 - **Complex Workflows**: May not capture intricate distributed training setups
-- **Token Expiration**: GitHub tokens may expire and need renewal
+- **Token Expiration**: GitHub/GitLab tokens may expire and need renewal
+- **Platform Differences**: GitLab and GitHub have different URL formats and authentication methods
 
 ## 🛠️ Troubleshooting
 
 ### Common Issues
 
-**❌ "Not found (404)" for GitHub URLs**
-- Repository may be private (set `GITHUB_TOKEN`)
+**❌ "Not found (404)" for GitHub/GitLab URLs**
+- Repository may be private (set `GITHUB_TOKEN` or `GITLAB_TOKEN`)
 - File may not exist at the specified path
 - Branch name may be incorrect
+- For GitLab: ensure URL uses `/-/blob/` format
 
 **❌ "Forbidden (403)" errors**
 - Authentication required for private repository
-- GitHub token may be expired or have insufficient permissions
+- GitHub/GitLab token may be expired or have insufficient permissions
 - Rate limiting (wait and retry)
+- For GitLab: ensure token has `read_repository` scope
 
 **❌ Shell quoting issues with URLs**
 - Tool automatically handles most cases
@@ -350,6 +431,10 @@ For analyzing private repositories, create a GitHub Personal Access Token:
 - Ensure file has `.ipynb` extension
 - Verify file permissions
 
+**❌ GitLab URL format issues**
+- Ensure GitLab URLs use `/-/blob/` not `/blob/`
+- Self-hosted GitLab instances should work with proper authentication
+
 ## 🤝 Contributing
 
 This tool is designed to be extensible. Areas for contribution:
@@ -359,19 +444,21 @@ This tool is designed to be extensible. Areas for contribution:
 - Better compliance rule definitions
 - Support for additional notebook formats
 - Enhanced GitHub authentication methods
+- GitLab API integration improvements
+- Support for additional Git platforms (Bitbucket, Azure DevOps)
 
 ## 📄 License
 
-Apache 2.0. For external use, please ensure compliance with relevant licensing terms.
+Apache 2.0 For external use, please ensure compliance with relevant licensing terms.
 
 ## 🆘 Support
 
 For issues with the tool:
 1. **Check verbose output** (`-v`) for detailed analysis
-2. **Verify environment variables** are set correctly
+2. **Verify environment variables** are set correctly (including `GITLAB_TOKEN` for GitLab repos)
 3. **Test with a simple public notebook** first
-4. **Check GitHub token permissions** for private repositories
+4. **Check GitHub/GitLab token permissions** for private repositories
 5. **Review the troubleshooting section** above
 
-For NVIDIA notebook guidelines, refer to the NVIDIA notebook standards documentation.
+For NVIDIA-specific notebook guidelines, refer to the NVIDIA notebook standards documentation.
 

@@ -323,6 +323,15 @@ class GPUAnalyzer:
         else:
             print("ℹ️ GitHub authentication disabled (set GITHUB_TOKEN for private repos)")
         
+        # GitLab authentication setup
+        self.gitlab_token = os.getenv('GITLAB_TOKEN')
+        self.gitlab_headers = {}
+        if self.gitlab_token:
+            self.gitlab_headers['Authorization'] = f'Bearer {self.gitlab_token}'
+            print("✅ GitLab authentication enabled")
+        else:
+            print("ℹ️ GitLab authentication disabled (set GITLAB_TOKEN for private repos)")
+        
         # GPU specifications (simplified mapping)
         self.gpu_specs = {
             # Consumer RTX 50 Series
@@ -562,13 +571,44 @@ class GPUAnalyzer:
                 
                 return None
             
+            # GitLab URL conversion with authentication support
+            elif 'gitlab.' in url and '/-/blob/' in url:
+                print(f"🔄 Converting GitLab URL...")
+                
+                # GitLab conversion: gitlab.com/owner/repo/-/blob/branch/path → gitlab.com/owner/repo/-/raw/branch/path
+                raw_url = url.replace('/-/blob/', '/-/raw/')
+                
+                print(f"🔗 Trying: {raw_url}")
+                
+                # Use GitLab token if available
+                headers = self.gitlab_headers.copy()
+                response = requests.get(raw_url, headers=headers, timeout=30)
+                
+                if response.status_code == 200:
+                    print(f"✅ Successfully fetched notebook")
+                    return response.json()
+                elif response.status_code == 404:
+                    print(f"❌ Not found (404) - Repository may be private or file doesn't exist")
+                    if not self.gitlab_token:
+                        print(f"💡 For private repositories, set GITLAB_TOKEN environment variable")
+                    print(f"🔧 Alternative: Get the raw URL with auth token from GitLab and use it directly")
+                elif response.status_code == 403:
+                    print(f"❌ Forbidden (403) - Authentication required or rate limited")
+                    print(f"💡 Set GITLAB_TOKEN environment variable for authentication")
+                else:
+                    print(f"❌ HTTP Error {response.status_code}")
+                
+                return None
+            
             # For raw URLs or other direct URLs
             print(f"🔗 Fetching: {url}")
             
-            # Use GitHub token for raw.githubusercontent.com URLs
+            # Use appropriate token for raw URLs
             headers = {}
             if 'raw.githubusercontent.com' in url and self.github_token:
                 headers = self.github_headers
+            elif 'gitlab.' in url and '/-/raw/' in url and self.gitlab_token:
+                headers = self.gitlab_headers
             
             response = requests.get(url, headers=headers, timeout=30)
             response.raise_for_status()
@@ -580,7 +620,7 @@ class GPUAnalyzer:
                 print(f"💡 Check that the URL is correct and the repository/file exists")
             elif e.response.status_code == 403:
                 print(f"❌ Access forbidden (403)")
-                print(f"💡 Repository may be private - set GITHUB_TOKEN environment variable")
+                print(f"💡 Repository may be private - set GITHUB_TOKEN or GITLAB_TOKEN environment variable")
             else:
                 print(f"❌ HTTP Error {e.response.status_code}: {e}")
             return None
@@ -1362,14 +1402,19 @@ Environment Variables:
   OPENAI_API_KEY     OpenAI API key (for LLM enhancement)  
   OPENAI_MODEL       Model name (default: gpt-4)
   GITHUB_TOKEN       GitHub personal access token (for private repos)
+  GITLAB_TOKEN       GitLab personal access token (for private repos)
 
 Examples:
   # Analyze public notebook
   python notebook-analyzer.py https://github.com/user/repo/blob/main/notebook.ipynb
   
-  # Analyze private notebook (set GITHUB_TOKEN first)
+  # Analyze private GitHub notebook (set GITHUB_TOKEN first)
   export GITHUB_TOKEN=your_token_here
   python notebook-analyzer.py https://github.com/private/repo/blob/main/notebook.ipynb
+  
+  # Analyze GitLab notebook (public or private)
+  export GITLAB_TOKEN=your_gitlab_token_here
+  python notebook-analyzer.py https://gitlab.com/user/repo/-/blob/main/notebook.ipynb
   
   # Analyze local notebook file
   python notebook-analyzer.py ./path/to/notebook.ipynb
