@@ -45,21 +45,22 @@ A comprehensive tool for analyzing Jupyter notebooks to determine NVIDIA GPU req
 
 1. **Clone or download the script**:
    ```bash
-   wget https://raw.githubusercontent.com/your-repo/notebook-analyzer.py
+   git clone https://github.com/nvidia-kejones/notebook-analyzer.git
    # or copy the script to your local machine
    ```
 
 2. **Install dependencies**:
    ```bash
+   cd notebook-analyzer
    pip install -r requirements.txt
    ```
 
 3. **Optional: Configure Environment Variables**:
    ```bash
    # For LLM Enhancement
-   export OPENAI_BASE_URL="https://api.openai.com"
+   export OPENAI_BASE_URL="https://integrate.api.nvidia.com/v1/"
    export OPENAI_API_KEY="your-api-key-here"
-   export OPENAI_MODEL="gpt-4"  # optional, defaults to gpt-4
+   export OPENAI_MODEL="nvidia/llama-3.1-nemotron-ultra-253b-v1"  # optional, defaults to gpt-4
    
    # For Private GitHub Repositories
    export GITHUB_TOKEN="ghp_your_personal_access_token"
