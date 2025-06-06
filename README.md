@@ -43,15 +43,15 @@ A comprehensive tool for analyzing Jupyter notebooks to determine NVIDIA GPU req
 
 ## 🛠️ Installation
 
-1. **Clone or download the script**:
+1. **Clone the repository**:
    ```bash
    git clone https://github.com/nvidia-kejones/notebook-analyzer.git
-   # or copy the script to your local machine
    ```
 
 2. **Install dependencies**:
    ```bash
    cd notebook-analyzer
+   # highly recommend using a virtual env
    pip install -r requirements.txt
    ```
 
