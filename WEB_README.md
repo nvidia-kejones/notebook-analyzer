@@ -1,6 +1,6 @@
 # Notebook Analyzer - Web Interface
 
-A containerized web application for analyzing Jupyter notebooks to determine optimal NVIDIA GPU requirements, VRAM needs, and compliance with best practices.
+A containerized web application for analyzing Jupyter notebooks (.ipynb) and marimo notebooks (.py) to determine optimal NVIDIA GPU requirements, VRAM needs, and compliance with best practices.
 
 ## 🚀 Features
 
@@ -69,8 +69,8 @@ python app.py
 
 ### Web Interface
 
-1. **URL Analysis**: Enter any public GitHub, GitLab, or direct notebook URL
-2. **File Upload**: Drag and drop or select local .ipynb files (up to 16MB)
+1. **URL Analysis**: Enter any public GitHub, GitLab, or direct notebook URL (.ipynb or .py)
+2. **File Upload**: Drag and drop or select local .ipynb (Jupyter) or .py (marimo) files (up to 16MB)
 3. **View Results**: Get comprehensive GPU recommendations and compliance analysis
 
 ### API Access
@@ -86,8 +86,13 @@ curl -X POST http://localhost:5001/api/analyze \
 
 **Analyze uploaded file**
 ```bash
+# Jupyter notebook
 curl -X POST http://localhost:5001/api/analyze \
   -F "file=@your-notebook.ipynb"
+
+# marimo notebook
+curl -X POST http://localhost:5001/api/analyze \
+  -F "file=@your-marimo-app.py"
 ```
 
 #### MCP (Model Context Protocol) Integration
@@ -124,7 +129,7 @@ Copy `mcp_config.json` to your AI assistant's MCP configuration to enable notebo
 
 1. **`analyze_notebook`** - Complete notebook analysis
    - **Parameters:**
-     - `url` (required): URL to Jupyter notebook
+     - `url` (required): URL to Jupyter or marimo notebook
      - `include_reasoning` (optional): Include detailed reasoning
      - `include_compliance` (optional): Include NVIDIA compliance assessment
    - **Returns:** GPU requirements, compliance score, runtime estimates
@@ -242,7 +247,7 @@ OPENAI_MODEL=llama3:8b
 - Proper file permissions and isolation
 
 ### Application Security
-- File upload restrictions (.ipynb only, 16MB limit)
+- File upload restrictions (.ipynb and .py files only, 16MB limit)
 - Secure filename handling
 - Input validation and sanitization
 - Temporary file cleanup
@@ -360,7 +365,7 @@ This project is licensed under the Apache License 2.0 - see the original [LICENS
 
 **Analysis fails**:
 - Verify notebook URL is accessible
-- Check file format (.ipynb required)
+- Check file format (.ipynb or .py required)
 - Review application logs for errors
 
 **Private repo access fails**:

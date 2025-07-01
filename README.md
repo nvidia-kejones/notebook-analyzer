@@ -1,6 +1,6 @@
 # Notebook Analyzer
 
-A comprehensive tool for analyzing Jupyter notebooks to determine NVIDIA GPU requirements, runtime estimates, and compliance with NVIDIA notebook best practices.
+A comprehensive tool for analyzing Jupyter notebooks (.ipynb) and marimo notebooks (.py) to determine NVIDIA GPU requirements, runtime estimates, and compliance with NVIDIA notebook best practices.
 
 **Available as both CLI tool and web application with MCP (Model Context Protocol) support for AI assistant integration.**
 
@@ -30,10 +30,11 @@ A comprehensive tool for analyzing Jupyter notebooks to determine NVIDIA GPU req
 - **Compliance Evaluation**: Advanced assessment of content quality and best practices
 
 ### 🆕 Enhanced Input Support
+- **Dual Format Support**: Analyze both Jupyter (.ipynb) and marimo (.py) notebooks seamlessly
 - **Local File Analysis**: Analyze notebooks directly from your file system
 - **Private Repository Access**: Built-in GitHub authentication for private repos
 - **Automatic URL Handling**: Smart parsing of URLs with query parameters (no manual quoting needed)
-- **Flexible Input**: Supports GitHub URLs, raw URLs, and local file paths
+- **Flexible Input**: Supports GitHub URLs, raw URLs, and local file paths for both notebook formats
 - **JSON Output**: Machine-readable output for automation and integration
 
 ## 📋 Requirements
@@ -76,11 +77,15 @@ A comprehensive tool for analyzing Jupyter notebooks to determine NVIDIA GPU req
 
 ### Basic Analysis
 ```bash
-# Public GitHub notebook
+# Public GitHub Jupyter notebook
 python notebook-analyzer.py https://github.com/user/repo/blob/main/notebook.ipynb
 
-# Local notebook file
+# Public GitHub marimo notebook
+python notebook-analyzer.py https://github.com/user/repo/blob/main/analysis.py
+
+# Local notebook files
 python notebook-analyzer.py ./my-notebook.ipynb
+python notebook-analyzer.py ./my-marimo-app.py
 python notebook-analyzer.py /path/to/notebook.ipynb
 ```
 
@@ -100,9 +105,13 @@ python notebook-analyzer.py https://gitlab.com/private-group/private-project/-/b
 # Public GitLab repository
 python notebook-analyzer.py https://gitlab.com/user/repo/-/blob/main/notebook.ipynb
 
-# Self-hosted GitLab instance
+# Self-hosted GitLab instance (Jupyter)
 export GITLAB_TOKEN=your_token_here
 python notebook-analyzer.py https://gitlab.company.com/team/project/-/blob/develop/analysis.ipynb
+
+# Self-hosted GitLab instance (marimo)
+export GITLAB_TOKEN=your_token_here
+python notebook-analyzer.py https://gitlab.company.com/team/project/-/blob/develop/marimo-app.py
 ```
 
 ### Raw URLs with Authentication Tokens
@@ -540,7 +549,7 @@ echo "✅ Notebook analysis passed"
 ### Batch Processing
 ```bash
 # Analyze multiple notebooks and aggregate results
-for notebook in notebooks/*.ipynb; do
+for notebook in notebooks/*.ipynb notebooks/*.py; do
   python notebook-analyzer.py --json "$notebook" >> batch_results.jsonl
 done
 
@@ -615,7 +624,7 @@ def analyze_and_provision(notebook_path):
 
 **❌ Local file not found**
 - Check file path spelling and existence
-- Ensure file has `.ipynb` extension
+- Ensure file has `.ipynb` or `.py` extension (for marimo notebooks)
 - Verify file permissions
 
 **❌ GitLab URL format issues**

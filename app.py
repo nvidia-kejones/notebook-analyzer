@@ -31,14 +31,24 @@ app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-producti
 
 # Configuration
 UPLOAD_FOLDER = tempfile.mkdtemp()
-ALLOWED_EXTENSIONS = {'ipynb'}
+ALLOWED_EXTENSIONS = {'ipynb', 'py'}
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 
 def allowed_file(filename):
     """Check if uploaded file has allowed extension."""
-    return '.' in filename and \
-           filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+    if not ('.' in filename):
+        return False
+    
+    ext = filename.rsplit('.', 1)[1].lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        return False
+    
+    # For .py files, we need additional validation to ensure it's a marimo notebook
+    if ext == 'py':
+        return True  # We'll validate marimo format in the analyzer
+    
+    return True
 
 def format_analysis_for_web(analysis: GPURequirement) -> dict:
     """Format the analysis result for web display."""

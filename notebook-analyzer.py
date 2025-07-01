@@ -516,8 +516,112 @@ class GPUAnalyzer:
         # If no URL pattern found, return the first argument (could be a file path)
         return args[0]
 
+    def is_marimo_notebook(self, file_path: str) -> bool:
+        """Check if a Python file is a marimo notebook."""
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # Look for marimo app patterns
+            marimo_patterns = [
+                r'import\s+marimo',
+                r'@app\.cell',
+                r'app\s*=\s*marimo\.App',
+                r'marimo\.App\s*\(',
+            ]
+            
+            for pattern in marimo_patterns:
+                if re.search(pattern, content):
+                    return True
+            
+            return False
+        except Exception:
+            return False
+
+    def parse_marimo_notebook(self, file_path: str) -> Optional[Dict]:
+        """Parse a marimo notebook (.py file) into a notebook-like structure."""
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            if not self.quiet_mode:
+                print(f"📁 Loading marimo notebook: {file_path}")
+            
+            # Parse the Python file using AST
+            tree = ast.parse(content)
+            
+            cells = []
+            markdown_cells = []
+            current_cell_code = []
+            
+            # Extract cells from the AST
+            for node in ast.walk(tree):
+                if isinstance(node, ast.FunctionDef):
+                    # Check if this function has @app.cell decorator
+                    has_app_cell_decorator = False
+                    for decorator in node.decorator_list:
+                        if (isinstance(decorator, ast.Attribute) and 
+                            isinstance(decorator.value, ast.Name) and
+                            decorator.value.id == 'app' and 
+                            decorator.attr == 'cell'):
+                            has_app_cell_decorator = True
+                            break
+                        elif (isinstance(decorator, ast.Call) and
+                              isinstance(decorator.func, ast.Attribute) and
+                              isinstance(decorator.func.value, ast.Name) and
+                              decorator.func.value.id == 'app' and 
+                              decorator.func.attr == 'cell'):
+                            has_app_cell_decorator = True
+                            break
+                    
+                    if has_app_cell_decorator:
+                        # Extract the function body as a cell
+                        cell_lines = []
+                        for stmt in node.body:
+                            cell_lines.append(ast.unparse(stmt))
+                        
+                        cell_content = '\n'.join(cell_lines)
+                        cells.append({
+                            'cell_type': 'code',
+                            'source': cell_content,
+                            'metadata': {}
+                        })
+                
+                # Look for module-level docstrings and comments as markdown
+                elif isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant):
+                    if isinstance(node.value.value, str) and len(node.value.value) > 50:
+                        # Treat long string constants as markdown
+                        markdown_cells.append(node.value.value)
+                        cells.append({
+                            'cell_type': 'markdown',
+                            'source': node.value.value,
+                            'metadata': {}
+                        })
+            
+            # Create a notebook-like structure
+            notebook_data = {
+                'cells': cells,
+                'metadata': {
+                    'kernelspec': {'display_name': 'Python 3', 'language': 'python', 'name': 'python3'},
+                    'language_info': {'name': 'python', 'version': '3.8'},
+                    'notebook_type': 'marimo'
+                },
+                'nbformat': 4,
+                'nbformat_minor': 4
+            }
+            
+            if not self.quiet_mode:
+                print(f"✅ Successfully loaded marimo notebook ({len(cells)} cells found)")
+            
+            return notebook_data
+            
+        except Exception as e:
+            if not self.quiet_mode:
+                print(f"❌ Error parsing marimo notebook: {e}")
+            return None
+
     def load_local_notebook(self, file_path: str) -> Optional[Dict]:
-        """Load notebook from local file system."""
+        """Load notebook from local file system (supports both Jupyter and marimo)."""
         try:
             path = Path(file_path)
             if not path.exists():
@@ -525,18 +629,34 @@ class GPUAnalyzer:
                     print(f"❌ File not found: {file_path}")
                 return None
             
-            if not path.suffix.lower() == '.ipynb':
+            file_extension = path.suffix.lower()
+            
+            # Handle Jupyter notebooks (.ipynb)
+            if file_extension == '.ipynb':
                 if not self.quiet_mode:
-                    print(f"⚠️ Warning: File doesn't have .ipynb extension: {file_path}")
+                    print(f"📁 Loading Jupyter notebook: {file_path}")
+                with open(path, 'r', encoding='utf-8') as f:
+                    notebook_data = json.load(f)
+                
+                if not self.quiet_mode:
+                    print(f"✅ Successfully loaded Jupyter notebook")
+                return notebook_data
             
-            if not self.quiet_mode:
-                print(f"📁 Loading local notebook: {file_path}")
-            with open(path, 'r', encoding='utf-8') as f:
-                notebook_data = json.load(f)
+            # Handle Python files (check for marimo)
+            elif file_extension == '.py':
+                if self.is_marimo_notebook(file_path):
+                    return self.parse_marimo_notebook(file_path)
+                else:
+                    if not self.quiet_mode:
+                        print(f"❌ Python file is not a marimo notebook: {file_path}")
+                        print(f"💡 Marimo notebooks should contain @app.cell decorators")
+                    return None
             
-            if not self.quiet_mode:
-                print(f"✅ Successfully loaded local notebook")
-            return notebook_data
+            else:
+                if not self.quiet_mode:
+                    print(f"❌ Unsupported file format: {file_extension}")
+                    print(f"💡 Supported formats: .ipynb (Jupyter), .py (marimo)")
+                return None
             
         except json.JSONDecodeError as e:
             if not self.quiet_mode:
@@ -667,7 +787,7 @@ class GPUAnalyzer:
             return None
 
     def extract_code_cells(self, notebook: Dict) -> Tuple[List[str], List[str]]:
-        """Extract code and markdown from notebook cells."""
+        """Extract code and markdown from notebook cells (supports both Jupyter and marimo)."""
         code_cells = []
         markdown_cells = []
         

@@ -10,7 +10,7 @@
                 Notebook Analyzer
             </h1>
             <p class="lead text-muted">
-                Analyze Jupyter notebooks to determine optimal NVIDIA GPU requirements, 
+                Analyze Jupyter (.ipynb) and marimo (.py) notebooks to determine optimal NVIDIA GPU requirements, 
                 VRAM needs, and compliance with best practices.
             </p>
         </div>
@@ -43,7 +43,7 @@
                                    pattern="https?://.*\.ipynb.*">
                         </div>
                         <div class="form-text">
-                            Supports GitHub, GitLab, and direct URLs to .ipynb files
+                            Supports GitHub, GitLab, and direct URLs to .ipynb and .py files
                         </div>
                     </div>
 
@@ -62,11 +62,11 @@
                                    class="form-control d-none" 
                                    id="file" 
                                    name="file" 
-                                   accept=".ipynb">
+                                   accept=".ipynb,.py">
                             <div id="uploadText">
                                 <i class="bi bi-cloud-upload display-4 text-muted mb-3"></i>
                                 <h5>Drop your notebook here or click to browse</h5>
-                                <p class="text-muted mb-0">Supports .ipynb files up to 16MB</p>
+                                <p class="text-muted mb-0">Supports .ipynb (Jupyter) and .py (marimo) files up to 16MB</p>
                             </div>
                             <div id="uploadSelected" class="d-none">
                                 <i class="bi bi-file-earmark-code display-4 text-nvidia mb-3"></i>
@@ -181,14 +181,14 @@ document.addEventListener('DOMContentLoaded', function() {
         const files = e.dataTransfer.files;
         if (files.length > 0) {
             const file = files[0];
-            if (file.name.endsWith('.ipynb')) {
+            if (file.name.endsWith('.ipynb') || file.name.endsWith('.py')) {
                 fileInput.files = files;
                 fileName.textContent = file.name;
                 uploadText.classList.add('d-none');
                 uploadSelected.classList.remove('d-none');
                 urlInput.value = '';
             } else {
-                alert('Please upload a .ipynb file');
+                alert('Please upload a .ipynb (Jupyter) or .py (marimo) file');
             }
         }
     });

@@ -2,7 +2,7 @@
 
 ## Model Context Protocol (MCP) Support
 
-This notebook analyzer now supports the Model Context Protocol (MCP), allowing AI assistants like Claude, ChatGPT, and others to directly analyze Jupyter notebooks for GPU requirements.
+This notebook analyzer now supports the Model Context Protocol (MCP), allowing AI assistants like Claude, ChatGPT, and others to directly analyze Jupyter notebooks (.ipynb) and marimo notebooks (.py) for GPU requirements.
 
 ## Quick Setup
 
@@ -26,10 +26,10 @@ This notebook analyzer now supports the Model Context Protocol (MCP), allowing A
 ## Available Tools
 
 ### 1. `analyze_notebook`
-Performs complete GPU requirements analysis on Jupyter notebooks.
+Performs complete GPU requirements analysis on Jupyter and marimo notebooks.
 
 **Parameters:**
-- `url` (string, required): URL to the notebook (GitHub, GitLab, direct .ipynb)
+- `url` (string, required): URL to the notebook (GitHub, GitLab, direct .ipynb or .py)
 - `include_reasoning` (boolean, optional): Include detailed analysis reasoning (default: true)
 - `include_compliance` (boolean, optional): Include NVIDIA compliance assessment (default: true)
 
@@ -180,10 +180,11 @@ def analyze_notebooks(urls):
         results.append(response.json())
     return results
 
-# Analyze multiple notebooks
+# Analyze multiple notebooks (both Jupyter and marimo)
 notebooks = [
     "https://github.com/user/repo1/blob/main/notebook1.ipynb",
-    "https://github.com/user/repo2/blob/main/notebook2.ipynb"
+    "https://github.com/user/repo2/blob/main/marimo-app.py",
+    "https://github.com/user/repo3/blob/main/analysis.ipynb"
 ]
 results = analyze_notebooks(notebooks)
 ```
