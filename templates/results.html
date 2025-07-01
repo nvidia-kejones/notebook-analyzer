@@ -1,0 +1,288 @@
+{% extends "base.html" %}
+
+{% block title %}Analysis Results - Notebook Analyzer{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <!-- Header -->
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <div>
+                <h2 class="text-nvidia mb-1">
+                    <i class="bi bi-clipboard-data me-2"></i>
+                    Analysis Results
+                </h2>
+                <p class="text-muted mb-0">
+                    {% if source_type == 'file' %}
+                        <i class="bi bi-file-earmark-code me-1"></i>
+                        File: {{ source_name }}
+                    {% else %}
+                        <i class="bi bi-link-45deg me-1"></i>
+                        URL: <a href="{{ source_name }}" target="_blank" class="text-decoration-none">{{ source_name }}</a>
+                    {% endif %}
+                </p>
+            </div>
+            <a href="{{ url_for('index') }}" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left me-1"></i>
+                Analyze Another
+            </a>
+        </div>
+
+        <!-- Main Results Grid -->
+        <div class="row">
+            <!-- GPU Requirements -->
+            <div class="col-lg-8 mb-4">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <i class="bi bi-gpu-card me-2"></i>
+                            GPU Requirements
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <!-- Minimum Configuration -->
+                            <div class="col-md-6 mb-3">
+                                <div class="border-start border-warning border-3 ps-3">
+                                    <h6 class="text-warning mb-2">
+                                        <i class="bi bi-shield-fill-exclamation me-1"></i>
+                                        Minimum Requirements
+                                    </h6>
+                                    <div class="mb-2">
+                                        <strong>GPU:</strong> 
+                                        <span class="badge bg-warning text-dark ms-1">{{ analysis.min_gpu.type }}</span>
+                                    </div>
+                                    <div class="mb-2">
+                                        <strong>Quantity:</strong> {{ analysis.min_gpu.quantity }}
+                                    </div>
+                                    <div class="mb-2">
+                                        <strong>VRAM:</strong> {{ analysis.min_gpu.vram_gb }} GB
+                                    </div>
+                                    <div class="mb-0">
+                                        <strong>Runtime:</strong> 
+                                        <span class="text-muted">{{ analysis.min_gpu.runtime }}</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Optimal Configuration -->
+                            <div class="col-md-6 mb-3">
+                                <div class="border-start border-success border-3 ps-3">
+                                    <h6 class="text-success mb-2">
+                                        <i class="bi bi-rocket-takeoff me-1"></i>
+                                        Optimal Configuration
+                                    </h6>
+                                    <div class="mb-2">
+                                        <strong>GPU:</strong> 
+                                        <span class="badge bg-success ms-1">{{ analysis.optimal_gpu.type }}</span>
+                                    </div>
+                                    <div class="mb-2">
+                                        <strong>Quantity:</strong> {{ analysis.optimal_gpu.quantity }}
+                                    </div>
+                                    <div class="mb-2">
+                                        <strong>VRAM:</strong> {{ analysis.optimal_gpu.vram_gb }} GB
+                                    </div>
+                                    <div class="mb-0">
+                                        <strong>Runtime:</strong> 
+                                        <span class="text-muted">{{ analysis.optimal_gpu.runtime }}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Additional Requirements -->
+                        <div class="row mt-3">
+                            <div class="col-md-6">
+                                <div class="small">
+                                    <strong>SXM Required:</strong>
+                                    {% if analysis.sxm_required %}
+                                        <span class="badge bg-info ms-1">Yes</span>
+                                    {% else %}
+                                        <span class="badge bg-secondary ms-1">No</span>
+                                    {% endif %}
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="small">
+                                    <strong>ARM Compatibility:</strong>
+                                    {% set arm_class = 'success' if 'Compatible' in analysis.arm_compatibility else 'warning' if 'Likely' in analysis.arm_compatibility else 'danger' %}
+                                    <span class="badge bg-{{ arm_class }} ms-1">{{ analysis.arm_compatibility }}</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Compliance & Confidence -->
+            <div class="col-lg-4 mb-4">
+                <div class="card">
+                    <div class="card-header">
+                        <h6 class="mb-0">
+                            <i class="bi bi-speedometer2 me-2"></i>
+                            Assessment Metrics
+                        </h6>
+                    </div>
+                    <div class="card-body text-center">
+                        <!-- Compliance Score -->
+                        <div class="mb-3">
+                            <div class="compliance-score 
+                                {% if analysis.nvidia_compliance_score >= 90 %}score-excellent
+                                {% elif analysis.nvidia_compliance_score >= 80 %}score-good
+                                {% elif analysis.nvidia_compliance_score >= 70 %}score-fair
+                                {% elif analysis.nvidia_compliance_score >= 60 %}score-poor
+                                {% else %}score-critical{% endif %}">
+                                {{ analysis.nvidia_compliance_score }}/100
+                            </div>
+                            <small class="text-muted">NVIDIA Compliance Score</small>
+                        </div>
+
+                        <!-- Confidence -->
+                        <div class="mb-3">
+                            <div class="compliance-score text-primary">
+                                {{ analysis.confidence }}%
+                            </div>
+                            <small class="text-muted">Analysis Confidence</small>
+                        </div>
+
+                        <!-- Enhancement Status -->
+                        {% if analysis.llm_enhanced %}
+                            <span class="badge bg-nvidia">
+                                <i class="bi bi-robot me-1"></i>
+                                LLM Enhanced
+                            </span>
+                        {% else %}
+                            <span class="badge bg-secondary">
+                                <i class="bi bi-gear me-1"></i>
+                                Static Analysis
+                            </span>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Detailed Analysis -->
+        <div class="row">
+            <!-- Reasoning -->
+            <div class="col-lg-6 mb-4">
+                <div class="card">
+                    <div class="card-header">
+                        <h6 class="mb-0">
+                            <i class="bi bi-lightbulb me-2"></i>
+                            Analysis Reasoning
+                        </h6>
+                    </div>
+                    <div class="card-body">
+                        {% if analysis.reasoning %}
+                            {% for reason in analysis.reasoning %}
+                                <div class="reasoning-item">{{ reason }}</div>
+                            {% endfor %}
+                        {% endif %}
+
+                        {% if analysis.llm_reasoning %}
+                            <h6 class="mt-3 text-nvidia">
+                                <i class="bi bi-robot me-1"></i>
+                                LLM Insights
+                            </h6>
+                            {% for reason in analysis.llm_reasoning %}
+                                <div class="reasoning-item">{{ reason }}</div>
+                            {% endfor %}
+                        {% endif %}
+
+                        {% if analysis.sxm_reasoning %}
+                            <h6 class="mt-3 text-info">SXM Analysis</h6>
+                            {% for reason in analysis.sxm_reasoning %}
+                                <div class="reasoning-item">{{ reason }}</div>
+                            {% endfor %}
+                        {% endif %}
+
+                        {% if analysis.arm_reasoning %}
+                            <h6 class="mt-3 text-success">ARM Compatibility</h6>
+                            {% for reason in analysis.arm_reasoning %}
+                                <div class="reasoning-item">{{ reason }}</div>
+                            {% endfor %}
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+
+            <!-- Compliance Details -->
+            <div class="col-lg-6 mb-4">
+                <div class="card">
+                    <div class="card-header">
+                        <h6 class="mb-0">
+                            <i class="bi bi-shield-check me-2"></i>
+                            NVIDIA Compliance Details
+                        </h6>
+                    </div>
+                    <div class="card-body">
+                        <!-- Structure Assessment -->
+                        {% if analysis.structure_assessment %}
+                            <h6 class="text-nvidia">Structure & Layout</h6>
+                            <ul class="list-unstyled">
+                                {% for category, assessment in analysis.structure_assessment.items() %}
+                                    <li class="mb-1">
+                                        <strong>{{ category.replace('_', ' ').title() }}:</strong>
+                                        {% if 'Good' in assessment or '✅' in assessment %}
+                                            <span class="text-success">{{ assessment }}</span>
+                                        {% elif 'Warning' in assessment or '⚠️' in assessment %}
+                                            <span class="text-warning">{{ assessment }}</span>
+                                        {% else %}
+                                            <span class="text-danger">{{ assessment }}</span>
+                                        {% endif %}
+                                    </li>
+                                {% endfor %}
+                            </ul>
+                        {% endif %}
+
+                        <!-- Content Issues -->
+                        {% if analysis.content_quality_issues %}
+                            <h6 class="text-warning mt-3">Content Quality Issues</h6>
+                            <ul class="small">
+                                {% for issue in analysis.content_quality_issues %}
+                                    <li>{{ issue }}</li>
+                                {% endfor %}
+                            </ul>
+                        {% endif %}
+
+                        <!-- Technical Recommendations -->
+                        {% if analysis.technical_recommendations %}
+                            <h6 class="text-info mt-3">Technical Recommendations</h6>
+                            <ul class="small">
+                                {% for rec in analysis.technical_recommendations %}
+                                    <li>{{ rec }}</li>
+                                {% endfor %}
+                            </ul>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- API Example -->
+        <div class="card">
+            <div class="card-header">
+                <h6 class="mb-0">
+                    <i class="bi bi-code-slash me-2"></i>
+                    API Access
+                </h6>
+            </div>
+            <div class="card-body">
+                <p class="text-muted mb-2">Use the API endpoint for programmatic access:</p>
+                <div class="bg-light p-3 rounded">
+                    <code>
+                        POST {{ request.url_root }}api/analyze<br>
+                        Content-Type: application/json<br><br>
+                        {% if source_type == 'url' %}
+                        {"url": "{{ source_name }}"}
+                        {% else %}
+                        # For file uploads, use multipart/form-data with 'file' field
+                        {% endif %}
+                    </code>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %} 

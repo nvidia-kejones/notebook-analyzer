@@ -2,6 +2,8 @@
 
 A comprehensive tool for analyzing Jupyter notebooks to determine NVIDIA GPU requirements, runtime estimates, and compliance with NVIDIA notebook best practices.
 
+**Available as both CLI tool and web application with MCP (Model Context Protocol) support for AI assistant integration.**
+
 ## 🚀 Features
 
 ### GPU Requirements Analysis
@@ -40,6 +42,7 @@ A comprehensive tool for analyzing Jupyter notebooks to determine NVIDIA GPU req
 - Internet connection (for fetching remote notebooks and optional LLM analysis)
 - OpenAI-compatible API access (optional, for enhanced analysis)
 - GitHub Personal Access Token (optional, for private repositories)
+- Docker (optional, for web interface deployment)
 
 ## 🛠️ Installation
 
@@ -143,6 +146,52 @@ python notebook-analyzer.py --json notebook.ipynb | jq '.min_vram_gb'
 # Save results to file
 python notebook-analyzer.py --json notebook.ipynb > analysis_results.json
 ```
+
+## 🌐 Web Interface & API
+
+### Web Application
+The analyzer includes a modern web interface with real-time streaming analysis and MCP support:
+
+```bash
+# Start web interface (requires Flask dependencies)
+python app.py
+
+# Or use Docker for easy deployment
+docker-compose up --build
+```
+
+**Features:**
+- Modern responsive UI with Bootstrap
+- Dual input methods (URL or file upload)  
+- Real-time streaming analysis with progress updates
+- Comprehensive results display
+- RESTful API endpoints
+- **MCP (Model Context Protocol) integration** for AI assistants
+
+### API Usage
+```bash
+# REST API endpoint
+curl -X POST http://localhost:5001/api/analyze \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://github.com/user/repo/blob/main/notebook.ipynb"}'
+
+# MCP endpoint for AI assistants
+curl -X POST http://localhost:5001/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc": "2.0", "method": "tools/list", "id": 1}'
+```
+
+### MCP Integration
+Connect AI assistants like Claude, ChatGPT, or Cursor to analyze notebooks through natural language:
+
+```bash
+# Copy MCP configuration for your AI assistant
+cp mcp_config.json ~/.config/your-ai-assistant/mcp_servers.json
+```
+
+Then ask your AI: *"What GPU requirements does this notebook have?"* and it will automatically analyze it using this tool!
+
+See `MCP_README.md` for detailed integration instructions.
 
 ## 📊 Sample Output
 

@@ -1,0 +1,364 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-8">
+        <!-- Header -->
+        <div class="text-center mb-5">
+            <h1 class="display-5 fw-bold text-nvidia">
+                <i class="bi bi-gpu-card me-3"></i>
+                Notebook Analyzer
+            </h1>
+            <p class="lead text-muted">
+                Analyze Jupyter notebooks to determine optimal NVIDIA GPU requirements, 
+                VRAM needs, and compliance with best practices.
+            </p>
+        </div>
+
+        <!-- Analysis Form -->
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="bi bi-clipboard-data me-2"></i>
+                    Analyze Your Notebook
+                </h5>
+            </div>
+            <div class="card-body">
+                <form action="{{ url_for('analyze_stream') }}" method="post" enctype="multipart/form-data" id="analysisForm">
+                    <!-- URL Input Section -->
+                    <div class="mb-4">
+                        <label for="url" class="form-label fw-bold">
+                            <i class="bi bi-link-45deg text-nvidia"></i>
+                            Option 1: Analyze from URL
+                        </label>
+                        <div class="input-group">
+                            <span class="input-group-text">
+                                <i class="bi bi-globe"></i>
+                            </span>
+                            <input type="url" 
+                                   class="form-control" 
+                                   id="url" 
+                                   name="url" 
+                                   placeholder="https://github.com/user/repo/blob/main/notebook.ipynb"
+                                   pattern="https?://.*\.ipynb.*">
+                        </div>
+                        <div class="form-text">
+                            Supports GitHub, GitLab, and direct URLs to .ipynb files
+                        </div>
+                    </div>
+
+                    <div class="text-center my-3">
+                        <span class="badge bg-secondary">OR</span>
+                    </div>
+
+                    <!-- File Upload Section -->
+                    <div class="mb-4">
+                        <label for="file" class="form-label fw-bold">
+                            <i class="bi bi-cloud-upload text-nvidia"></i>
+                            Option 2: Upload Local File
+                        </label>
+                        <div class="upload-area p-4 text-center" id="uploadArea">
+                            <input type="file" 
+                                   class="form-control d-none" 
+                                   id="file" 
+                                   name="file" 
+                                   accept=".ipynb">
+                            <div id="uploadText">
+                                <i class="bi bi-cloud-upload display-4 text-muted mb-3"></i>
+                                <h5>Drop your notebook here or click to browse</h5>
+                                <p class="text-muted mb-0">Supports .ipynb files up to 16MB</p>
+                            </div>
+                            <div id="uploadSelected" class="d-none">
+                                <i class="bi bi-file-earmark-code display-4 text-nvidia mb-3"></i>
+                                <h5 id="fileName"></h5>
+                                <p class="text-muted mb-0">Click analyze to process this file</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Submit Button -->
+                    <div class="d-grid">
+                        <button type="submit" class="btn btn-nvidia btn-lg" id="submitBtn">
+                            <i class="bi bi-play-circle me-2"></i>
+                            Analyze Notebook
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Features Preview -->
+        <div class="row mt-5">
+            <div class="col-md-4 mb-3">
+                <div class="card h-100 text-center">
+                    <div class="card-body">
+                        <i class="bi bi-gpu-card display-4 text-nvidia mb-3"></i>
+                        <h5>GPU Recommendations</h5>
+                        <p class="text-muted">Get minimum and optimal GPU configurations with VRAM requirements</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4 mb-3">
+                <div class="card h-100 text-center">
+                    <div class="card-body">
+                        <i class="bi bi-stopwatch display-4 text-nvidia mb-3"></i>
+                        <h5>Runtime Estimates</h5>
+                        <p class="text-muted">Predicted execution times for different hardware configurations</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4 mb-3">
+                <div class="card h-100 text-center">
+                    <div class="card-body">
+                        <i class="bi bi-shield-check display-4 text-nvidia mb-3"></i>
+                        <h5>Compliance Scoring</h5>
+                        <p class="text-muted">NVIDIA notebook best practices assessment and recommendations</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const uploadArea = document.getElementById('uploadArea');
+    const fileInput = document.getElementById('file');
+    const urlInput = document.getElementById('url');
+    const uploadText = document.getElementById('uploadText');
+    const uploadSelected = document.getElementById('uploadSelected');
+    const fileName = document.getElementById('fileName');
+    const form = document.getElementById('analysisForm');
+    const submitBtn = document.getElementById('submitBtn');
+
+    // Handle upload area clicks
+    uploadArea.addEventListener('click', function(e) {
+        if (e.target !== fileInput) {
+            fileInput.click();
+        }
+    });
+
+    // Handle file selection
+    fileInput.addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (file) {
+            fileName.textContent = file.name;
+            uploadText.classList.add('d-none');
+            uploadSelected.classList.remove('d-none');
+            urlInput.value = ''; // Clear URL input
+        } else {
+            uploadText.classList.remove('d-none');
+            uploadSelected.classList.add('d-none');
+        }
+    });
+
+    // Handle URL input changes
+    urlInput.addEventListener('input', function() {
+        if (urlInput.value.trim()) {
+            fileInput.value = '';
+            uploadText.classList.remove('d-none');
+            uploadSelected.classList.add('d-none');
+        }
+    });
+
+    // Handle drag and drop
+    uploadArea.addEventListener('dragover', function(e) {
+        e.preventDefault();
+        uploadArea.classList.add('dragover');
+    });
+
+    uploadArea.addEventListener('dragleave', function(e) {
+        e.preventDefault();
+        uploadArea.classList.remove('dragover');
+    });
+
+    uploadArea.addEventListener('drop', function(e) {
+        e.preventDefault();
+        uploadArea.classList.remove('dragover');
+        
+        const files = e.dataTransfer.files;
+        if (files.length > 0) {
+            const file = files[0];
+            if (file.name.endsWith('.ipynb')) {
+                fileInput.files = files;
+                fileName.textContent = file.name;
+                uploadText.classList.add('d-none');
+                uploadSelected.classList.remove('d-none');
+                urlInput.value = '';
+            } else {
+                alert('Please upload a .ipynb file');
+            }
+        }
+    });
+
+    // Handle form submission with streaming
+    form.addEventListener('submit', function(e) {
+        e.preventDefault();
+        
+        const url = urlInput.value.trim();
+        const file = fileInput.files[0];
+        
+        if (!url && !file) {
+            alert('Please provide either a URL or upload a file');
+            return;
+        }
+        
+        startStreamingAnalysis();
+    });
+    
+    function startStreamingAnalysis() {
+        // Show streaming UI
+        document.body.innerHTML = `
+            <div class="container mt-5">
+                <div class="row justify-content-center">
+                    <div class="col-lg-8">
+                        <div class="card">
+                            <div class="card-header bg-nvidia text-white">
+                                <h5 class="mb-0">
+                                    <i class="bi bi-gear-fill spin me-2"></i>
+                                    Analyzing Notebook
+                                </h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="progress mb-3">
+                                    <div class="progress-bar bg-nvidia progress-bar-striped progress-bar-animated" 
+                                         role="progressbar" style="width: 0%" id="progressBar">
+                                    </div>
+                                </div>
+                                <div id="progressMessages" class="small text-muted">
+                                    <div class="d-flex align-items-center">
+                                        <span class="spinner-border spinner-border-sm me-2"></span>
+                                        <span id="currentStatus">Starting analysis...</span>
+                                    </div>
+                                </div>
+                                <div id="progressLog" class="mt-3" style="max-height: 200px; overflow-y: auto;">
+                                </div>
+                            </div>
+                        </div>
+                        <div class="text-center mt-3">
+                            <button onclick="location.href='/'" class="btn btn-outline-secondary">
+                                <i class="bi bi-arrow-left me-1"></i>Cancel & Return
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <style>
+                .spin { animation: spin 1s linear infinite; }
+                @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+                .progress-step { 
+                    padding: 0.25rem 0.5rem; 
+                    margin: 0.1rem 0; 
+                    background: #f8f9fa; 
+                    border-left: 3px solid #76b900; 
+                    border-radius: 0 0.25rem 0.25rem 0; 
+                    font-size: 0.875rem;
+                    opacity: 0;
+                    animation: fadeIn 0.3s ease-in forwards;
+                }
+                @keyframes fadeIn { to { opacity: 1; } }
+            </style>
+        `;
+        
+        // Create FormData
+        const formData = new FormData(form);
+        
+                 // Start SSE stream
+         fetch('/analyze-stream', {
+             method: 'POST',
+             body: formData
+         }).then(response => {
+             const reader = response.body.getReader();
+             const decoder = new TextDecoder();
+             let progressCount = 0;
+             let buffer = '';
+             
+             function readStream() {
+                 return reader.read().then(({ done, value }) => {
+                     if (done) return;
+                     
+                     // Add new chunk to buffer
+                     buffer += decoder.decode(value, { stream: true });
+                     
+                     // Process complete messages
+                     const lines = buffer.split('\n');
+                     
+                     // Keep the last potentially incomplete line in buffer
+                     buffer = lines.pop() || '';
+                     
+                     for (const line of lines) {
+                         if (line.startsWith('data: ')) {
+                             try {
+                                 const jsonStr = line.slice(6).trim();
+                                 if (jsonStr) {
+                                     const data = JSON.parse(jsonStr);
+                                     handleStreamMessage(data, ++progressCount);
+                                 }
+                             } catch (e) {
+                                 console.error('Failed to parse SSE data:', e, 'Line:', line);
+                             }
+                         }
+                     }
+                     
+                     return readStream();
+                 });
+             }
+             
+             readStream().catch(err => {
+                 console.error('Stream reading error:', err);
+                 showError('Connection lost during analysis');
+             });
+         }).catch(err => {
+             console.error('Fetch error:', err);
+             showError('Failed to start analysis');
+         });
+    }
+    
+    function handleStreamMessage(data, step) {
+        const progressBar = document.getElementById('progressBar');
+        const currentStatus = document.getElementById('currentStatus');
+        const progressLog = document.getElementById('progressLog');
+        
+        if (data.type === 'progress') {
+            // Update progress bar (estimate based on step count)
+            const progress = Math.min(90, step * 10);
+            progressBar.style.width = progress + '%';
+            
+            // Update current status
+            currentStatus.textContent = data.message;
+            
+            // Add to progress log
+            const logEntry = document.createElement('div');
+            logEntry.className = 'progress-step';
+            logEntry.innerHTML = `<i class="bi bi-check-circle-fill text-success me-1"></i>${data.message}`;
+            progressLog.appendChild(logEntry);
+            progressLog.scrollTop = progressLog.scrollHeight;
+            
+        } else if (data.type === 'complete') {
+            // Analysis complete - redirect to results
+            progressBar.style.width = '100%';
+            currentStatus.textContent = 'Analysis complete! Redirecting to results...';
+            
+            // Store results and redirect
+            sessionStorage.setItem('analysisResults', JSON.stringify(data));
+            setTimeout(() => {
+                window.location.href = '/results';
+            }, 1000);
+            
+        } else if (data.type === 'error') {
+            showError(data.message);
+        }
+    }
+    
+    function showError(message) {
+        document.getElementById('progressMessages').innerHTML = `
+            <div class="alert alert-danger">
+                <i class="bi bi-exclamation-triangle me-2"></i>${message}
+            </div>
+        `;
+    }
+});
+</script>
+{% endblock %} 

@@ -1,4 +1,4 @@
-# NVIDIA GPU Requirements Analyzer Dependencies
+# Notebook Analyzer Dependencies
 # Install with: pip install -r requirements.txt
 
 # Core dependencies for HTTP requests and JSON processing
@@ -6,6 +6,10 @@ requests>=2.32.0
 
 # Required for Python 3.8+ compatibility and type hints
 typing-extensions==4.8.0
+
+# Web framework dependencies (for web interface)
+Flask>=3.0.0
+Werkzeug>=3.0.0
 
 # Optional: Enhanced JSON parsing (fallback for complex notebook formats)
 # jsonschema==4.20.0
@@ -24,6 +28,7 @@ typing-extensions==4.8.0
 # - dataclasses (built-in since Python 3.7)
 # - urllib.parse (built-in Python module for URL handling)
 # - pathlib (built-in Python module for file system paths)
+# - tempfile (built-in Python module for temporary files)
 
 # For LLM enhancement (optional):
 # Set environment variables instead of installing additional packages:
@@ -36,3 +41,8 @@ typing-extensions==4.8.0
 
 # Security Note: Updated to requests>=2.32.0 to address vulnerability CVE-2024-35195
 # This version fixes the Session verify=False persistence issue
+
+# Usage Notes:
+# - CLI tool: python notebook-analyzer.py [options]
+# - Web interface: python app.py (requires Flask dependencies above)
+# - Web interface specific: Bootstrap 5.1.3 and Bootstrap Icons are loaded via CDN

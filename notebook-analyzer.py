@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-NVIDIA GPU Requirements Analyzer for Jupyter Notebooks
+Notebook Analyzer for Jupyter Notebooks
 
 This script analyzes Jupyter notebooks to determine minimum GPU requirements
 based on the code patterns, libraries used, and computational workloads.

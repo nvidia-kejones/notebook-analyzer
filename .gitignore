@@ -1,4 +1,84 @@
+# ============================================================================
+# SECURITY & SECRETS - DO NOT COMMIT THESE FILES!
+# ============================================================================
+
+# Environment files (API keys, tokens, secrets)
 *.env
+.env*
+!.env.example
+env.local
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# API Keys and Tokens
+*api*key*
+*token*
+*secret*
+*.key
+*.pem
+*.p12
+*.pfx
+*credentials*
+auth.json
+config.json
+secrets.yaml
+secrets.yml
+
+# Docker secrets and volumes
+docker-compose.override.yml
+.docker/
+docker-data/
+volumes/
+
+# ============================================================================
+# APPLICATION-SPECIFIC FILES
+# ============================================================================
+
+# Notebook uploads and temporary files
+uploads/
+tmp/
+temp/
+notebooks/
+*.ipynb.tmp
+
+# Log files and directories
+logs/
+*.log
+*.log.*
+access.log
+error.log
+debug.log
+app.log
+
+# Session and cache data
+sessions/
+cache/
+.cache/
+*.pid
+*.lock
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+data/
+
+# SSL/TLS certificates and keys
+ssl/
+certs/
+*.crt
+*.cert
+*.ca-bundle
+*.p7b
+*.p7s
+*.der
+
+# ============================================================================
+# DEVELOPMENT & BUILD FILES
+# ============================================================================
+
 bin/
 *.TAG
 *.cfg
@@ -177,3 +257,118 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# ============================================================================
+# IDE & EDITOR FILES
+# ============================================================================
+
+# Visual Studio Code
+.vscode/
+*.code-workspace
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Vim
+*.swp
+*.swo
+*~
+
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+auto-save-list
+tramp
+.\#*
+
+# ============================================================================
+# OPERATING SYSTEM FILES
+# ============================================================================
+
+# macOS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# Linux
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# ============================================================================
+# BACKUP & TEMPORARY FILES
+# ============================================================================
+
+# Backup files
+*.bak
+*.backup
+*.orig
+*.save
+*~
+
+# Compressed files
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.zip
+
+# ============================================================================
+# DOCKER & CONTAINER FILES
+# ============================================================================
+
+# Docker build context files
+.dockerignore.tmp
+docker-compose.prod.yml
+docker-compose.dev.yml
+
+# Container runtime files
+.container-*
+*.container
+
+# ============================================================================
+# CUSTOM APPLICATION FILES
+# ============================================================================
+
+# MCP configuration with real credentials (keep example)
+mcp_config.local.json
+mcp_servers.json
+
+# Local development overrides
+local_settings.py
+development.py
+production.py
+
+# Performance and profiling
+*.prof
+*.profile
+*.pyprof
+
+# Testing output
+test_results/
+coverage_html/
+.coverage*
