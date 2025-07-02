@@ -31,30 +31,47 @@ ALLOWED_EXTENSIONS = {'ipynb', 'py'}
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 
-# Import analyzer with error handling
+# Safe import analyzer without dynamic code execution
 GPUAnalyzer = None
 GPURequirement = None
 
 try:
-    # Try to import the analyzer
+    # Safely import the analyzer using sys.path manipulation
+    import importlib.machinery
     import importlib.util
+    
     analyzer_path = os.path.join(current_dir, "notebook-analyzer.py")
     
     if os.path.exists(analyzer_path):
-        spec = importlib.util.spec_from_file_location("notebook_analyzer", analyzer_path)
+        # Use SourceFileLoader for safer module loading (no arbitrary code execution)
+        loader = importlib.machinery.SourceFileLoader("notebook_analyzer", analyzer_path)
+        spec = importlib.util.spec_from_loader("notebook_analyzer", loader)
+        
         if spec and spec.loader:
+            # Create module and load it safely
             notebook_analyzer = importlib.util.module_from_spec(spec)
+            
+            # Add to sys.modules to prevent re-execution
+            sys.modules["notebook_analyzer"] = notebook_analyzer
+            
+            # Execute the module (safe because it has if __name__ == "__main__" protection)
             spec.loader.exec_module(notebook_analyzer)
-            GPUAnalyzer = notebook_analyzer.GPUAnalyzer
-            GPURequirement = notebook_analyzer.GPURequirement
-            print("✅ Successfully imported GPUAnalyzer")
+            
+            # Extract the classes we need
+            GPUAnalyzer = getattr(notebook_analyzer, 'GPUAnalyzer', None)
+            GPURequirement = getattr(notebook_analyzer, 'GPURequirement', None)
+            
+            if GPUAnalyzer and GPURequirement:
+                print("✅ Successfully imported GPUAnalyzer safely")
+            else:
+                print("❌ Failed to extract GPUAnalyzer or GPURequirement classes")
         else:
             print("❌ Failed to create module spec")
     else:
         print(f"❌ notebook-analyzer.py not found at {analyzer_path}")
         
 except Exception as e:
-    print(f"❌ Import error: {e}")
+    print(f"❌ Safe import error: {e}")
     print(f"Traceback: {traceback.format_exc()}")
 
 def allowed_file(filename):

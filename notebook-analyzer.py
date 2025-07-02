@@ -13,6 +13,7 @@ import ast
 import argparse
 import os
 import sys
+import ipaddress
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
@@ -299,7 +300,15 @@ Respond in JSON format:
 
 class GPUAnalyzer:
     def __init__(self, quiet_mode=False):
-        self.quiet_mode = quiet_mode  # Suppress output for JSON mode
+        self.quiet_mode = quiet_mode
+        
+        # URL validation configuration
+        self.allowed_domains = self._load_allowed_domains()
+        self.allowed_domain_patterns = [
+            r'gitlab\..*\.nvidia\.com',  # Any NVIDIA GitLab instance
+            r'.*\.github\.io',           # GitHub Pages
+            r'.*\.gitlab\.io'            # GitLab Pages
+        ]  # Suppress output for JSON mode
         
         # Initialize LLM analyzer if environment variables are set
         self.llm_analyzer = None
@@ -516,6 +525,109 @@ class GPUAnalyzer:
         
         # If no URL pattern found, return the first argument (could be a file path)
         return args[0]
+    
+    def _load_allowed_domains(self) -> List[str]:
+        """Load allowed domains from environment variable with secure defaults."""
+        default_domains = [
+            'github.com',
+            'gitlab.com', 
+            'raw.githubusercontent.com',
+            'gitlab-master.nvidia.com'  # NVIDIA internal GitLab
+        ]
+        
+        # Allow custom domains via environment variable
+        custom_domains = os.getenv('ALLOWED_DOMAINS', '')
+        if custom_domains:
+            custom_list = [domain.strip() for domain in custom_domains.split(',') if domain.strip()]
+            return custom_list
+        
+        return default_domains
+    
+    def _is_private_ip(self, ip_str: str) -> bool:
+        """Check if IP address is in private range."""
+        try:
+            ip = ipaddress.ip_address(ip_str)
+            return ip.is_private or ip.is_loopback or ip.is_link_local
+        except ValueError:
+            return False
+    
+    def _validate_url_security(self, url: str) -> Tuple[bool, str]:
+        """
+        Validate URL for security (SSRF prevention).
+        Returns (is_valid, error_message)
+        """
+        try:
+            parsed = urlparse(url)
+            
+            # Block non-HTTP protocols
+            if parsed.scheme not in ['http', 'https']:
+                return False, f"Unsupported protocol: {parsed.scheme}"
+            
+            # Require HTTPS for external domains (allow HTTP for internal)
+            if parsed.scheme == 'http' and not any(pattern in parsed.netloc for pattern in ['nvidia.com', 'localhost', '127.0.0.1']):
+                return False, "HTTP not allowed for external domains, use HTTPS"
+            
+            # Block localhost variations
+            localhost_patterns = ['localhost', '127.', '0.0.0.0', '::1']
+            if any(pattern in parsed.netloc.lower() for pattern in localhost_patterns):
+                return False, "Localhost access not allowed"
+            
+            # Block cloud metadata endpoints
+            metadata_endpoints = ['169.254.169.254', 'metadata.google.internal', 'metadata']
+            if any(endpoint in parsed.netloc.lower() for endpoint in metadata_endpoints):
+                return False, "Cloud metadata endpoint access blocked"
+            
+            # Resolve hostname to IP and check for private ranges
+            import socket
+            try:
+                ip = socket.gethostbyname(parsed.netloc)
+                if self._is_private_ip(ip):
+                    # Allow internal NVIDIA domains
+                    if not any(pattern in parsed.netloc.lower() for pattern in ['nvidia.com']):
+                        return False, f"Private IP address access blocked: {ip}"
+            except socket.gaierror:
+                # If we can't resolve, that's suspicious
+                return False, f"Cannot resolve hostname: {parsed.netloc}"
+            
+            # Check against allowed domains
+            hostname = parsed.netloc.lower()
+            
+            # Direct domain match
+            if hostname in [domain.lower() for domain in self.allowed_domains]:
+                return True, ""
+            
+            # Pattern matching for dynamic domains
+            for pattern in self.allowed_domain_patterns:
+                if re.match(pattern, hostname, re.IGNORECASE):
+                    return True, ""
+            
+            return False, f"Domain not in allowed list: {hostname}"
+            
+        except Exception as e:
+            return False, f"URL validation error: {str(e)}"
+    
+    def _validate_file_extension(self, url: str) -> Tuple[bool, str]:
+        """Validate that URL points to an allowed file type."""
+        allowed_extensions = ['.ipynb', '.py']
+        
+        # Extract path from URL
+        parsed = urlparse(url)
+        path = parsed.path.lower()
+        
+        # Check file extension
+        if any(path.endswith(ext) for ext in allowed_extensions):
+            return True, ""
+        
+        # Special handling for GitHub/GitLab URLs that may have query parameters
+        if any(service in parsed.netloc for service in ['github.com', 'gitlab']):
+            # For GitHub/GitLab blob URLs, the actual file extension might be in the path
+            path_parts = path.split('/')
+            if path_parts:
+                filename = path_parts[-1]
+                if any(filename.endswith(ext) for ext in allowed_extensions):
+                    return True, ""
+        
+        return False, f"File extension not allowed. Must be one of: {', '.join(allowed_extensions)}"
 
     def is_marimo_notebook(self, file_path: str) -> bool:
         """Check if a Python file is a marimo notebook."""
@@ -675,8 +787,25 @@ class GPUAnalyzer:
             if not url_or_path.startswith(('http://', 'https://')):
                 return self.load_local_notebook(url_or_path)
             
-            # Handle URLs
+            # Handle URLs - validate first for security
             url = url_or_path
+            
+            # Validate URL security (SSRF prevention)
+            is_valid_url, url_error = self._validate_url_security(url)
+            if not is_valid_url:
+                if not self.quiet_mode:
+                    print(f"❌ URL validation failed: {url_error}")
+                return None
+            
+            # Validate file extension
+            is_valid_ext, ext_error = self._validate_file_extension(url)
+            if not is_valid_ext:
+                if not self.quiet_mode:
+                    print(f"❌ File extension validation failed: {ext_error}")
+                return None
+            
+            if not self.quiet_mode:
+                print(f"✅ URL validation passed: {url}")
             
             # GitHub URL conversion with authentication support
             if 'github.com' in url and '/blob/' in url:
