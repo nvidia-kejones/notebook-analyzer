@@ -72,9 +72,12 @@ curl -X POST https://your-app.vercel.app/api/analyze \
 
 ```
 notebook-analyzer/
-├── api/
-│   └── app.py                    # Vercel-optimized Flask app
+├── app.py                        # Main entry point (imports from app_vercel.py)
+├── app_vercel.py                 # Vercel-optimized Flask app with full UI
 ├── templates/                    # HTML templates (unchanged)
+│   ├── base.html
+│   ├── index.html
+│   └── results.html
 ├── notebook-analyzer.py          # Core analyzer (unchanged)
 ├── requirements.txt              # Python dependencies
 ├── vercel.json                   # Vercel configuration
@@ -87,14 +90,18 @@ notebook-analyzer/
 ```json
 {
   "functions": {
-    "api/app.py": {
+    "app.py": {
       "maxDuration": 60
     }
   },
-  "rewrites": [
+  "routes": [
     {
-      "source": "/(.*)",
-      "destination": "/api/app"
+      "src": "/static/(.*)",
+      "dest": "/static/$1"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/app.py"
     }
   ]
 }
