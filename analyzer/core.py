@@ -306,14 +306,47 @@ Respond in JSON format with:
         enhanced_analysis = static_analysis.copy()
         llm_reasoning = []
         
+        # Check if LLM detected no workload that requires GPU
+        llm_complexity = llm_context.get('complexity', '').lower()
+        if llm_complexity in ['simple', 'none', 'basic']:
+            # Check if LLM reasoning indicates no GPU workload
+            llm_reasoning_text = ' '.join(llm_context.get('reasoning', [])).lower()
+            no_workload_indicators = [
+                'no explicit models', 'no training', 'no inference', 'no gpu',
+                'triggering compatibility warnings', 'no workload', 'no ml workload',
+                'no evidence of training', 'no evidence of inference'
+            ]
+            
+            if any(indicator in llm_reasoning_text for indicator in no_workload_indicators):
+                # LLM detected no GPU workload - override with CPU-only
+                enhanced_analysis.update({
+                    'min_gpu_type': 'CPU-only',
+                    'min_quantity': 0,
+                    'min_vram_gb': 0,
+                    'optimal_gpu_type': 'CPU-only',
+                    'optimal_quantity': 0,
+                    'optimal_vram_gb': 0,
+                    'min_runtime_estimate': 'N/A',
+                    'optimal_runtime_estimate': 'N/A',
+                    'workload_detected': False,
+                    'workload_type': 'none'
+                })
+                llm_reasoning.append("LLM analysis confirms no GPU workload detected - CPU-only recommended")
+                return enhanced_analysis, llm_reasoning
+        
+        # Only proceed with GPU enhancement if workload was detected
+        if not static_analysis.get('workload_detected', True):
+            llm_reasoning.append("No GPU workload detected - maintaining CPU-only recommendation")
+            return enhanced_analysis, llm_reasoning
+        
         # Enhance VRAM estimate with LLM insights
         if 'estimated_vram_gb' in llm_context and llm_context['estimated_vram_gb']:
             llm_vram = llm_context['estimated_vram_gb']
-            static_vram = static_analysis.get('vram_required', 8)
+            static_vram = static_analysis.get('min_vram_gb', 8)
             
             # Use higher estimate but cap at reasonable limits
             enhanced_vram = max(llm_vram, static_vram)
-            enhanced_analysis['vram_required'] = min(enhanced_vram, 200)  # Cap at 200GB
+            enhanced_analysis['min_vram_gb'] = min(enhanced_vram, 200)  # Cap at 200GB
             
             if abs(llm_vram - static_vram) > 4:  # Significant difference
                 llm_reasoning.append(f"LLM estimated {llm_vram}GB vs static analysis {static_vram}GB")
@@ -329,13 +362,15 @@ Respond in JSON format with:
             if optimizations:
                 # Reduce VRAM estimate if memory optimizations are detected
                 reduction_factor = 0.7 if len(optimizations) > 1 else 0.85
-                enhanced_analysis['vram_required'] = int(enhanced_analysis['vram_required'] * reduction_factor)
+                current_vram = enhanced_analysis.get('min_vram_gb', 8)
+                enhanced_analysis['min_vram_gb'] = max(4, int(current_vram * reduction_factor))
                 llm_reasoning.append(f"Memory optimizations detected: {', '.join(optimizations)}")
         
         # Multi-GPU insights
         if 'multi_gpu_required' in llm_context and llm_context['multi_gpu_required']:
-            if not static_analysis.get('multi_gpu_needed', 1) > 1:
-                enhanced_analysis['multi_gpu_needed'] = 2
+            if not static_analysis.get('optimal_quantity', 1) > 1:
+                enhanced_analysis['optimal_quantity'] = 2
+                enhanced_analysis['sxm_required'] = True
                 llm_reasoning.append("LLM detected multi-GPU requirements not caught by static analysis")
         
         # Add LLM reasoning
@@ -1275,24 +1310,67 @@ class GPUAnalyzer:
         
     def _perform_static_analysis(self, code_cells: List[str], markdown_cells: List[str]) -> Dict:
         """Perform static analysis of notebook content."""
+        # Start with CPU-only defaults and scale up based on detected patterns
         analysis = {
-            'min_gpu_type': 'L4',
-            'min_quantity': 1,
-            'min_vram_gb': 24,
-            'optimal_gpu_type': 'A100 SXM 80G',
-            'optimal_quantity': 1,
-            'optimal_vram_gb': 80,
-            'min_runtime_estimate': '2-4 hours',
-            'optimal_runtime_estimate': '30-60 minutes',
+            'min_gpu_type': 'CPU-only',
+            'min_quantity': 0,
+            'min_vram_gb': 0,
+            'optimal_gpu_type': 'CPU-only',
+            'optimal_quantity': 0,
+            'optimal_vram_gb': 0,
+            'min_runtime_estimate': 'N/A',
+            'optimal_runtime_estimate': 'N/A',
             'sxm_required': False,
             'sxm_reasoning': [],
             'arm_compatibility': 'Likely Compatible',
             'arm_reasoning': [],
             'confidence': 0.7,
-            'reasoning': []
+            'reasoning': [],
+            'workload_detected': False,
+            'workload_type': 'none'
         }
         
         all_code = '\n'.join(code_cells)
+        
+        # First, detect if there's any actual GPU/ML workload
+        gpu_workload_patterns = [
+            # Training patterns
+            r'\b(?:train|fit|epoch|optimizer|loss|backward|gradient)\b',
+            # Inference patterns
+            r'\b(?:predict|inference|forward|model\.eval|torch\.no_grad)\b',
+            # Model loading/creation
+            r'\b(?:from_pretrained|load_model|create_model|Model\(|Sequential\()\b',
+            # GPU-specific operations
+            r'\b(?:\.cuda\(\)|\.gpu\(\)|device=.*["\']cuda["\']|torch\.cuda|CUDA_VISIBLE_DEVICES)\b',
+            # Deep learning frameworks in actual usage (not just imports)
+            r'\b(?:torch\.|tf\.|tensorflow\.|model\.|transformers\.|datasets\.)\w+',
+            # Data processing for ML
+            r'\b(?:DataLoader|Dataset|batch_size|transform|preprocessing)\b'
+        ]
+        
+        workload_detected = any(re.search(pattern, all_code, re.IGNORECASE) for pattern in gpu_workload_patterns)
+        
+        if not workload_detected:
+            # Check for simple library imports that might indicate ML intent
+            simple_ml_imports = [
+                r'import torch\b', r'import tensorflow\b', r'import transformers\b',
+                r'from torch', r'from tensorflow', r'from transformers',
+                r'import sklearn\b', r'from sklearn'
+            ]
+            has_ml_imports = any(re.search(pattern, all_code, re.IGNORECASE) for pattern in simple_ml_imports)
+            
+            if has_ml_imports:
+                # Has ML imports but no actual workload - might be a demo/tutorial
+                analysis['workload_type'] = 'demonstration'
+                analysis['reasoning'].append("ML libraries imported but no active GPU workload detected")
+            else:
+                # No ML workload at all
+                analysis['workload_type'] = 'none'
+                analysis['reasoning'].append("No GPU workload or ML frameworks detected - CPU-only notebook")
+                return analysis
+        
+        # If we get here, there's some form of GPU/ML workload
+        analysis['workload_detected'] = True
         
         # Detect frameworks and patterns
         detected_frameworks = []
@@ -1300,8 +1378,22 @@ class GPUAnalyzer:
             if any(re.search(pattern, all_code, re.IGNORECASE) for pattern in patterns):
                 detected_frameworks.append(framework)
         
+        if not detected_frameworks:
+            # Has workload patterns but no clear framework detection
+            analysis['workload_type'] = 'basic'
+            analysis['min_gpu_type'] = 'RTX 4060'
+            analysis['min_quantity'] = 1
+            analysis['min_vram_gb'] = 8
+            analysis['optimal_gpu_type'] = 'RTX 4070'
+            analysis['optimal_quantity'] = 1
+            analysis['optimal_vram_gb'] = 12
+            analysis['min_runtime_estimate'] = '30-60 minutes'
+            analysis['optimal_runtime_estimate'] = '15-30 minutes'
+            analysis['reasoning'].append("Basic GPU workload detected - entry-level GPU recommended")
+            return analysis
+        
         # Estimate VRAM requirements based on detected models
-        estimated_vram = 16  # Base requirement
+        estimated_vram = 8  # Start with entry-level requirement
         
         for model, specs in self.model_specs.items():
             if model in all_code.lower():
@@ -1313,8 +1405,12 @@ class GPUAnalyzer:
         is_training = any(pattern in all_code.lower() for pattern in training_patterns)
         
         if is_training:
-            estimated_vram *= 2  # Training requires more memory
-            analysis['reasoning'].append("Training workload detected - doubled VRAM estimate")
+            estimated_vram = int(estimated_vram * 1.5)  # Training requires more memory
+            analysis['reasoning'].append("Training workload detected - increased VRAM estimate")
+            analysis['workload_type'] = 'training'
+        else:
+            analysis['workload_type'] = 'inference'
+            analysis['reasoning'].append("Inference workload detected")
         
         # Check for multi-GPU patterns
         for pattern in self.sxm_patterns:
@@ -1322,14 +1418,47 @@ class GPUAnalyzer:
                 analysis['sxm_required'] = True
                 analysis['sxm_reasoning'].append(f"Multi-GPU pattern detected: {pattern}")
         
-        # Update recommendations based on analysis
-        analysis['min_vram_gb'] = max(24, estimated_vram)
-        analysis['optimal_vram_gb'] = max(80, estimated_vram * 2)
+        # Set GPU recommendations based on estimated VRAM needs
+        if estimated_vram <= 8:
+            # Entry-level workload
+            analysis['min_gpu_type'] = 'RTX 4060'
+            analysis['min_vram_gb'] = 8
+            analysis['optimal_gpu_type'] = 'RTX 4070'
+            analysis['optimal_vram_gb'] = 12
+            analysis['min_runtime_estimate'] = '1-2 hours'
+            analysis['optimal_runtime_estimate'] = '30-60 minutes'
+        elif estimated_vram <= 16:
+            # Mid-tier workload
+            analysis['min_gpu_type'] = 'RTX 4070'
+            analysis['min_vram_gb'] = 12
+            analysis['optimal_gpu_type'] = 'RTX 4080'
+            analysis['optimal_vram_gb'] = 16
+            analysis['min_runtime_estimate'] = '2-4 hours'
+            analysis['optimal_runtime_estimate'] = '1-2 hours'
+        elif estimated_vram <= 24:
+            # High-end workload
+            analysis['min_gpu_type'] = 'RTX 4090'
+            analysis['min_vram_gb'] = 24
+            analysis['optimal_gpu_type'] = 'L4'
+            analysis['optimal_vram_gb'] = 24
+            analysis['min_runtime_estimate'] = '3-6 hours'
+            analysis['optimal_runtime_estimate'] = '1-2 hours'
+        else:
+            # Enterprise workload
+            analysis['min_gpu_type'] = 'L4'
+            analysis['min_vram_gb'] = 24
+            analysis['optimal_gpu_type'] = 'A100 SXM 80G'
+            analysis['optimal_vram_gb'] = 80
+            analysis['min_runtime_estimate'] = '4-8 hours'
+            analysis['optimal_runtime_estimate'] = '1-3 hours'
         
-        if estimated_vram > 40:
-            analysis['min_gpu_type'] = 'L40'
-            analysis['optimal_gpu_type'] = 'H100 SXM'
-        
+        # Set quantities
+        analysis['min_quantity'] = 1
+        analysis['optimal_quantity'] = 1
+        if analysis['sxm_required']:
+            analysis['optimal_quantity'] = 2
+            analysis['reasoning'].append("Multi-GPU setup recommended for optimal performance")
+
         # Enhanced ARM compatibility assessment
         arm_compatibility_score = 0
         arm_issues = []
