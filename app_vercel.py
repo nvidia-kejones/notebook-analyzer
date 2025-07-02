@@ -139,14 +139,36 @@ def analyze():
         
         # Check if it's a file upload or URL
         if 'file' in request.files and request.files['file'].filename:
-            # File upload analysis
+            # File upload analysis with sanitization
             file = request.files['file']
             if file and allowed_file(file.filename):
                 filename = secure_filename(file.filename)
-                filepath = os.path.join('/tmp', filename)
-                file.save(filepath)
                 
                 try:
+                    # Read file content for sanitization
+                    file_content = file.read()
+                    
+                    # Sanitize the uploaded file before processing
+                    is_safe, error_msg, sanitized_content = analyzer.sanitize_file_content(file_content, filename)
+                    
+                    if not is_safe:
+                        flash(f'File upload blocked for security: {error_msg}', 'error')
+                        return redirect(url_for('index'))
+                    
+                    # Save sanitized content to temp file
+                    filepath = os.path.join('/tmp', filename)
+                    
+                    # Write sanitized content
+                    if filename.lower().endswith('.ipynb'):
+                        # For notebooks, save the sanitized JSON
+                        with open(filepath, 'w', encoding='utf-8') as f:
+                            json.dump(sanitized_content, f)
+                    elif filename.lower().endswith('.py'):
+                        # For Python files, save the sanitized content
+                        python_content = sanitized_content.get('content', '') if sanitized_content else ''
+                        with open(filepath, 'w', encoding='utf-8') as f:
+                            f.write(python_content)
+                    
                     result = analyzer.analyze_notebook(filepath)
                     if result:
                         analysis_data = format_analysis_for_web(result)
@@ -156,6 +178,8 @@ def analyze():
                                              source_name=filename)
                     else:
                         flash('Failed to analyze the uploaded notebook. Please check the file format.', 'error')
+                except Exception as e:
+                    flash(f'Error processing uploaded file: {str(e)}', 'error')
                 finally:
                     # Clean up temp file
                     if os.path.exists(filepath):
@@ -212,16 +236,34 @@ def api_analyze():
             file = request.files['file']
             if file and allowed_file(file.filename):
                 filename = secure_filename(file.filename)
-                filepath = os.path.join('/tmp', filename)
-                file.save(filepath)
                 
                 try:
+                    # Read and sanitize file content
+                    file_content = file.read()
+                    is_safe, error_msg, sanitized_content = analyzer.sanitize_file_content(file_content, filename)
+                    
+                    if not is_safe:
+                        return jsonify({'error': f'File upload blocked for security: {error_msg}'}), 400
+                    
+                    # Save sanitized content to temp file
+                    filepath = os.path.join('/tmp', filename)
+                    
+                    if filename.lower().endswith('.ipynb'):
+                        with open(filepath, 'w', encoding='utf-8') as f:
+                            json.dump(sanitized_content, f)
+                    elif filename.lower().endswith('.py'):
+                        python_content = sanitized_content.get('content', '') if sanitized_content else ''
+                        with open(filepath, 'w', encoding='utf-8') as f:
+                            f.write(python_content)
+                    
                     result = analyzer.analyze_notebook(filepath)
                     if result:
                         analysis_data = format_analysis_for_web(result)
                         return jsonify({'success': True, 'analysis': analysis_data})
                     else:
                         return jsonify({'error': 'Failed to analyze notebook'}), 400
+                except Exception as e:
+                    return jsonify({'error': f'File processing error: {str(e)}'}), 500
                 finally:
                     if os.path.exists(filepath):
                         os.remove(filepath)
@@ -247,14 +289,38 @@ def analyze_stream():
     
     # Check if it's a file upload or URL
     if 'file' in request.files and request.files['file'].filename:
-        # File upload analysis
+        # File upload analysis with sanitization
         file = request.files['file']
         if file and allowed_file(file.filename):
             filename = secure_filename(file.filename)
-            file_path = os.path.join('/tmp', filename)
-            file.save(file_path)
-            source_name = filename
-            analysis_input = {'type': 'file', 'path': file_path, 'name': filename}
+            
+            try:
+                # Read and sanitize file content
+                file_content = file.read()
+                
+                # Create temporary analyzer instance for sanitization
+                temp_analyzer = GPUAnalyzer(quiet_mode=True)
+                is_safe, error_msg, sanitized_content = temp_analyzer.sanitize_file_content(file_content, filename)
+                
+                if not is_safe:
+                    return jsonify({'error': f'File upload blocked for security: {error_msg}'}), 400
+                
+                # Save sanitized content to temp file
+                file_path = os.path.join('/tmp', filename)
+                
+                if filename.lower().endswith('.ipynb'):
+                    with open(file_path, 'w', encoding='utf-8') as f:
+                        json.dump(sanitized_content, f)
+                elif filename.lower().endswith('.py'):
+                    python_content = sanitized_content.get('content', '') if sanitized_content else ''
+                    with open(file_path, 'w', encoding='utf-8') as f:
+                        f.write(python_content)
+                
+                source_name = filename
+                analysis_input = {'type': 'file', 'path': file_path, 'name': filename}
+                
+            except Exception as e:
+                return jsonify({'error': f'File processing error: {str(e)}'}), 500
         else:
             return jsonify({'error': 'Invalid file type. Please upload a .ipynb or .py file.'}), 400
             

@@ -495,6 +495,77 @@ class GPUAnalyzer:
             'transformers',
             'diffusers',
         ]
+        
+        # File content sanitization configuration
+        self.sanitization_mode = os.getenv('SANITIZATION_MODE', 'strict')  # strict|permissive|audit
+        self.max_cells_per_notebook = int(os.getenv('MAX_CELLS_PER_NOTEBOOK', '500'))
+        self.max_cell_size_kb = int(os.getenv('MAX_CELL_SIZE_KB', '50'))
+        self.dangerous_pattern_action = os.getenv('DANGEROUS_PATTERN_ACTION', 'block')  # block|warn|log
+        
+        # Dangerous code patterns that should be blocked
+        self.dangerous_patterns = [
+            # System execution
+            r'os\.system\s*\(',
+            r'subprocess\.(run|call|Popen|check_output)',
+            r'shell\s*=\s*True',
+            r'os\.(popen|spawn|exec[lv]?[pe]?)',
+            
+            # Code execution
+            r'\beval\s*\(',
+            r'\bexec\s*\(',
+            r'\bcompile\s*\(',
+            r'__import__\s*\(',
+            
+            # File system manipulation (dangerous paths)
+            r'open\s*\([^)]*["\'][\./]*(?:etc|proc|sys|dev)/',
+            r'pathlib\.Path\([^)]*["\'][\./]*(?:etc|proc|sys|dev)/',
+            r'os\.(remove|unlink|rmdir)',
+            r'shutil\.(rmtree|move|copytree)',
+            
+            # Network operations to private ranges
+            r'requests\.(get|post|put|delete)\([^)]*["\']https?://(?:127\.|10\.|192\.168\.|172\.(?:1[6-9]|2[0-9]|3[01])\.)',
+            r'urllib\.request\.urlopen\([^)]*["\']https?://(?:127\.|10\.|192\.168\.|172\.(?:1[6-9]|2[0-9]|3[01])\.)',
+            
+            # Serialization attacks
+            r'pickle\.(loads?|dumps?)',
+            r'marshal\.(loads?|dumps?)',
+            r'dill\.(loads?|dumps?)',
+            
+            # Import manipulation
+            r'importlib\.import_module',
+            r'sys\.modules\[',
+            
+            # Environment manipulation
+            r'os\.environ\[["\'](?:PATH|PYTHONPATH|LD_LIBRARY_PATH)',
+            
+            # IPython magic commands that can execute system commands
+            r'^\s*%\s*system\s',
+            r'^\s*!\s*(?:rm|sudo|chmod|chown)',
+            r'%%bash',
+            r'%%sh',
+            r'%%script',
+        ]
+        
+        # Suspicious patterns that should be logged but may be allowed
+        self.suspicious_patterns = [
+            # Large data operations
+            r'torch\.zeros\([^)]*[0-9]{6,}',  # Very large tensor creation
+            r'numpy\.zeros\([^)]*[0-9]{6,}',  # Very large array creation
+            r'torch\.randn\([^)]*[0-9]{6,}',  # Large random tensors
+            
+            # Memory-intensive operations
+            r'\.cuda\(\).*\.cuda\(\)',  # Multiple GPU memory allocations
+            r'batch_size\s*=\s*[0-9]{4,}',  # Extremely large batch sizes
+            
+            # Potentially dangerous but legitimate operations
+            r'torch\.load\(',  # Loading pickled models (could be dangerous)
+            r'joblib\.load\(',  # Loading pickled models
+            r'with\s+open\([^)]*["\'][\./]*tmp/',  # Writing to tmp directory
+        ]
+        
+        # Compile regex patterns for better performance
+        self.compiled_dangerous_patterns = [re.compile(pattern, re.IGNORECASE | re.MULTILINE) for pattern in self.dangerous_patterns]
+        self.compiled_suspicious_patterns = [re.compile(pattern, re.IGNORECASE | re.MULTILINE) for pattern in self.suspicious_patterns]
 
     def sanitize_url_args(self, args: List[str]) -> str:
         """
@@ -628,6 +699,315 @@ class GPUAnalyzer:
                     return True, ""
         
         return False, f"File extension not allowed. Must be one of: {', '.join(allowed_extensions)}"
+    
+    def _log_security_event(self, event_type: str, filename: str, patterns: List[str], content_sample: str = ""):
+        """Log security events for monitoring and analysis."""
+        try:
+            import datetime
+            security_log = {
+                'timestamp': datetime.datetime.utcnow().isoformat(),
+                'event_type': event_type,  # 'blocked_dangerous', 'suspicious_pattern', etc.
+                'filename': filename,
+                'patterns_matched': patterns,
+                'content_sample': content_sample[:200] if content_sample else "",  # First 200 chars for context
+                'sanitization_mode': self.sanitization_mode
+            }
+            
+            if not self.quiet_mode:
+                print(f"🔒 Security Event: {event_type} in {filename}")
+                for pattern in patterns:
+                    print(f"   • Matched pattern: {pattern}")
+        except Exception as e:
+            # Don't let logging errors break the main functionality
+            if not self.quiet_mode:
+                print(f"⚠️ Logging error: {e}")
+    
+    def _validate_file_preprocessing(self, content: bytes, filename: str) -> Tuple[bool, str]:
+        """Validate file before processing - Layer 1 sanitization."""
+        try:
+            # File size check (already enforced by Flask, but double-check)
+            max_size = 16 * 1024 * 1024  # 16MB
+            if len(content) > max_size:
+                return False, f"File too large: {len(content)} bytes > {max_size} bytes"
+            
+            # Encoding validation - ensure valid UTF-8
+            try:
+                decoded_content = content.decode('utf-8')
+            except UnicodeDecodeError as e:
+                return False, f"Invalid UTF-8 encoding: {str(e)}"
+            
+            # Basic binary content detection
+            # Check for null bytes or excessive binary characters
+            null_bytes = decoded_content.count('\x00')
+            if null_bytes > 0:
+                return False, "Binary content detected (null bytes found)"
+            
+            # Check for reasonable text content ratio
+            printable_chars = sum(1 for c in decoded_content if c.isprintable() or c.isspace())
+            if len(decoded_content) > 100 and printable_chars / len(decoded_content) < 0.95:
+                return False, "Content appears to be binary or heavily encoded"
+            
+            # Basic format validation
+            if filename.lower().endswith('.ipynb'):
+                try:
+                    json.loads(decoded_content)
+                except json.JSONDecodeError as e:
+                    return False, f"Invalid JSON format for .ipynb file: {str(e)}"
+            elif filename.lower().endswith('.py'):
+                # Basic Python syntax check using AST
+                try:
+                    ast.parse(decoded_content)
+                except SyntaxError as e:
+                    return False, f"Invalid Python syntax: {str(e)}"
+            
+            return True, ""
+            
+        except Exception as e:
+            return False, f"Preprocessing validation error: {str(e)}"
+    
+    def _scan_dangerous_patterns(self, content: str, filename: str) -> Tuple[bool, List[str]]:
+        """Scan content for dangerous patterns - Layer 2 sanitization."""
+        dangerous_matches = []
+        suspicious_matches = []
+        
+        try:
+            # Check dangerous patterns
+            for i, pattern in enumerate(self.compiled_dangerous_patterns):
+                matches = pattern.findall(content)
+                if matches:
+                    pattern_str = self.dangerous_patterns[i]
+                    dangerous_matches.append(pattern_str)
+                    
+                    # Get context around the match for logging
+                    match = pattern.search(content)
+                    if match:
+                        start = max(0, match.start() - 50)
+                        end = min(len(content), match.end() + 50)
+                        context = content[start:end].replace('\n', ' ')
+                        
+                        self._log_security_event(
+                            'blocked_dangerous_pattern',
+                            filename,
+                            [pattern_str],
+                            context
+                        )
+            
+            # Check suspicious patterns
+            for i, pattern in enumerate(self.compiled_suspicious_patterns):
+                matches = pattern.findall(content)
+                if matches:
+                    pattern_str = self.suspicious_patterns[i]
+                    suspicious_matches.append(pattern_str)
+                    
+                    self._log_security_event(
+                        'suspicious_pattern_detected',
+                        filename,
+                        [pattern_str]
+                    )
+            
+            # Handle dangerous patterns based on configuration
+            if dangerous_matches:
+                if self.dangerous_pattern_action == 'block':
+                    return False, f"Dangerous patterns detected: {', '.join(dangerous_matches[:3])}"
+                elif self.dangerous_pattern_action == 'warn':
+                    if not self.quiet_mode:
+                        print(f"⚠️ Warning: Dangerous patterns detected but allowing: {', '.join(dangerous_matches[:3])}")
+                # 'log' mode just logs and continues
+            
+            # Suspicious patterns are always allowed but logged
+            if suspicious_matches and not self.quiet_mode:
+                print(f"⚠️ Suspicious patterns detected: {', '.join(suspicious_matches[:3])}")
+            
+            return True, ""
+            
+        except Exception as e:
+            return False, f"Pattern scanning error: {str(e)}"
+    
+    def _validate_notebook_structure(self, notebook_json: Dict, filename: str) -> Tuple[bool, str]:
+        """Validate Jupyter notebook structure - Layer 3 sanitization."""
+        try:
+            # Check if it's a valid notebook structure
+            if 'cells' not in notebook_json:
+                return False, "Invalid notebook format: missing 'cells' field"
+            
+            cells = notebook_json['cells']
+            if not isinstance(cells, list):
+                return False, "Invalid notebook format: 'cells' must be a list"
+            
+            # Limit number of cells
+            if len(cells) > self.max_cells_per_notebook:
+                return False, f"Too many cells: {len(cells)} > {self.max_cells_per_notebook}"
+            
+            # Validate each cell
+            for i, cell in enumerate(cells):
+                if not isinstance(cell, dict):
+                    return False, f"Cell {i} is not a dictionary"
+                
+                # Check cell type
+                cell_type = cell.get('cell_type')
+                if cell_type not in ['code', 'markdown', 'raw']:
+                    return False, f"Invalid cell type in cell {i}: {cell_type}"
+                
+                # Check cell content size
+                source = cell.get('source', [])
+                if isinstance(source, list):
+                    content = ''.join(source)
+                else:
+                    content = str(source)
+                
+                content_size_kb = len(content.encode('utf-8')) / 1024
+                if content_size_kb > self.max_cell_size_kb:
+                    return False, f"Cell {i} too large: {content_size_kb:.1f}KB > {self.max_cell_size_kb}KB"
+                
+                # For code cells, scan for dangerous patterns
+                if cell_type == 'code' and content.strip():
+                    is_safe, error_msg = self._scan_dangerous_patterns(content, f"{filename}:cell_{i}")
+                    if not is_safe:
+                        return False, f"Cell {i}: {error_msg}"
+            
+            # Clean up any pre-executed outputs (security measure)
+            for cell in cells:
+                if 'outputs' in cell:
+                    cell['outputs'] = []
+                if 'execution_count' in cell:
+                    cell['execution_count'] = None
+            
+            return True, ""
+            
+        except Exception as e:
+            return False, f"Notebook structure validation error: {str(e)}"
+    
+    def _validate_python_content(self, python_code: str, filename: str) -> Tuple[bool, str]:
+        """Validate Python file content - Layer 4 sanitization."""
+        try:
+            # AST parsing safety check
+            try:
+                tree = ast.parse(python_code)
+            except SyntaxError as e:
+                return False, f"Python syntax error: {str(e)}"
+            
+            # Check for deeply nested structures (potential DoS)
+            class ComplexityChecker(ast.NodeVisitor):
+                def __init__(self):
+                    self.max_depth = 0
+                    self.current_depth = 0
+                    self.function_count = 0
+                    self.class_count = 0
+                
+                def visit(self, node):
+                    self.current_depth += 1
+                    self.max_depth = max(self.max_depth, self.current_depth)
+                    
+                    if isinstance(node, ast.FunctionDef):
+                        self.function_count += 1
+                    elif isinstance(node, ast.ClassDef):
+                        self.class_count += 1
+                    
+                    self.generic_visit(node)
+                    self.current_depth -= 1
+            
+            checker = ComplexityChecker()
+            checker.visit(tree)
+            
+            # Reasonable limits to prevent DoS
+            if checker.max_depth > 100:
+                return False, f"Code too deeply nested: depth {checker.max_depth} > 100"
+            if checker.function_count > 200:
+                return False, f"Too many function definitions: {checker.function_count} > 200"
+            if checker.class_count > 50:
+                return False, f"Too many class definitions: {checker.class_count} > 50"
+            
+            # Scan the content for dangerous patterns
+            is_safe, error_msg = self._scan_dangerous_patterns(python_code, filename)
+            if not is_safe:
+                return False, error_msg
+            
+            return True, ""
+            
+        except Exception as e:
+            return False, f"Python content validation error: {str(e)}"
+    
+    def _enforce_resource_limits(self, content: str) -> Tuple[bool, str]:
+        """Enforce resource limits during processing - Layer 5 sanitization."""
+        try:
+            # Content size limits
+            content_size_mb = len(content.encode('utf-8')) / (1024 * 1024)
+            if content_size_mb > 16:  # 16MB limit
+                return False, f"Content too large: {content_size_mb:.1f}MB > 16MB"
+            
+            # Line count limits (prevent DoS with massive line counts)
+            line_count = content.count('\n')
+            if line_count > 50000:  # 50k lines should be enough for any reasonable notebook
+                return False, f"Too many lines: {line_count} > 50000"
+            
+            # Individual line length limits
+            lines = content.split('\n')
+            for i, line in enumerate(lines[:1000]):  # Check first 1000 lines
+                if len(line) > 10000:  # 10k chars per line limit
+                    return False, f"Line {i+1} too long: {len(line)} chars > 10000"
+            
+            return True, ""
+            
+        except Exception as e:
+            return False, f"Resource limit validation error: {str(e)}"
+    
+    def sanitize_file_content(self, content: bytes, filename: str) -> Tuple[bool, str, Optional[Dict]]:
+        """
+        Comprehensive file content sanitization.
+        Returns (is_safe, error_message, sanitized_content)
+        """
+        try:
+            if not self.quiet_mode:
+                print(f"🔍 Sanitizing file: {filename}")
+            
+            # Layer 1: Pre-processing validation
+            is_valid, error_msg = self._validate_file_preprocessing(content, filename)
+            if not is_valid:
+                return False, f"Pre-processing failed: {error_msg}", None
+            
+            # Decode content for further processing
+            decoded_content = content.decode('utf-8')
+            
+            # Layer 5: Resource limits enforcement
+            is_valid, error_msg = self._enforce_resource_limits(decoded_content)
+            if not is_valid:
+                return False, f"Resource limits exceeded: {error_msg}", None
+            
+            # File type specific validation
+            if filename.lower().endswith('.ipynb'):
+                # Parse as JSON notebook
+                try:
+                    notebook_json = json.loads(decoded_content)
+                except json.JSONDecodeError as e:
+                    return False, f"Invalid JSON: {str(e)}", None
+                
+                # Layer 3: Notebook structure validation
+                is_valid, error_msg = self._validate_notebook_structure(notebook_json, filename)
+                if not is_valid:
+                    return False, f"Notebook validation failed: {error_msg}", None
+                
+                if not self.quiet_mode:
+                    print(f"✅ Notebook sanitization passed: {len(notebook_json.get('cells', []))} cells")
+                
+                return True, "", notebook_json
+                
+            elif filename.lower().endswith('.py'):
+                # Layer 4: Python content validation
+                is_valid, error_msg = self._validate_python_content(decoded_content, filename)
+                if not is_valid:
+                    return False, f"Python validation failed: {error_msg}", None
+                
+                if not self.quiet_mode:
+                    print(f"✅ Python file sanitization passed")
+                
+                # Return as a simple structure for consistency
+                return True, "", {'content': decoded_content, 'type': 'python'}
+            
+            else:
+                return False, "Unsupported file type", None
+                
+        except Exception as e:
+            return False, f"Sanitization error: {str(e)}", None
 
     def is_marimo_notebook(self, file_path: str) -> bool:
         """Check if a Python file is a marimo notebook."""
@@ -734,7 +1114,7 @@ class GPUAnalyzer:
             return None
 
     def load_local_notebook(self, file_path: str) -> Optional[Dict]:
-        """Load notebook from local file system (supports both Jupyter and marimo)."""
+        """Load notebook from local file system with sanitization."""
         try:
             path = Path(file_path)
             if not path.exists():
@@ -742,28 +1122,42 @@ class GPUAnalyzer:
                     print(f"❌ File not found: {file_path}")
                 return None
             
+            # Read file content as bytes for sanitization
+            with open(path, 'rb') as f:
+                file_content = f.read()
+            
+            # Sanitize the file content
+            filename = path.name
+            is_safe, error_msg, sanitized_content = self.sanitize_file_content(file_content, filename)
+            
+            if not is_safe:
+                if not self.quiet_mode:
+                    print(f"❌ File sanitization failed: {error_msg}")
+                return None
+            
             file_extension = path.suffix.lower()
             
             # Handle Jupyter notebooks (.ipynb)
             if file_extension == '.ipynb':
                 if not self.quiet_mode:
-                    print(f"📁 Loading Jupyter notebook: {file_path}")
-                with open(path, 'r', encoding='utf-8') as f:
-                    notebook_data = json.load(f)
-                
-                if not self.quiet_mode:
-                    print(f"✅ Successfully loaded Jupyter notebook")
-                return notebook_data
+                    print(f"📁 Loaded and sanitized Jupyter notebook: {file_path}")
+                return sanitized_content
             
-            # Handle Python files (check for marimo)
+            # Handle Python files
             elif file_extension == '.py':
-                if self.is_marimo_notebook(file_path):
-                    return self.parse_marimo_notebook(file_path)
-                else:
-                    if not self.quiet_mode:
-                        print(f"❌ Python file is not a marimo notebook: {file_path}")
-                        print(f"💡 Marimo notebooks should contain @app.cell decorators")
-                    return None
+                if sanitized_content and sanitized_content.get('type') == 'python':
+                    python_content = sanitized_content.get('content', '')
+                    
+                    # Check if it's a marimo notebook
+                    if self._is_marimo_content(python_content):
+                        if not self.quiet_mode:
+                            print(f"📖 Detected and sanitized marimo notebook: {file_path}")
+                        return self._parse_marimo_content(python_content)
+                    else:
+                        if not self.quiet_mode:
+                            print(f"❌ Python file is not a marimo notebook: {file_path}")
+                            print(f"💡 Marimo notebooks should contain @app.cell decorators")
+                        return None
             
             else:
                 if not self.quiet_mode:
@@ -771,14 +1165,61 @@ class GPUAnalyzer:
                     print(f"💡 Supported formats: .ipynb (Jupyter), .py (marimo)")
                 return None
             
-        except json.JSONDecodeError as e:
-            if not self.quiet_mode:
-                print(f"❌ Invalid JSON in notebook file: {e}")
-            return None
         except Exception as e:
             if not self.quiet_mode:
                 print(f"❌ Error reading local file: {e}")
             return None
+    
+    def _is_marimo_content(self, python_code: str) -> bool:
+        """Check if Python content is a marimo notebook."""
+        marimo_patterns = [
+            r'import\s+marimo',
+            r'@app\.cell',
+            r'app\s*=\s*marimo\.App',
+            r'mo\.',  # Common marimo usage pattern
+        ]
+        
+        for pattern in marimo_patterns:
+            if re.search(pattern, python_code, re.IGNORECASE):
+                return True
+        return False
+    
+    def _parse_marimo_content(self, python_code: str) -> Dict:
+        """Parse marimo Python content into notebook-like structure."""
+        try:
+            # Split marimo cells based on @app.cell decorators
+            cell_pattern = r'@app\.cell[^\n]*\n((?:.*\n)*?)(?=@app\.cell|\Z)'
+            matches = re.findall(cell_pattern, python_code, re.MULTILINE)
+            
+            cells = []
+            if matches:
+                for match in matches:
+                    cells.append({
+                        'cell_type': 'code',
+                        'source': [match.strip()]
+                    })
+            else:
+                # If no clear cell structure, treat as single cell
+                cells.append({
+                    'cell_type': 'code',
+                    'source': [python_code]
+                })
+            
+            return {
+                'cells': cells,
+                'metadata': {'marimo_notebook': True},
+                'nbformat': 4,
+                'nbformat_minor': 4
+            }
+            
+        except Exception:
+            # Fallback: treat as single code cell
+            return {
+                'cells': [{'cell_type': 'code', 'source': [python_code]}],
+                'metadata': {'python_file': True},
+                'nbformat': 4,
+                'nbformat_minor': 4
+            }
 
     def fetch_notebook(self, url_or_path: str) -> Optional[Dict]:
         """Fetch notebook content from URL or load from local file."""
