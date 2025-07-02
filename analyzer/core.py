@@ -464,24 +464,20 @@ class GPUAnalyzer:
         
         # Initialize LLM if API key is available
         openai_api_key = os.getenv('OPENAI_API_KEY')
-        nvidia_api_key = os.getenv('NVIDIA_API_KEY')
+        openai_base_url = os.getenv('OPENAI_BASE_URL', 'https://api.openai.com')
+        openai_model = os.getenv('OPENAI_MODEL', 'gpt-4')
         
-        if nvidia_api_key:
+        if openai_api_key:
             self.llm_analyzer = LLMAnalyzer(
-                base_url="https://integrate.api.nvidia.com",
-                model="nvidia/llama-3.1-nemotron-ultra-253b-v1",
-                api_key=nvidia_api_key
-            )
-            if not self.quiet_mode:
-                print("✅ LLM enhancement enabled using nvidia/llama-3.1-nemotron-ultra-253b-v1")
-        elif openai_api_key:
-            self.llm_analyzer = LLMAnalyzer(
-                base_url="https://api.openai.com",
-                model="gpt-4",
+                base_url=openai_base_url,
+                model=openai_model,
                 api_key=openai_api_key
             )
             if not self.quiet_mode:
-                print("✅ LLM enhancement enabled using GPT-4")
+                if 'nvidia.com' in openai_base_url:
+                    print(f"✅ LLM enhancement enabled using NVIDIA API with {openai_model}")
+                else:
+                    print(f"✅ LLM enhancement enabled using {openai_model}")
         else:
             if not self.quiet_mode:
                 print("⚠️ No LLM API key found. Analysis will use static patterns only.")

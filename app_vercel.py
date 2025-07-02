@@ -478,7 +478,9 @@ def analyze_stream():
 @app.route('/results')
 def results():
     """Display analysis results (for streaming interface)."""
-    return render_template('results_stream.html')
+    # This route is meant for streaming results display
+    # When accessed directly, it should guide users to start an analysis
+    return render_template('results_stream.html', direct_access=True)
 
 @app.route('/mcp', methods=['POST'])
 def mcp_endpoint():

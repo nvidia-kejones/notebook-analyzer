@@ -42,7 +42,12 @@ document.addEventListener('DOMContentLoaded', function() {
             showError('Failed to parse analysis results');
         }
     } else {
-        showError('No analysis results found');
+        // Check if this is direct access to the results page
+        {% if direct_access %}
+            showFriendlyMessage();
+        {% else %}
+            showError('No analysis results found');
+        {% endif %}
     }
 });
 
@@ -503,6 +508,49 @@ function renderComplianceDetails(analysis) {
 function showError(message) {
     document.getElementById('errorMessage').textContent = message;
     document.getElementById('streamingError').classList.remove('d-none');
+}
+
+function showFriendlyMessage() {
+    const errorDiv = document.getElementById('streamingError');
+    const messageElement = document.getElementById('errorMessage');
+    
+    messageElement.innerHTML = `
+        <div class="text-center">
+            <i class="bi bi-info-circle fs-3 text-info mb-3"></i>
+            <h6 class="mb-3">Welcome to the Notebook Analyzer!</h6>
+            <p class="mb-3">
+                It looks like you accessed this page directly. To analyze a Jupyter or marimo notebook 
+                for GPU requirements and NVIDIA compliance, please start from the main page.
+            </p>
+            <div class="small text-muted mb-3">
+                <i class="bi bi-lightbulb me-1"></i>
+                You can analyze notebooks by URL or upload files directly
+            </div>
+        </div>
+    `;
+    
+    // Update the button text and icon for better UX
+    const tryAgainBtn = errorDiv.querySelector('.btn');
+    if (tryAgainBtn) {
+        tryAgainBtn.innerHTML = '<i class="bi bi-house me-1"></i>Start Analysis';
+        tryAgainBtn.classList.remove('btn-outline-danger');
+        tryAgainBtn.classList.add('btn-nvidia');
+    }
+    
+    // Update the alert styling for a friendlier appearance
+    const alertDiv = errorDiv.querySelector('.alert');
+    if (alertDiv) {
+        alertDiv.classList.remove('alert-danger');
+        alertDiv.classList.add('alert-info');
+    }
+    
+    // Update the header
+    const headerElement = errorDiv.querySelector('h5');
+    if (headerElement) {
+        headerElement.innerHTML = '<i class="bi bi-compass me-2"></i>Ready to Analyze';
+    }
+    
+    errorDiv.classList.remove('d-none');
 }
 </script>
 
