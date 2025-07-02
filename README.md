@@ -180,12 +180,12 @@ docker-compose up --build
 ### API Usage
 ```bash
 # REST API endpoint
-curl -X POST http://localhost:5001/api/analyze \
+curl -X POST http://localhost:8080/api/analyze \
   -H "Content-Type: application/json" \
   -d '{"url": "https://github.com/user/repo/blob/main/notebook.ipynb"}'
 
 # MCP endpoint for AI assistants
-curl -X POST http://localhost:5001/mcp \
+curl -X POST http://localhost:8080/mcp \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc": "2.0", "method": "tools/list", "id": 1}'
 ```

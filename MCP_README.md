@@ -18,7 +18,7 @@ This notebook analyzer now supports the Model Context Protocol (MCP), allowing A
 
 3. **Test the connection:**
    ```bash
-   curl -X POST http://localhost:5001/mcp \
+   curl -X POST http://localhost:8080/mcp \
      -H "Content-Type: application/json" \
      -d '{"jsonrpc": "2.0", "method": "tools/list", "id": 1}'
    ```
@@ -59,7 +59,7 @@ Provides GPU recommendations for specific workload types.
 
 ```bash
 # Analyze a notebook
-curl -X POST http://localhost:5001/mcp \
+curl -X POST http://localhost:8080/mcp \
   -H "Content-Type: application/json" \
   -d '{
     "jsonrpc": "2.0",
@@ -75,7 +75,7 @@ curl -X POST http://localhost:5001/mcp \
   }'
 
 # Get recommendations
-curl -X POST http://localhost:5001/mcp \
+curl -X POST http://localhost:8080/mcp \
   -H "Content-Type: application/json" \
   -d '{
     "jsonrpc": "2.0", 
@@ -112,7 +112,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
   "mcpServers": {
     "notebook-analyzer": {
       "command": "curl",
-      "args": ["-X", "POST", "http://localhost:5001/mcp", "-H", "Content-Type: application/json"],
+      "args": ["-X", "POST", "http://localhost:8080/mcp", "-H", "Content-Type: application/json"],
       "transport": "http"
     }
   }
@@ -123,7 +123,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 Add to your workspace settings or global MCP configuration.
 
 ### Custom Integrations
-Use the HTTP transport at `http://localhost:5001/mcp` with JSON-RPC 2.0 protocol.
+Use the HTTP transport at `http://localhost:8080/mcp` with JSON-RPC 2.0 protocol.
 
 ## Benefits of MCP Integration
 
@@ -137,7 +137,7 @@ Use the HTTP transport at `http://localhost:5001/mcp` with JSON-RPC 2.0 protocol
 
 ### Common Issues
 
-1. **Connection Failed**: Ensure the service is running on port 5001
+1. **Connection Failed**: Ensure the service is running on port 8080
 2. **Tool Not Found**: Check that you're using the correct tool names
 3. **Invalid URL**: Ensure notebook URLs are publicly accessible
 4. **Timeout**: Large notebooks may take longer to analyze
@@ -146,10 +146,10 @@ Use the HTTP transport at `http://localhost:5001/mcp` with JSON-RPC 2.0 protocol
 
 ```bash
 # Check service health
-curl http://localhost:5001/health
+curl http://localhost:8080/health
 
 # Test MCP initialization  
-curl -X POST http://localhost:5001/mcp \
+curl -X POST http://localhost:8080/mcp \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc": "2.0", "method": "initialize", "params": {}, "id": 1}'
 
@@ -167,7 +167,7 @@ import json
 def analyze_notebooks(urls):
     results = []
     for url in urls:
-        response = requests.post('http://localhost:5001/mcp', 
+        response = requests.post('http://localhost:8080/mcp', 
             json={
                 "jsonrpc": "2.0",
                 "method": "tools/call",

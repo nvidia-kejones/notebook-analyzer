@@ -4,12 +4,12 @@
       "command": "curl",
       "args": [
         "-X", "POST",
-        "http://localhost:5001/mcp",
+        "http://localhost:8080/mcp",
         "-H", "Content-Type: application/json"
       ],
       "description": "Notebook Analyzer for Jupyter Notebooks",
       "transport": "http",
-      "baseUrl": "http://localhost:5001/mcp"
+      "baseUrl": "http://localhost:8080/mcp"
     }
   }
 } 

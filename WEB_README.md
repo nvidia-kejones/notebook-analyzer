@@ -43,7 +43,7 @@ A containerized web application for analyzing Jupyter notebooks (.ipynb) and mar
    ```
 
 2. **Access the application**:
-   Open your browser to [http://localhost:5001](http://localhost:5001)
+   Open your browser to [http://localhost:8080](http://localhost:8080)
 
 ### Using Docker directly
 
@@ -79,7 +79,7 @@ python app.py
 
 **Analyze from URL**
 ```bash
-curl -X POST http://localhost:5001/api/analyze \
+curl -X POST http://localhost:8080/api/analyze \
   -H "Content-Type: application/json" \
   -d '{"url": "https://github.com/user/repo/blob/main/notebook.ipynb"}'
 ```
@@ -87,11 +87,11 @@ curl -X POST http://localhost:5001/api/analyze \
 **Analyze uploaded file**
 ```bash
 # Jupyter notebook
-curl -X POST http://localhost:5001/api/analyze \
+curl -X POST http://localhost:8080/api/analyze \
   -F "file=@your-notebook.ipynb"
 
 # marimo notebook
-curl -X POST http://localhost:5001/api/analyze \
+curl -X POST http://localhost:8080/api/analyze \
   -F "file=@your-marimo-app.py"
 ```
 
@@ -105,7 +105,7 @@ The service now supports MCP for AI assistant integration! This allows AI assist
 
 **Example MCP Tool Call:**
 ```bash
-curl -X POST http://localhost:5001/mcp \
+curl -X POST http://localhost:8080/mcp \
   -H "Content-Type: application/json" \
   -d '{
     "jsonrpc": "2.0",
@@ -147,12 +147,12 @@ Once connected via MCP, you can ask: *"Analyze this notebook for GPU requirement
 **Testing MCP directly:**
 ```bash
 # List available tools
-curl -X POST http://localhost:5001/mcp \
+curl -X POST http://localhost:8080/mcp \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc": "2.0", "method": "tools/list", "id": 1}'
 
 # Analyze a notebook  
-curl -X POST http://localhost:5001/mcp \
+curl -X POST http://localhost:8080/mcp \
   -H "Content-Type: application/json" \
   -d '{
     "jsonrpc": "2.0",
@@ -302,8 +302,8 @@ notebook-analyzer-web/
 python app.py
 
 # Test API endpoints
-curl http://localhost:5001/health
-curl -X POST http://localhost:5001/api/analyze -H "Content-Type: application/json" -d '{"url": "test-url"}'
+curl http://localhost:8080/health
+curl -X POST http://localhost:8080/api/analyze -H "Content-Type: application/json" -d '{"url": "test-url"}'
 ```
 
 ## 🐳 Docker Deployment
