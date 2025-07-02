@@ -461,9 +461,9 @@ function extractAnalysisDataFromDOM() {
 }
 
 function getArmCompatibilityBadge(compatibility) {
-    if (compatibility.includes('Compatible')) {
+    if (compatibility === 'Highly Compatible' || compatibility === 'Compatible') {
         return `<span class="badge bg-success ms-1">${compatibility}</span>`;
-    } else if (compatibility.includes('Likely')) {
+    } else if (compatibility === 'Likely Compatible' || compatibility === 'Possibly Incompatible') {
         return `<span class="badge bg-warning ms-1">${compatibility}</span>`;
     } else {
         return `<span class="badge bg-danger ms-1">${compatibility}</span>`;

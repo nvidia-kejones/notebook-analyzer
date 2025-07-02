@@ -580,16 +580,64 @@ class GPUAnalyzer:
             r'tensor.*parallel', r'all_reduce', r'all_gather', r'nccl'
         ]
         
-        # ARM/Grace compatibility patterns
+        # ARM/Grace compatibility patterns - Enhanced for comprehensive analysis
         self.arm_compatible_frameworks = [
             'tensorflow', 'pytorch', 'torch', 'jax', 'cupy', 'rapids',
-            'transformers', 'diffusers', 'accelerate', 'peft'
+            'transformers', 'diffusers', 'accelerate', 'peft', 'numpy',
+            'scipy', 'scikit-learn', 'pandas', 'matplotlib', 'seaborn',
+            'opencv-python', 'pillow', 'numba', 'dask'
         ]
         
+        # Enhanced ARM incompatible patterns with more comprehensive detection
         self.arm_incompatible_patterns = [
+            # Legacy CUDA/cuDNN versions
             r'cudnn.*version.*<.*8', r'tensorrt.*<.*8', r'triton.*kernel',
-            r'apex\.', r'flash.attention.*<.*2', r'xformers.*<.*0\.2'
+            
+            # Intel-specific optimizations
+            r'intel.*mkl', r'mkl.*intel', r'oneapi', r'intel.*optimization',
+            r'mkldnn', r'onednn.*intel', r'intel.*threading',
+            
+            # Legacy/problematic libraries
+            r'apex\.', r'flash.attention.*<.*2', r'xformers.*<.*0\.2',
+            r'deepspeed.*<.*0\.7', r'bitsandbytes.*<.*0\.3',
+            
+            # Architecture-specific optimizations
+            r'x86.*specific', r'sse[0-9]*', r'avx[0-9]*', r'fma.*instruction',
+            r'intel.*compiler', r'icc.*compiler',
+            
+            # Legacy TensorFlow/PyTorch patterns
+            r'tensorflow.*<.*2\.8', r'torch.*<.*1\.12', r'tf\.compat\.v1',
+            
+            # Proprietary/closed-source with limited ARM support
+            r'tensorrt.*<.*8\.4', r'cuda.*<.*11\.4', r'nccl.*<.*2\.10',
+            
+            # Specific problematic operations
+            r'torch\.jit\.script.*@.*torch\.jit\.ignore', r'tf\.function.*experimental_relax_shapes.*False',
+            
+            # Legacy quantization libraries
+            r'fbgemm', r'qnnpack.*x86', r'pytorch_quantization.*<.*2\.0'
         ]
+        
+        # ARM optimization indicators (positive signals)
+        self.arm_optimization_patterns = [
+            r'aarch64', r'arm64', r'neon.*optimization', r'grace.*optimization',
+            r'nvidia.*grace', r'arm.*specific', r'cross.*platform',
+            r'architecture.*agnostic', r'multi.*arch', r'universal.*binary'
+        ]
+        
+        # Version-specific ARM compatibility database
+        self.arm_compatibility_versions = {
+            'tensorflow': {'min_compatible': '2.8.0', 'optimal': '2.12.0'},
+            'torch': {'min_compatible': '1.12.0', 'optimal': '2.0.0'},
+            'torchvision': {'min_compatible': '0.13.0', 'optimal': '0.15.0'},
+            'transformers': {'min_compatible': '4.18.0', 'optimal': '4.25.0'},
+            'diffusers': {'min_compatible': '0.14.0', 'optimal': '0.20.0'},
+            'accelerate': {'min_compatible': '0.16.0', 'optimal': '0.21.0'},
+            'bitsandbytes': {'min_compatible': '0.37.0', 'optimal': '0.41.0'},
+            'flash-attn': {'min_compatible': '2.0.0', 'optimal': '2.3.0'},
+            'xformers': {'min_compatible': '0.0.20', 'optimal': '0.0.22'},
+            'deepspeed': {'min_compatible': '0.9.0', 'optimal': '0.10.0'}
+        }
     
     def evaluate_notebook_structure(self, code_cells: List[str], markdown_cells: List[str]) -> Dict[str, str]:
         """Enhanced notebook structure evaluation using comprehensive NVIDIA guidelines."""
@@ -1282,16 +1330,159 @@ class GPUAnalyzer:
             analysis['min_gpu_type'] = 'L40'
             analysis['optimal_gpu_type'] = 'H100 SXM'
         
-        # ARM compatibility assessment
-        if any(framework in detected_frameworks for framework in self.arm_compatible_frameworks):
-            analysis['arm_reasoning'].append("Uses ARM-compatible frameworks")
+        # Enhanced ARM compatibility assessment
+        arm_compatibility_score = 0
+        arm_issues = []
+        arm_positives = []
         
-        for pattern in self.arm_incompatible_patterns:
+        # Check for ARM-compatible frameworks
+        compatible_frameworks_found = []
+        for framework in detected_frameworks:
+            if framework in self.arm_compatible_frameworks:
+                compatible_frameworks_found.append(framework)
+                arm_compatibility_score += 10
+        
+        if compatible_frameworks_found:
+            arm_positives.append(f"Uses {len(compatible_frameworks_found)} ARM-compatible frameworks: {', '.join(compatible_frameworks_found[:3])}")
+        
+        # Check for ARM optimization indicators
+        arm_optimizations_found = []
+        for pattern in self.arm_optimization_patterns:
             if re.search(pattern, all_code, re.IGNORECASE):
-                analysis['arm_compatibility'] = 'Likely Incompatible'
-                analysis['arm_reasoning'].append(f"Potential ARM incompatibility: {pattern}")
+                matches = re.findall(pattern, all_code, re.IGNORECASE)
+                arm_optimizations_found.extend(matches[:2])  # Limit to avoid spam
+        
+        if arm_optimizations_found:
+            arm_compatibility_score += 15
+            arm_positives.append(f"Contains ARM-specific optimizations: {', '.join(set(arm_optimizations_found))}")
+        
+        # Check for version-specific compatibility
+        version_warnings = []
+        import_patterns = re.findall(r'(?:import|from)\s+([a-zA-Z0-9_-]+)', all_code)
+        pip_patterns = re.findall(r'pip install\s+([a-zA-Z0-9_-]+)(?:==([0-9.]+))?', all_code, re.IGNORECASE)
+        
+        for package, version in pip_patterns:
+            if package in self.arm_compatibility_versions and version:
+                min_version = self.arm_compatibility_versions[package]['min_compatible']
+                if self._compare_versions(version, min_version) < 0:
+                    arm_issues.append(f"{package} v{version} may have ARM issues (min recommended: v{min_version})")
+                    arm_compatibility_score -= 20
+                else:
+                    optimal_version = self.arm_compatibility_versions[package]['optimal']
+                    if self._compare_versions(version, optimal_version) >= 0:
+                        arm_compatibility_score += 5
+                        arm_positives.append(f"{package} v{version} has good ARM support")
+        
+        # Check for ARM incompatible patterns
+        for pattern in self.arm_incompatible_patterns:
+            matches = re.findall(pattern, all_code, re.IGNORECASE)
+            if matches:
+                arm_compatibility_score -= 25
+                # Group similar issues to avoid spam with more specific pattern matching
+                if pattern in [r'intel.*mkl', r'mkl.*intel', r'oneapi', r'intel.*optimization', r'mkldnn', r'onednn.*intel', r'intel.*threading']:
+                    arm_issues.append("Uses Intel-specific optimizations that may not work on ARM")
+                elif pattern in [r'x86.*specific', r'sse[0-9]*', r'avx[0-9]*', r'fma.*instruction', r'intel.*compiler', r'icc.*compiler']:
+                    arm_issues.append("Contains x86-specific instructions/optimizations")
+                elif pattern == r'cudnn.*version.*<.*8':
+                    arm_issues.append("Uses cuDNN version < 8.0 (limited ARM support)")
+                elif pattern == r'tensorrt.*<.*8':
+                    arm_issues.append("Uses TensorRT version < 8.0 (limited ARM support)")
+                elif pattern == r'tensorflow.*<.*2\.8':
+                    arm_issues.append("Uses TensorFlow < 2.8 (limited ARM support)")
+                elif pattern == r'torch.*<.*1\.12':
+                    arm_issues.append("Uses PyTorch < 1.12 (limited ARM support)")
+                elif pattern == r'fbgemm':
+                    arm_issues.append("Uses FBGEMM quantization (x86-only)")
+                elif pattern in [r'apex\.', r'flash.attention.*<.*2', r'xformers.*<.*0\.2', r'deepspeed.*<.*0\.7', r'bitsandbytes.*<.*0\.3']:
+                    arm_issues.append("Uses legacy library versions with limited ARM support")
+                elif 'triton.*kernel' in pattern:
+                    arm_issues.append("Uses Triton kernels that may have limited ARM support")
+                else:
+                    arm_issues.append("Potential ARM incompatibility detected")
+                break  # Avoid duplicate similar warnings
+        
+        # Workload-specific ARM compatibility considerations
+        if is_training:
+            if 'distributed' in all_code.lower():
+                arm_compatibility_score -= 10
+                arm_issues.append("Distributed training on ARM may have performance limitations")
+            else:
+                arm_compatibility_score += 5
+                arm_positives.append("Single-node training generally works well on ARM")
+        else:
+            arm_compatibility_score += 10
+            arm_positives.append("Inference workloads typically have good ARM compatibility")
+        
+        # Model-specific ARM considerations
+        arm_heavy_models = ['stable.diffusion', 'llama', 'gpt']
+        for model in arm_heavy_models:
+            if model in all_code.lower():
+                if estimated_vram > 40:
+                    arm_issues.append(f"Large {model} models may have reduced performance on ARM")
+                    arm_compatibility_score -= 5
+                else:
+                    arm_positives.append(f"Smaller {model} models generally work well on ARM")
+                    arm_compatibility_score += 3
+        
+        # Final ARM compatibility determination
+        if arm_compatibility_score >= 30:
+            analysis['arm_compatibility'] = 'Highly Compatible'
+        elif arm_compatibility_score >= 10:
+            analysis['arm_compatibility'] = 'Compatible'
+        elif arm_compatibility_score >= -10:
+            analysis['arm_compatibility'] = 'Likely Compatible'
+        elif arm_compatibility_score >= -25:
+            analysis['arm_compatibility'] = 'Possibly Incompatible'
+        else:
+            analysis['arm_compatibility'] = 'Likely Incompatible'
+        
+        # Build comprehensive ARM reasoning
+        analysis['arm_reasoning'] = []
+        if arm_positives:
+            analysis['arm_reasoning'].extend(arm_positives[:3])  # Top 3 positive indicators
+        if arm_issues:
+            analysis['arm_reasoning'].extend(arm_issues[:3])     # Top 3 issues
+        
+        # Add summary score for transparency
+        analysis['arm_reasoning'].append(f"ARM compatibility score: {arm_compatibility_score} (higher is better)")
         
         return analysis
+    
+    def _compare_versions(self, version1: str, version2: str) -> int:
+        """
+        Compare two version strings.
+        Returns: -1 if version1 < version2, 0 if equal, 1 if version1 > version2
+        """
+        def normalize_version(v):
+            # Convert version string to list of integers
+            try:
+                return [int(x) for x in v.split('.')]
+            except ValueError:
+                # Handle non-numeric version parts
+                parts = []
+                for part in v.split('.'):
+                    try:
+                        parts.append(int(part))
+                    except ValueError:
+                        # For non-numeric parts, use their ASCII values
+                        parts.append(ord(part[0]) if part else 0)
+                return parts
+        
+        v1_parts = normalize_version(version1)
+        v2_parts = normalize_version(version2)
+        
+        # Pad shorter version with zeros
+        max_len = max(len(v1_parts), len(v2_parts))
+        v1_parts += [0] * (max_len - len(v1_parts))
+        v2_parts += [0] * (max_len - len(v2_parts))
+        
+        for i in range(max_len):
+            if v1_parts[i] < v2_parts[i]:
+                return -1
+            elif v1_parts[i] > v2_parts[i]:
+                return 1
+        
+        return 0
     
     def sanitize_file_content(self, file_content: bytes, filename: str) -> tuple:
         """

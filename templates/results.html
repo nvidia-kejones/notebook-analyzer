@@ -111,7 +111,7 @@
                             <div class="col-md-6">
                                 <div class="small">
                                     <strong>ARM Compatibility:</strong>
-                                    {% set arm_class = 'success' if 'Compatible' in analysis.arm_compatibility else 'warning' if 'Likely' in analysis.arm_compatibility else 'danger' %}
+                                    {% set arm_class = 'success' if analysis.arm_compatibility in ['Highly Compatible', 'Compatible'] else 'warning' if analysis.arm_compatibility in ['Likely Compatible', 'Possibly Incompatible'] else 'danger' %}
                                     <span class="badge bg-{{ arm_class }} ms-1">{{ analysis.arm_compatibility }}</span>
                                 </div>
                             </div>
