@@ -64,47 +64,45 @@ ALLOWED_EXTENSIONS = {'ipynb', 'py'}
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 
-# Safe import analyzer without dynamic code execution
+# Import analyzer classes using standard import mechanism
 GPUAnalyzer = None
 GPURequirement = None
 
 try:
-    # Safely import the analyzer using sys.path manipulation
-    import importlib.machinery
-    import importlib.util
-    
-    analyzer_path = os.path.join(current_dir, "notebook-analyzer.py")
-    
-    if os.path.exists(analyzer_path):
-        # Use SourceFileLoader for safer module loading (no arbitrary code execution)
-        loader = importlib.machinery.SourceFileLoader("notebook_analyzer", analyzer_path)
-        spec = importlib.util.spec_from_loader("notebook_analyzer", loader)
+    # Import directly from the analyzer package
+    from analyzer import GPUAnalyzer, GPURequirement
+    print("✅ Successfully imported GPUAnalyzer from analyzer package")
+except ImportError as e:
+    print(f"❌ Failed to import from analyzer package: {e}")
+    try:
+        # Fallback: try importing from notebook-analyzer.py (for backward compatibility)
+        import importlib.machinery
+        import importlib.util
         
-        if spec and spec.loader:
-            # Create module and load it safely
-            notebook_analyzer = importlib.util.module_from_spec(spec)
+        analyzer_path = os.path.join(current_dir, "notebook-analyzer.py")
+        
+        if os.path.exists(analyzer_path):
+            loader = importlib.machinery.SourceFileLoader("notebook_analyzer", analyzer_path)
+            spec = importlib.util.spec_from_loader("notebook_analyzer", loader)
             
-            # Add to sys.modules to prevent re-execution
-            sys.modules["notebook_analyzer"] = notebook_analyzer
-            
-            # Execute the module (safe because it has if __name__ == "__main__" protection)
-            spec.loader.exec_module(notebook_analyzer)
-            
-            # Extract the classes we need
-            GPUAnalyzer = getattr(notebook_analyzer, 'GPUAnalyzer', None)
-            GPURequirement = getattr(notebook_analyzer, 'GPURequirement', None)
-            
-            if GPUAnalyzer and GPURequirement:
-                print("✅ Successfully imported GPUAnalyzer safely")
-            else:
-                print("❌ Failed to extract GPUAnalyzer or GPURequirement classes")
+            if spec and spec.loader:
+                notebook_analyzer = importlib.util.module_from_spec(spec)
+                sys.modules["notebook_analyzer"] = notebook_analyzer
+                spec.loader.exec_module(notebook_analyzer)
+                
+                GPUAnalyzer = getattr(notebook_analyzer, 'GPUAnalyzer', None)
+                GPURequirement = getattr(notebook_analyzer, 'GPURequirement', None)
+                
+                if GPUAnalyzer and GPURequirement:
+                    print("✅ Successfully imported GPUAnalyzer from fallback method")
+                else:
+                    print("❌ Failed to extract classes from notebook-analyzer.py")
         else:
-            print("❌ Failed to create module spec")
-    else:
-        print(f"❌ notebook-analyzer.py not found at {analyzer_path}")
-        
+            print(f"❌ notebook-analyzer.py not found at {analyzer_path}")
+    except Exception as fallback_error:
+        print(f"❌ Fallback import error: {fallback_error}")
 except Exception as e:
-    print(f"❌ Safe import error: {e}")
+    print(f"❌ Import error: {e}")
     print(f"Traceback: {traceback.format_exc()}")
 
 def allowed_file(filename):

@@ -34,6 +34,7 @@ COPY app.py .
 COPY app_vercel.py .
 COPY templates/ templates/
 COPY notebook-analyzer.py .
+COPY analyzer/ analyzer/
 
 # Create necessary directories and set permissions
 RUN mkdir -p /tmp/uploads /app/logs && \

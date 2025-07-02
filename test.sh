@@ -39,7 +39,7 @@ while [[ $# -gt 0 ]]; do
             echo "Usage: $0 [options]"
             echo ""
             echo "Options:"
-            echo "  --quick, -q          Run quick tests only (health, security headers, MCP, GPU analysis)"
+            echo "  --quick, -q          Run quick tests only (health, security headers, MCP, NVIDIA Best Practices)"
             echo "  --url, -u <url>      Base URL to test against (default: $DEFAULT_BASE_URL)"
             echo "  --help, -h           Show this help message"
             echo ""
@@ -430,6 +430,129 @@ test_web_form_analysis() {
     fi
 }
 
+test_nvidia_best_practices() {
+    # Check if Python script exists
+    if [ ! -f "notebook-analyzer.py" ]; then
+        log_result "NVIDIA Best Practices - Script" "false" "notebook-analyzer.py not found"
+        return 1
+    fi
+    
+    # Check for virtual environment and activate if available
+    local python_cmd="python3"
+    local venv_activated=false
+    
+    # Check if we have a virtual environment in the current directory
+    if [ -f "bin/activate" ] && [ -z "$VIRTUAL_ENV" ]; then
+        echo "   Activating virtual environment..."
+        source bin/activate
+        venv_activated=true
+    fi
+    
+    # Determine Python command
+    if ! command -v python3 >/dev/null 2>&1; then
+        if command -v python >/dev/null 2>&1; then
+            python_cmd="python"
+        else
+            log_result "NVIDIA Best Practices - Python" "false" "Python not available"
+            return 1
+        fi
+    fi
+    
+    # Check if we can import required modules
+    if ! $python_cmd -c "import json, sys" >/dev/null 2>&1; then
+        log_result "NVIDIA Best Practices - Environment" "false" "Python environment not properly configured"
+        return 1
+    fi
+    
+    # Test basic CLI functionality
+    local basic_output="$TEMP_DIR/nvidia_basic_output"
+    if [ -f "examples/jupyter_example.ipynb" ]; then
+        local test_file="examples/jupyter_example.ipynb"
+    else
+        # Use a public notebook if local example not available
+        local test_file="https://raw.githubusercontent.com/fastai/fastbook/master/01_intro.ipynb"
+    fi
+    
+    # Test basic analysis
+    echo "   Testing basic NVIDIA analysis..."
+    if $python_cmd notebook-analyzer.py "$test_file" > "$basic_output" 2>&1; then
+        if grep -q "NVIDIA NOTEBOOK COMPLIANCE" "$basic_output" && grep -q "GPU REQUIREMENTS" "$basic_output"; then
+            log_result "NVIDIA Best Practices - Basic Analysis" "true" "CLI analysis working with NVIDIA features"
+        else
+            log_result "NVIDIA Best Practices - Basic Analysis" "false" "NVIDIA features not found in output"
+            return 1
+        fi
+    else
+        log_result "NVIDIA Best Practices - Basic Analysis" "false" "CLI execution failed"
+        return 1
+    fi
+    
+    # Test verbose mode (ensure virtual env is still active)
+    local verbose_output="$TEMP_DIR/nvidia_verbose_output"
+    echo "   Testing verbose NVIDIA analysis..."
+    
+    # Re-activate virtual environment if needed
+    if [ "$venv_activated" = "true" ] && [ -z "$VIRTUAL_ENV" ]; then
+        source bin/activate
+    fi
+    
+    if $python_cmd notebook-analyzer.py --verbose "$test_file" > "$verbose_output" 2>&1; then
+        if grep -q "NVIDIA Best Practices Summary" "$verbose_output" && grep -q "compliance" "$verbose_output"; then
+            log_result "NVIDIA Best Practices - Verbose Mode" "true" "Verbose analysis working"
+        else
+            log_result "NVIDIA Best Practices - Verbose Mode" "false" "Verbose NVIDIA features not found"
+            return 1
+        fi
+    else
+        log_result "NVIDIA Best Practices - Verbose Mode" "false" "Verbose mode execution failed"
+        return 1
+    fi
+    
+    # Test JSON output
+    local json_output="$TEMP_DIR/nvidia_json_output"
+    echo "   Testing JSON output with NVIDIA data..."
+    if $python_cmd notebook-analyzer.py --json "$test_file" > "$json_output" 2>&1; then
+        if command -v jq >/dev/null 2>&1; then
+            # Validate JSON structure with jq if available
+            if jq -e '.nvidia_compliance_score' "$json_output" >/dev/null 2>&1; then
+                log_result "NVIDIA Best Practices - JSON Output" "true" "JSON output contains NVIDIA compliance data"
+            else
+                log_result "NVIDIA Best Practices - JSON Output" "false" "JSON missing NVIDIA compliance data"
+                return 1
+            fi
+        else
+            # Basic JSON validation without jq
+            if grep -q '"nvidia_compliance_score"' "$json_output"; then
+                log_result "NVIDIA Best Practices - JSON Output" "true" "JSON output contains NVIDIA data (basic validation)"
+            else
+                log_result "NVIDIA Best Practices - JSON Output" "false" "JSON missing NVIDIA data"
+                return 1
+            fi
+        fi
+    else
+        log_result "NVIDIA Best Practices - JSON Output" "false" "JSON mode execution failed"  
+        return 1
+    fi
+    
+    # Test core module availability
+    if $python_cmd -c "from analyzer.core import NVIDIABestPracticesLoader, GPUAnalyzer; print('Core modules available')" > /dev/null 2>&1; then
+        log_result "NVIDIA Best Practices - Core Modules" "true" "Enhanced analyzer modules available"
+    else
+        log_result "NVIDIA Best Practices - Core Modules" "false" "Core modules import failed"
+        return 1
+    fi
+    
+    # Check if best practices guidelines file exists
+    if [ -f "analyzer/nvidia_best_practices.md" ]; then
+        log_result "NVIDIA Best Practices - Guidelines File" "true" "Best practices guidelines available"
+    else
+        log_result "NVIDIA Best Practices - Guidelines File" "false" "Guidelines file missing"
+        return 1
+    fi
+    
+    return 0
+}
+
 run_tests() {
     echo -e "${BLUE}🚀 Starting Notebook Analyzer Tests${NC}"
     if [ "$QUICK_MODE" = "true" ]; then
@@ -455,6 +578,10 @@ run_tests() {
     test_mcp_tools_list
     test_mcp_gpu_recommendations
     
+    # NVIDIA Best Practices CLI tests (always run)
+    echo "🎯 Testing NVIDIA Best Practices CLI functionality..."
+    test_nvidia_best_practices
+    
     if [ "$QUICK_MODE" = "false" ]; then
         # Full analysis tests (only in full mode)
         test_jupyter_analysis
@@ -472,6 +599,15 @@ run_tests() {
     
     if [ "$PASSED_TESTS" -eq "$TOTAL_TESTS" ]; then
         echo -e "${GREEN}🎉 All tests passed! System is fully functional.${NC}"
+        echo "✅ Verified components:"
+        echo "   • Web interface and API endpoints"
+        echo "   • Security headers and safety features"
+        echo "   • MCP (Model Context Protocol) integration"
+        echo "   • NVIDIA Best Practices CLI functionality"
+        if [ "$QUICK_MODE" = "false" ]; then
+            echo "   • Full notebook analysis capabilities"
+            echo "   • Streaming analysis and web forms"
+        fi
         return 0
     else
         echo -e "${YELLOW}⚠️  Some tests failed. Check the issues above.${NC}"

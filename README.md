@@ -19,10 +19,12 @@ A comprehensive tool for analyzing Jupyter notebooks (.ipynb) and marimo noteboo
 - **Memory Optimization Detection**: Identifies techniques like LoRA, quantization, gradient checkpointing
 
 ### NVIDIA Notebook Compliance
-- **Structure & Layout Assessment**: Evaluates title format, introduction completeness, navigation
-- **Content Quality Analysis**: Checks documentation ratio, code explanations, educational value
-- **Technical Standards**: Reviews requirements management, environment variables, reproducibility
-- **Compliance Scoring**: 0-100 score based on NVIDIA's official notebook guidelines
+- **Comprehensive Best Practices Integration**: Loads official NVIDIA guidelines from `analyzer/nvidia_best_practices.md`
+- **Structure & Layout Assessment**: Evaluates title format, introduction completeness, navigation, conclusions
+- **Content Quality Analysis**: Checks documentation ratio, code explanations, educational value, professional writing
+- **Technical Standards**: Reviews requirements management, environment variables, reproducibility, file complexity
+- **Enhanced Compliance Scoring**: 0-100 score based on NVIDIA's official notebook guidelines with detailed criteria
+- **Guidelines-Based Evaluation**: Both static analysis and LLM evaluation use comprehensive NVIDIA standards
 
 ### LLM Enhancement (Optional)
 - **Context-Aware Analysis**: Deep understanding of notebook intent and workflow
@@ -401,11 +403,18 @@ python notebook-analyzer.py --json --verbose ./local-notebook.ipynb
 - **Quality Evaluation**: Comprehensive notebook best practices review
 
 ### NVIDIA Compliance Evaluation
-Based on official NVIDIA notebook guidelines:
-- **Structure (25%)**: Title format, introduction, navigation, conclusion
-- **Content (25%)**: Documentation ratio, explanations, educational value
-- **Technical (25%)**: Requirements, environment variables, reproducibility
-- **Brand (25%)**: NVIDIA messaging, professional presentation
+Based on comprehensive NVIDIA notebook guidelines loaded from `analyzer/nvidia_best_practices.md`:
+- **Structure (25%)**: Title format ("doing X with NVIDIA Product"), comprehensive introduction, navigation, conclusion
+- **Content (25%)**: Documentation ratio, code explanations, educational value, professional writing, external links
+- **Technical (25%)**: Requirements.txt management, environment variables, reproducibility, file complexity, GPU optimizations
+- **Brand (25%)**: NVIDIA messaging, brand consistency, developer focus, maintenance quality
+
+### 🆕 Enhanced Features (v3.1.0)
+- **Comprehensive NVIDIA Best Practices**: Official guidelines integrated from structured markdown
+- **Enhanced Static Analysis**: Improved compliance checking with detailed criteria
+- **Guidelines-Enhanced LLM Prompts**: LLM evaluation uses loaded NVIDIA standards for better accuracy
+- **Detailed Compliance Scoring**: 100-point system with granular feedback and recommendations
+- **Professional Compliance Reporting**: Color-coded scores with specific improvement suggestions
 
 ## 🔗 Supported Input Sources
 
