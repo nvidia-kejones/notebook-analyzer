@@ -223,37 +223,43 @@ def analyze_stream():
     if not GPUAnalyzer:
         return jsonify({'error': 'Analysis service not available'}), 503
     
-    def generate_progress():
+    # Extract request data BEFORE creating the generator (to avoid request context issues)
+    file_path = None
+    source_name = None
+    analysis_input = None
+    
+    # Check if it's a file upload or URL
+    if 'file' in request.files and request.files['file'].filename:
+        # File upload analysis
+        file = request.files['file']
+        if file and allowed_file(file.filename):
+            filename = secure_filename(file.filename)
+            file_path = os.path.join('/tmp', filename)
+            file.save(file_path)
+            source_name = filename
+            analysis_input = {'type': 'file', 'path': file_path, 'name': filename}
+        else:
+            return jsonify({'error': 'Invalid file type. Please upload a .ipynb or .py file.'}), 400
+            
+    elif 'url' in request.form and request.form['url'].strip():
+        # URL analysis
+        source_name = request.form['url'].strip()
+        analysis_input = {'type': 'url', 'url': source_name}
+    else:
+        return jsonify({'error': 'Please provide either a URL or upload a notebook file.'}), 400
+    
+    def generate_progress(analysis_input, source_name):
         """Generator function for Server-Sent Events."""
         try:
             yield f"data: {json.dumps({'type': 'progress', 'message': 'Starting analysis...'})}\n\n"
             
             analyzer = GPUAnalyzer(quiet_mode=True)
             
-            # Check if it's a file upload or URL
-            file_path = None
-            source_name = None
-            
-            if 'file' in request.files and request.files['file'].filename:
-                # File upload analysis
-                file = request.files['file']
-                if file and allowed_file(file.filename):
-                    filename = secure_filename(file.filename)
-                    file_path = os.path.join('/tmp', filename)
-                    file.save(file_path)
-                    source_name = filename
-                    yield f"data: {json.dumps({'type': 'progress', 'message': f'Uploaded file: {filename}'})}\n\n"
-                else:
-                    yield f"data: {json.dumps({'type': 'error', 'message': 'Invalid file type. Please upload a .ipynb or .py file.'})}\n\n"
-                    return
-                    
-            elif 'url' in request.form and request.form['url'].strip():
-                # URL analysis
-                source_name = request.form['url'].strip()
-                yield f"data: {json.dumps({'type': 'progress', 'message': f'Fetching notebook from URL...'})}\n\n"
-            else:
-                yield f"data: {json.dumps({'type': 'error', 'message': 'Please provide either a URL or upload a notebook file.'})}\n\n"
-                return
+            if analysis_input['type'] == 'file':
+                filename = analysis_input['name']
+                yield f"data: {json.dumps({'type': 'progress', 'message': f'Uploaded file: {filename}'})}\n\n"
+            elif analysis_input['type'] == 'url':
+                yield f"data: {json.dumps({'type': 'progress', 'message': 'Fetching notebook from URL...'})}\n\n"
             
             # Progress updates during analysis
             yield f"data: {json.dumps({'type': 'progress', 'message': 'Loading notebook content...'})}\n\n"
@@ -269,10 +275,10 @@ def analyze_stream():
             time.sleep(0.3)
             
             # Perform the actual analysis
-            if file_path:
-                result = analyzer.analyze_notebook(file_path)
+            if analysis_input['type'] == 'file':
+                result = analyzer.analyze_notebook(analysis_input['path'])
             else:
-                result = analyzer.analyze_notebook(source_name)
+                result = analyzer.analyze_notebook(analysis_input['url'])
             
             if result:
                 yield f"data: {json.dumps({'type': 'progress', 'message': 'Generating recommendations...'})}\n\n"
@@ -284,13 +290,14 @@ def analyze_stream():
                 time.sleep(0.2)
                 
                 # Send the complete results
-                yield f"data: {json.dumps({'type': 'complete', 'analysis': analysis_data, 'source_name': source_name, 'source_type': 'file' if file_path else 'url'})}\n\n"
+                source_type = 'file' if analysis_input['type'] == 'file' else 'url'
+                yield f"data: {json.dumps({'type': 'complete', 'analysis': analysis_data, 'source_name': source_name, 'source_type': source_type})}\n\n"
             else:
                 yield f"data: {json.dumps({'type': 'error', 'message': 'Failed to analyze the notebook. Please check the file format or URL.'})}\n\n"
             
             # Clean up temp file
-            if file_path and os.path.exists(file_path):
-                os.remove(file_path)
+            if analysis_input['type'] == 'file' and os.path.exists(analysis_input['path']):
+                os.remove(analysis_input['path'])
                 
         except Exception as e:
             print(f"Streaming analysis error: {e}")
@@ -298,10 +305,10 @@ def analyze_stream():
             yield f"data: {json.dumps({'type': 'error', 'message': f'Analysis failed: {str(e)}'})}\n\n"
             
             # Clean up temp file in case of error
-            if 'file_path' in locals() and file_path and os.path.exists(file_path):
-                os.remove(file_path)
+            if analysis_input and analysis_input['type'] == 'file' and os.path.exists(analysis_input['path']):
+                os.remove(analysis_input['path'])
     
-    return Response(generate_progress(), content_type='text/event-stream', headers={
+    return Response(generate_progress(analysis_input, source_name), content_type='text/event-stream', headers={
         'Cache-Control': 'no-cache',
         'Connection': 'keep-alive',
         'Access-Control-Allow-Origin': '*'
