@@ -25,7 +25,8 @@ This Flask application **can be deployed to Vercel**, but with important limitat
 
 Ensure you have the modified files:
 - `vercel.json` - Vercel configuration
-- `api/app.py` - Serverless-optimized Flask app
+- `api/index.py` - Vercel entry point
+- `app_vercel.py` - Main Flask application
 - `requirements.txt` - Dependencies
 
 ### 2. **Install Vercel CLI**
@@ -72,8 +73,10 @@ curl -X POST https://your-app.vercel.app/api/analyze \
 
 ```
 notebook-analyzer/
-├── app.py                        # Main entry point (imports from app_vercel.py)
-├── app_vercel.py                 # Vercel-optimized Flask app with full UI
+├── api/
+│   └── index.py                  # Vercel entry point
+├── app.py                        # Local development entry point
+├── app_vercel.py                 # Main Flask application with full UI
 ├── templates/                    # HTML templates (unchanged)
 │   ├── base.html
 │   ├── index.html
@@ -90,7 +93,7 @@ notebook-analyzer/
 ```json
 {
   "functions": {
-    "app.py": {
+    "api/index.py": {
       "maxDuration": 60
     }
   },
@@ -100,8 +103,12 @@ notebook-analyzer/
       "dest": "/static/$1"
     },
     {
+      "src": "/api/(.*)",
+      "dest": "/api/index.py"
+    },
+    {
       "src": "/(.*)",
-      "dest": "/app.py"
+      "dest": "/api/index.py"
     }
   ]
 }
