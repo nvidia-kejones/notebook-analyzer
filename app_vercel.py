@@ -16,6 +16,30 @@ from werkzeug.utils import secure_filename
 import sys
 import time
 
+# Security utility functions - P1 Security Fix
+def sanitize_error_message(error: Exception, debug_mode: bool = False) -> str:
+    """
+    Sanitize error messages to prevent information disclosure.
+    Returns detailed errors in debug mode, generic errors in production.
+    """
+    if debug_mode:
+        return str(error)
+    else:
+        # Generic error messages that don't leak system information
+        error_mappings = {
+            'FileNotFoundError': 'File not found. Please check the file path.',
+            'PermissionError': 'Access denied. Please check file permissions.',
+            'JSONDecodeError': 'Invalid file format. Please check the file content.',
+            'UnicodeDecodeError': 'File encoding error. Please use UTF-8 encoding.',
+            'ConnectionError': 'Network connection failed. Please try again.',
+            'TimeoutError': 'Request timed out. Please try again.',
+            'ValueError': 'Invalid input. Please check your data.',
+            'TypeError': 'Invalid data type. Please check your input.',
+        }
+        
+        error_type = type(error).__name__
+        return error_mappings.get(error_type, 'An error occurred. Please try again.')
+
 # Set up paths for Vercel environment
 current_dir = os.path.dirname(os.path.abspath(__file__))
 
@@ -23,7 +47,16 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 app = Flask(__name__, 
            template_folder='templates',
            static_folder='static')
-app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
+
+# Secure secret key configuration - P1 Security Fix
+import secrets
+secret_key = os.environ.get('SECRET_KEY')
+if not secret_key:
+    # Generate cryptographically secure random key
+    secret_key = secrets.token_hex(32)
+    print("⚠️  WARNING: Using generated secret key. Set SECRET_KEY environment variable for production.")
+    print("   Generated key will not persist across restarts, causing session invalidation.")
+app.secret_key = secret_key
 
 # Configuration
 UPLOAD_FOLDER = '/tmp'
@@ -155,35 +188,49 @@ def analyze():
                         flash(f'File upload blocked for security: {error_msg}', 'error')
                         return redirect(url_for('index'))
                     
-                    # Save sanitized content to temp file
-                    filepath = os.path.join('/tmp', filename)
+                    # Use secure temporary file handling - P1 Security Fix
+                    import tempfile
                     
-                    # Write sanitized content
+                    # Create secure temporary file with proper cleanup
                     if filename.lower().endswith('.ipynb'):
                         # For notebooks, save the sanitized JSON
-                        with open(filepath, 'w', encoding='utf-8') as f:
-                            json.dump(sanitized_content, f)
+                        with tempfile.NamedTemporaryFile(mode='w', suffix='.ipynb', delete=False, 
+                                                       prefix='notebook_', dir='/tmp') as temp_file:
+                            json.dump(sanitized_content, temp_file)
+                            temp_file.flush()  # Ensure content is written
+                            temp_path = temp_file.name
                     elif filename.lower().endswith('.py'):
                         # For Python files, save the sanitized content
                         python_content = sanitized_content.get('content', '') if sanitized_content else ''
-                        with open(filepath, 'w', encoding='utf-8') as f:
-                            f.write(python_content)
+                        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, 
+                                                       prefix='notebook_', dir='/tmp') as temp_file:
+                            temp_file.write(python_content)
+                            temp_file.flush()  # Ensure content is written
+                            temp_path = temp_file.name
                     
-                    result = analyzer.analyze_notebook(filepath)
-                    if result:
-                        analysis_data = format_analysis_for_web(result)
-                        return render_template('results.html', 
-                                             analysis=analysis_data, 
-                                             source_type='file',
-                                             source_name=filename)
-                    else:
-                        flash('Failed to analyze the uploaded notebook. Please check the file format.', 'error')
+                    try:
+                        result = analyzer.analyze_notebook(temp_path)
+                        if result:
+                            analysis_data = format_analysis_for_web(result)
+                            return render_template('results.html', 
+                                                 analysis=analysis_data, 
+                                                 source_type='file',
+                                                 source_name=filename)
+                        else:
+                            flash('Failed to analyze the uploaded notebook. Please check the file format.', 'error')
+                    finally:
+                        # Secure cleanup of temporary file
+                        try:
+                            if 'temp_path' in locals() and os.path.exists(temp_path):
+                                os.unlink(temp_path)
+                        except OSError:
+                            pass  # Ignore cleanup errors
                 except Exception as e:
-                    flash(f'Error processing uploaded file: {str(e)}', 'error')
-                finally:
-                    # Clean up temp file
-                    if os.path.exists(filepath):
-                        os.remove(filepath)
+                    # Sanitized error message - P1 Security Fix
+                    if app.debug:
+                        flash(f'Error processing uploaded file: {str(e)}', 'error')
+                    else:
+                        flash('Error processing uploaded file. Please try again.', 'error')
             else:
                 flash('Invalid file type. Please upload a .ipynb or .py file.', 'error')
                 
@@ -206,7 +253,11 @@ def analyze():
     except Exception as e:
         print(f"Analysis error: {e}")
         print(f"Traceback: {traceback.format_exc()}")
-        flash(f'An error occurred during analysis: {str(e)}', 'error')
+        # Sanitized error message - P1 Security Fix
+        if app.debug:
+            flash(f'An error occurred during analysis: {str(e)}', 'error')
+        else:
+            flash('An error occurred during analysis. Please try again.', 'error')
     
     return redirect(url_for('index'))
 
@@ -245,28 +296,43 @@ def api_analyze():
                     if not is_safe:
                         return jsonify({'error': f'File upload blocked for security: {error_msg}'}), 400
                     
-                    # Save sanitized content to temp file
-                    filepath = os.path.join('/tmp', filename)
+                    # Use secure temporary file handling - P1 Security Fix
                     
+                    # Create secure temporary file with proper cleanup
                     if filename.lower().endswith('.ipynb'):
-                        with open(filepath, 'w', encoding='utf-8') as f:
-                            json.dump(sanitized_content, f)
+                        with tempfile.NamedTemporaryFile(mode='w', suffix='.ipynb', delete=False, 
+                                                       prefix='notebook_', dir='/tmp') as temp_file:
+                            json.dump(sanitized_content, temp_file)
+                            temp_file.flush()  # Ensure content is written
+                            temp_path = temp_file.name
                     elif filename.lower().endswith('.py'):
                         python_content = sanitized_content.get('content', '') if sanitized_content else ''
-                        with open(filepath, 'w', encoding='utf-8') as f:
-                            f.write(python_content)
+                        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, 
+                                                       prefix='notebook_', dir='/tmp') as temp_file:
+                            temp_file.write(python_content)
+                            temp_file.flush()  # Ensure content is written
+                            temp_path = temp_file.name
                     
-                    result = analyzer.analyze_notebook(filepath)
-                    if result:
-                        analysis_data = format_analysis_for_web(result)
-                        return jsonify({'success': True, 'analysis': analysis_data})
-                    else:
-                        return jsonify({'error': 'Failed to analyze notebook'}), 400
+                    try:
+                        result = analyzer.analyze_notebook(temp_path)
+                        if result:
+                            analysis_data = format_analysis_for_web(result)
+                            return jsonify({'success': True, 'analysis': analysis_data})
+                        else:
+                            return jsonify({'error': 'Failed to analyze notebook'}), 400
+                    finally:
+                        # Secure cleanup of temporary file
+                        try:
+                            if 'temp_path' in locals() and os.path.exists(temp_path):
+                                os.unlink(temp_path)
+                        except OSError:
+                            pass  # Ignore cleanup errors
                 except Exception as e:
-                    return jsonify({'error': f'File processing error: {str(e)}'}), 500
-                finally:
-                    if os.path.exists(filepath):
-                        os.remove(filepath)
+                    # Sanitized error message - P1 Security Fix
+                    if app.debug:
+                        return jsonify({'error': f'File processing error: {str(e)}'}), 500
+                    else:
+                        return jsonify({'error': 'File processing failed. Please try again.'}), 500
             else:
                 return jsonify({'error': 'Invalid file type'}), 400
         else:
@@ -305,22 +371,32 @@ def analyze_stream():
                 if not is_safe:
                     return jsonify({'error': f'File upload blocked for security: {error_msg}'}), 400
                 
-                # Save sanitized content to temp file
-                file_path = os.path.join('/tmp', filename)
+                # Use secure temporary file handling - P1 Security Fix
                 
+                # Create secure temporary file with proper cleanup
                 if filename.lower().endswith('.ipynb'):
-                    with open(file_path, 'w', encoding='utf-8') as f:
-                        json.dump(sanitized_content, f)
+                    with tempfile.NamedTemporaryFile(mode='w', suffix='.ipynb', delete=False, 
+                                                   prefix='notebook_', dir='/tmp') as temp_file:
+                        json.dump(sanitized_content, temp_file)
+                        temp_file.flush()  # Ensure content is written
+                        file_path = temp_file.name
                 elif filename.lower().endswith('.py'):
                     python_content = sanitized_content.get('content', '') if sanitized_content else ''
-                    with open(file_path, 'w', encoding='utf-8') as f:
-                        f.write(python_content)
+                    with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, 
+                                                   prefix='notebook_', dir='/tmp') as temp_file:
+                        temp_file.write(python_content)
+                        temp_file.flush()  # Ensure content is written
+                        file_path = temp_file.name
                 
                 source_name = filename
                 analysis_input = {'type': 'file', 'path': file_path, 'name': filename}
                 
             except Exception as e:
-                return jsonify({'error': f'File processing error: {str(e)}'}), 500
+                # Sanitized error message - P1 Security Fix
+                if app.debug:
+                    return jsonify({'error': f'File processing error: {str(e)}'}), 500
+                else:
+                    return jsonify({'error': 'File processing failed. Please try again.'}), 500
         else:
             return jsonify({'error': 'Invalid file type. Please upload a .ipynb or .py file.'}), 400
             
@@ -385,7 +461,11 @@ def analyze_stream():
         except Exception as e:
             print(f"Streaming analysis error: {e}")
             print(f"Traceback: {traceback.format_exc()}")
-            yield f"data: {json.dumps({'type': 'error', 'message': f'Analysis failed: {str(e)}'})}\n\n"
+            # Sanitized error message - P1 Security Fix
+            if app.debug:
+                yield f"data: {json.dumps({'type': 'error', 'message': f'Analysis failed: {str(e)}'})}\n\n"
+            else:
+                yield f"data: {json.dumps({'type': 'error', 'message': 'Analysis failed. Please try again.'})}\n\n"
             
             # Clean up temp file in case of error
             if analysis_input and analysis_input['type'] == 'file' and os.path.exists(analysis_input['path']):
@@ -534,36 +614,48 @@ def mcp_endpoint():
                         result = analyzer.analyze_notebook(url)
                         source_display = url
                     else:
-                        # Analyze notebook content directly by creating a temporary file
+                        # Analyze notebook content directly by creating a secure temporary file - P1 Security Fix
                         import tempfile
                         import json
                         import os
                         
-                        # Parse notebook content (could be JSON string or dict)
-                        if isinstance(notebook_content, str):
-                            try:
-                                notebook_data = json.loads(notebook_content)
-                            except json.JSONDecodeError:
-                                # Handle marimo .py files
-                                with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as temp_file:
-                                    temp_file.write(notebook_content)
-                                    temp_path = temp_file.name
-                        else:
-                            notebook_data = notebook_content
-                        
-                        if 'notebook_data' in locals():
-                            # It's a Jupyter notebook
-                            with tempfile.NamedTemporaryFile(mode='w', suffix='.ipynb', delete=False) as temp_file:
-                                json.dump(notebook_data, temp_file)
-                                temp_path = temp_file.name
-                        
+                        temp_path = None
                         try:
+                            # Parse notebook content (could be JSON string or dict)
+                            if isinstance(notebook_content, str):
+                                try:
+                                    notebook_data = json.loads(notebook_content)
+                                    # It's a Jupyter notebook
+                                    with tempfile.NamedTemporaryFile(mode='w', suffix='.ipynb', delete=False, 
+                                                                   prefix='mcp_notebook_', dir='/tmp') as temp_file:
+                                        json.dump(notebook_data, temp_file)
+                                        temp_file.flush()
+                                        temp_path = temp_file.name
+                                except json.JSONDecodeError:
+                                    # Handle marimo .py files
+                                    with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, 
+                                                                   prefix='mcp_notebook_', dir='/tmp') as temp_file:
+                                        temp_file.write(notebook_content)
+                                        temp_file.flush()
+                                        temp_path = temp_file.name
+                            else:
+                                # It's already a notebook data dict
+                                notebook_data = notebook_content
+                                with tempfile.NamedTemporaryFile(mode='w', suffix='.ipynb', delete=False, 
+                                                               prefix='mcp_notebook_', dir='/tmp') as temp_file:
+                                    json.dump(notebook_data, temp_file)
+                                    temp_file.flush()
+                                    temp_path = temp_file.name
+                            
                             result = analyzer.analyze_notebook(temp_path)
                             source_display = source_info
                         finally:
-                            # Clean up temp file
-                            if 'temp_path' in locals():
-                                os.unlink(temp_path)
+                            # Secure cleanup of temporary file
+                            if temp_path and os.path.exists(temp_path):
+                                try:
+                                    os.unlink(temp_path)
+                                except OSError:
+                                    pass  # Ignore cleanup errors
                     
                     if result:
                         analysis_data = format_analysis_for_web(result)
@@ -616,9 +708,14 @@ def mcp_endpoint():
                         }), 400
                         
                 except Exception as e:
+                    # Sanitized error message - P1 Security Fix
+                    if app.debug:
+                        error_message = f'Analysis error: {str(e)}'
+                    else:
+                        error_message = 'Analysis failed. Please try again.'
                     return jsonify({
                         'jsonrpc': '2.0',
-                        'error': {'code': -32000, 'message': f'Analysis error: {str(e)}'},
+                        'error': {'code': -32000, 'message': error_message},
                         'id': request_id
                     }), 500
             
@@ -708,11 +805,43 @@ def mcp_endpoint():
             }), 404
             
     except Exception as e:
+        # Sanitized error message - P1 Security Fix
+        if app.debug:
+            error_message = f'Internal error: {str(e)}'
+        else:
+            error_message = 'Internal server error. Please try again.'
         return jsonify({
             'jsonrpc': '2.0',
-            'error': {'code': -32603, 'message': f'Internal error: {str(e)}'},
+            'error': {'code': -32603, 'message': error_message},
             'id': data.get('id') if 'data' in locals() else None
         }), 500
+
+# Security headers middleware
+@app.after_request
+def add_security_headers(response):
+    """Add essential security headers to all responses (Phase 1)."""
+    
+    # Content Security Policy - prevents XSS attacks
+    # Allow Bootstrap CSS/JS from CDN, inline styles for UI components
+    response.headers['Content-Security-Policy'] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://stackpath.bootstrapcdn.com; "
+        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://stackpath.bootstrapcdn.com; "
+        "font-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; "
+        "img-src 'self' data: https:; "
+        "connect-src 'self'; "
+        "frame-ancestors 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'"
+    )
+    
+    # Prevent clickjacking attacks
+    response.headers['X-Frame-Options'] = 'DENY'
+    
+    # Prevent MIME type confusion attacks
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    
+    return response
 
 # Error handlers
 @app.errorhandler(404)
