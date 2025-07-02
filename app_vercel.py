@@ -145,7 +145,9 @@ def format_analysis_for_web(analysis) -> dict:
 @app.route('/')
 def index():
     """Main page with analysis form."""
-    return render_template('index.html')
+    # Detect if running on analyze.brev.nvidia.com
+    is_brev_nvidia = request.host == 'analyze.brev.nvidia.com'
+    return render_template('index.html', is_brev_nvidia=is_brev_nvidia)
 
 @app.route('/health')
 def health():

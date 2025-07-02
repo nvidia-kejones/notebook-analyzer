@@ -15,6 +15,23 @@
             </p>
         </div>
 
+        <!-- Repository Access Notice for NVIDIA hosted version -->
+        {% if is_brev_nvidia %}
+        <div class="alert alert-info mb-4" role="alert">
+            <div class="d-flex align-items-start">
+                <i class="bi bi-info-circle-fill text-primary me-2 mt-1"></i>
+                <div>
+                    <strong>Repository Access Notice:</strong> This hosted version can only access <strong>public</strong> repositories on GitHub.com and GitLab.com. 
+                    For private repositories, please either:
+                    <ul class="mb-0 mt-2">
+                        <li>Upload your notebook file directly using the file upload option below</li>
+                        <li>Configure and run the analyzer locally to access private repositories</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
         <!-- Analysis Form -->
         <div class="card">
             <div class="card-header">
@@ -43,7 +60,11 @@
                                    pattern="https?://.*\.ipynb.*">
                         </div>
                         <div class="form-text">
+                            {% if is_brev_nvidia %}
+                            Supports <strong>public</strong> GitHub, GitLab, and direct URLs to .ipynb and .py files
+                            {% else %}
                             Supports GitHub, GitLab, and direct URLs to .ipynb and .py files
+                            {% endif %}
                         </div>
                     </div>
 
