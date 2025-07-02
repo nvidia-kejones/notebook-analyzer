@@ -39,7 +39,7 @@ while [[ $# -gt 0 ]]; do
             echo "Usage: $0 [options]"
             echo ""
             echo "Options:"
-            echo "  --quick, -q          Run quick tests only (health, MCP, GPU analysis)"
+            echo "  --quick, -q          Run quick tests only (health, security headers, MCP, GPU analysis)"
             echo "  --url, -u <url>      Base URL to test against (default: $DEFAULT_BASE_URL)"
             echo "  --help, -h           Show this help message"
             echo ""
@@ -126,6 +126,71 @@ test_health_check() {
         fi
     else
         log_result "Health Check" "false" "Connection failed"
+        return 1
+    fi
+}
+
+test_security_headers() {
+    echo "🔒 Testing security headers..."
+    local response_file="$TEMP_DIR/security_headers_response"
+    
+    # Get headers from the main page
+    if curl -I -s -m 10 -o "$response_file" -w "%{http_code}" "$BASE_URL/" > "$TEMP_DIR/security_headers_code" 2>/dev/null; then
+        local http_code=$(cat "$TEMP_DIR/security_headers_code")
+        if [ "$http_code" = "200" ]; then
+            local headers_content=$(cat "$response_file")
+            
+            # Check for essential security headers
+            local csp_found=false
+            local frame_options_found=false
+            local content_type_options_found=false
+            
+            # Check Content Security Policy
+            if echo "$headers_content" | grep -qi "content-security-policy:"; then
+                csp_found=true
+            fi
+            
+            # Check X-Frame-Options
+            if echo "$headers_content" | grep -qi "x-frame-options:.*deny"; then
+                frame_options_found=true
+            fi
+            
+            # Check X-Content-Type-Options
+            if echo "$headers_content" | grep -qi "x-content-type-options:.*nosniff"; then
+                content_type_options_found=true
+            fi
+            
+            # Evaluate results
+            local passed_headers=0
+            local total_headers=3
+            
+            if [ "$csp_found" = "true" ]; then
+                ((passed_headers++))
+            fi
+            if [ "$frame_options_found" = "true" ]; then
+                ((passed_headers++))
+            fi
+            if [ "$content_type_options_found" = "true" ]; then
+                ((passed_headers++))
+            fi
+            
+            if [ "$passed_headers" -eq "$total_headers" ]; then
+                log_result "Security Headers" "true" "All security headers present ($passed_headers/$total_headers)"
+                return 0
+            else
+                local missing=""
+                if [ "$csp_found" = "false" ]; then missing="$missing CSP"; fi
+                if [ "$frame_options_found" = "false" ]; then missing="$missing X-Frame-Options"; fi
+                if [ "$content_type_options_found" = "false" ]; then missing="$missing X-Content-Type-Options"; fi
+                log_result "Security Headers" "false" "Missing headers:$missing ($passed_headers/$total_headers found)"
+                return 1
+            fi
+        else
+            log_result "Security Headers" "false" "HTTP $http_code"
+            return 1
+        fi
+    else
+        log_result "Security Headers" "false" "Request failed"
         return 1
     fi
 }
@@ -382,6 +447,9 @@ run_tests() {
         echo -e "\n${RED}❌ Health check failed - skipping other tests${NC}"
         return 1
     fi
+    
+    # Security tests (always run - critical for production)
+    test_security_headers
     
     # MCP tests (always run)
     test_mcp_tools_list
