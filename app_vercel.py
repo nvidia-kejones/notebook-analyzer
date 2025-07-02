@@ -372,6 +372,15 @@ def mcp_endpoint():
                                         'type': 'string',
                                         'description': 'URL to the notebook (GitHub, GitLab, or direct .ipynb/.py URL)'
                                     },
+                                    'notebook_content': {
+                                        'type': 'string',
+                                        'description': 'Direct notebook content (JSON for .ipynb or Python code for .py files)'
+                                    },
+                                    'source_info': {
+                                        'type': 'string',
+                                        'description': 'Source information for direct content (filename or description)',
+                                        'default': 'unknown'
+                                    },
                                     'include_reasoning': {
                                         'type': 'boolean',
                                         'description': 'Include detailed analysis reasoning',
@@ -383,7 +392,10 @@ def mcp_endpoint():
                                         'default': True
                                     }
                                 },
-                                'required': ['url']
+                                'anyOf': [
+                                    {'required': ['url']},
+                                    {'required': ['notebook_content']}
+                                ]
                             }
                         },
                         {
@@ -423,16 +435,52 @@ def mcp_endpoint():
             
             if tool_name == 'analyze_notebook':
                 url = arguments.get('url')
-                if not url:
+                notebook_content = arguments.get('notebook_content')
+                source_info = arguments.get('source_info', 'unknown')
+                
+                if not url and not notebook_content:
                     return jsonify({
                         'jsonrpc': '2.0',
-                        'error': {'code': -32602, 'message': 'Invalid params - url is required'},
+                        'error': {'code': -32602, 'message': 'Invalid params - either url or notebook_content is required'},
                         'id': request_id
                     }), 400
                 
                 try:
                     analyzer = GPUAnalyzer(quiet_mode=True)
-                    result = analyzer.analyze_notebook(url)
+                    if url:
+                        result = analyzer.analyze_notebook(url)
+                        source_display = url
+                    else:
+                        # Analyze notebook content directly by creating a temporary file
+                        import tempfile
+                        import json
+                        import os
+                        
+                        # Parse notebook content (could be JSON string or dict)
+                        if isinstance(notebook_content, str):
+                            try:
+                                notebook_data = json.loads(notebook_content)
+                            except json.JSONDecodeError:
+                                # Handle marimo .py files
+                                with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as temp_file:
+                                    temp_file.write(notebook_content)
+                                    temp_path = temp_file.name
+                        else:
+                            notebook_data = notebook_content
+                        
+                        if 'notebook_data' in locals():
+                            # It's a Jupyter notebook
+                            with tempfile.NamedTemporaryFile(mode='w', suffix='.ipynb', delete=False) as temp_file:
+                                json.dump(notebook_data, temp_file)
+                                temp_path = temp_file.name
+                        
+                        try:
+                            result = analyzer.analyze_notebook(temp_path)
+                            source_display = source_info
+                        finally:
+                            # Clean up temp file
+                            if 'temp_path' in locals():
+                                os.unlink(temp_path)
                     
                     if result:
                         analysis_data = format_analysis_for_web(result)
@@ -454,7 +502,7 @@ def mcp_endpoint():
                                 'content': [
                                     {
                                         'type': 'text',
-                                        'text': f"GPU Analysis Results for: {url}\n\n" +
+                                        'text': f"GPU Analysis Results for: {source_display}\n\n" +
                                                f"**Minimum Requirements:**\n" +
                                                f"- GPU: {analysis_data['min_gpu']['type']}\n" +
                                                f"- Quantity: {analysis_data['min_gpu']['quantity']}\n" +
