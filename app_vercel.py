@@ -11,9 +11,10 @@ import json
 import tempfile
 import traceback
 from pathlib import Path
-from flask import Flask, render_template, request, jsonify, flash, redirect, url_for
+from flask import Flask, render_template, request, jsonify, flash, redirect, url_for, Response
 from werkzeug.utils import secure_filename
 import sys
+import time
 
 # Set up paths for Vercel environment
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -215,6 +216,365 @@ def api_analyze():
     except Exception as e:
         print(f"API analysis error: {e}")
         return jsonify({'error': f'Analysis failed: {str(e)}'}), 500
+
+@app.route('/analyze-stream', methods=['POST'])
+def analyze_stream():
+    """Handle streaming analysis requests with Server-Sent Events."""
+    if not GPUAnalyzer:
+        return jsonify({'error': 'Analysis service not available'}), 503
+    
+    def generate_progress():
+        """Generator function for Server-Sent Events."""
+        try:
+            yield f"data: {json.dumps({'type': 'progress', 'message': 'Starting analysis...'})}\n\n"
+            
+            analyzer = GPUAnalyzer(quiet_mode=True)
+            
+            # Check if it's a file upload or URL
+            file_path = None
+            source_name = None
+            
+            if 'file' in request.files and request.files['file'].filename:
+                # File upload analysis
+                file = request.files['file']
+                if file and allowed_file(file.filename):
+                    filename = secure_filename(file.filename)
+                    file_path = os.path.join('/tmp', filename)
+                    file.save(file_path)
+                    source_name = filename
+                    yield f"data: {json.dumps({'type': 'progress', 'message': f'Uploaded file: {filename}'})}\n\n"
+                else:
+                    yield f"data: {json.dumps({'type': 'error', 'message': 'Invalid file type. Please upload a .ipynb or .py file.'})}\n\n"
+                    return
+                    
+            elif 'url' in request.form and request.form['url'].strip():
+                # URL analysis
+                source_name = request.form['url'].strip()
+                yield f"data: {json.dumps({'type': 'progress', 'message': f'Fetching notebook from URL...'})}\n\n"
+            else:
+                yield f"data: {json.dumps({'type': 'error', 'message': 'Please provide either a URL or upload a notebook file.'})}\n\n"
+                return
+            
+            # Progress updates during analysis
+            yield f"data: {json.dumps({'type': 'progress', 'message': 'Loading notebook content...'})}\n\n"
+            time.sleep(0.5)  # Brief pause for UI feedback
+            
+            yield f"data: {json.dumps({'type': 'progress', 'message': 'Extracting code and markdown cells...'})}\n\n"
+            time.sleep(0.3)
+            
+            yield f"data: {json.dumps({'type': 'progress', 'message': 'Analyzing GPU requirements...'})}\n\n"
+            time.sleep(0.5)
+            
+            yield f"data: {json.dumps({'type': 'progress', 'message': 'Evaluating workload complexity...'})}\n\n"
+            time.sleep(0.3)
+            
+            # Perform the actual analysis
+            if file_path:
+                result = analyzer.analyze_notebook(file_path)
+            else:
+                result = analyzer.analyze_notebook(source_name)
+            
+            if result:
+                yield f"data: {json.dumps({'type': 'progress', 'message': 'Generating recommendations...'})}\n\n"
+                time.sleep(0.3)
+                
+                analysis_data = format_analysis_for_web(result)
+                
+                yield f"data: {json.dumps({'type': 'progress', 'message': 'Analysis complete!'})}\n\n"
+                time.sleep(0.2)
+                
+                # Send the complete results
+                yield f"data: {json.dumps({'type': 'complete', 'analysis': analysis_data, 'source_name': source_name, 'source_type': 'file' if file_path else 'url'})}\n\n"
+            else:
+                yield f"data: {json.dumps({'type': 'error', 'message': 'Failed to analyze the notebook. Please check the file format or URL.'})}\n\n"
+            
+            # Clean up temp file
+            if file_path and os.path.exists(file_path):
+                os.remove(file_path)
+                
+        except Exception as e:
+            print(f"Streaming analysis error: {e}")
+            print(f"Traceback: {traceback.format_exc()}")
+            yield f"data: {json.dumps({'type': 'error', 'message': f'Analysis failed: {str(e)}'})}\n\n"
+            
+            # Clean up temp file in case of error
+            if 'file_path' in locals() and file_path and os.path.exists(file_path):
+                os.remove(file_path)
+    
+    return Response(generate_progress(), content_type='text/event-stream', headers={
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'Access-Control-Allow-Origin': '*'
+    })
+
+@app.route('/results')
+def results():
+    """Display analysis results (for streaming interface)."""
+    return render_template('results_stream.html')
+
+@app.route('/mcp', methods=['POST'])
+def mcp_endpoint():
+    """MCP (Model Context Protocol) endpoint for AI assistant integration."""
+    if not GPUAnalyzer:
+        return jsonify({
+            'jsonrpc': '2.0',
+            'error': {'code': -32000, 'message': 'Analysis service not available'},
+            'id': request.json.get('id') if request.is_json else None
+        }), 503
+    
+    if not request.is_json:
+        return jsonify({
+            'jsonrpc': '2.0',
+            'error': {'code': -32700, 'message': 'Parse error - JSON required'},
+            'id': None
+        }), 400
+    
+    try:
+        data = request.get_json()
+        method = data.get('method')
+        params = data.get('params', {})
+        request_id = data.get('id')
+        
+        if method == 'initialize':
+            return jsonify({
+                'jsonrpc': '2.0',
+                'result': {
+                    'capabilities': {
+                        'tools': True
+                    },
+                    'serverInfo': {
+                        'name': 'notebook-analyzer',
+                        'version': '3.0.0'
+                    }
+                },
+                'id': request_id
+            })
+        
+        elif method == 'tools/list':
+            return jsonify({
+                'jsonrpc': '2.0',
+                'result': {
+                    'tools': [
+                        {
+                            'name': 'analyze_notebook',
+                            'description': 'Analyze Jupyter or marimo notebooks for GPU requirements and NVIDIA compliance',
+                            'inputSchema': {
+                                'type': 'object',
+                                'properties': {
+                                    'url': {
+                                        'type': 'string',
+                                        'description': 'URL to the notebook (GitHub, GitLab, or direct .ipynb/.py URL)'
+                                    },
+                                    'include_reasoning': {
+                                        'type': 'boolean',
+                                        'description': 'Include detailed analysis reasoning',
+                                        'default': True
+                                    },
+                                    'include_compliance': {
+                                        'type': 'boolean',
+                                        'description': 'Include NVIDIA compliance assessment',
+                                        'default': True
+                                    }
+                                },
+                                'required': ['url']
+                            }
+                        },
+                        {
+                            'name': 'get_gpu_recommendations',
+                            'description': 'Get GPU recommendations for specific workload types',
+                            'inputSchema': {
+                                'type': 'object',
+                                'properties': {
+                                    'workload_type': {
+                                        'type': 'string',
+                                        'enum': ['inference', 'training', 'fine-tuning'],
+                                        'description': 'Type of workload'
+                                    },
+                                    'model_size': {
+                                        'type': 'string',
+                                        'enum': ['small', 'medium', 'large', 'xlarge'],
+                                        'description': 'Expected model size',
+                                        'default': 'medium'
+                                    },
+                                    'batch_size': {
+                                        'type': 'integer',
+                                        'description': 'Expected batch size',
+                                        'default': 1
+                                    }
+                                },
+                                'required': ['workload_type']
+                            }
+                        }
+                    ]
+                },
+                'id': request_id
+            })
+        
+        elif method == 'tools/call':
+            tool_name = params.get('name')
+            arguments = params.get('arguments', {})
+            
+            if tool_name == 'analyze_notebook':
+                url = arguments.get('url')
+                if not url:
+                    return jsonify({
+                        'jsonrpc': '2.0',
+                        'error': {'code': -32602, 'message': 'Invalid params - url is required'},
+                        'id': request_id
+                    }), 400
+                
+                try:
+                    analyzer = GPUAnalyzer(quiet_mode=True)
+                    result = analyzer.analyze_notebook(url)
+                    
+                    if result:
+                        analysis_data = format_analysis_for_web(result)
+                        
+                        # Include/exclude fields based on parameters
+                        if not arguments.get('include_reasoning', True):
+                            analysis_data.pop('reasoning', None)
+                            analysis_data.pop('llm_reasoning', None)
+                        
+                        if not arguments.get('include_compliance', True):
+                            analysis_data.pop('nvidia_compliance_score', None)
+                            analysis_data.pop('structure_assessment', None)
+                            analysis_data.pop('content_quality_issues', None)
+                            analysis_data.pop('technical_recommendations', None)
+                        
+                        return jsonify({
+                            'jsonrpc': '2.0',
+                            'result': {
+                                'content': [
+                                    {
+                                        'type': 'text',
+                                        'text': f"GPU Analysis Results for: {url}\n\n" +
+                                               f"**Minimum Requirements:**\n" +
+                                               f"- GPU: {analysis_data['min_gpu']['type']}\n" +
+                                               f"- Quantity: {analysis_data['min_gpu']['quantity']}\n" +
+                                               f"- VRAM: {analysis_data['min_gpu']['vram_gb']} GB\n" +
+                                               f"- Runtime: {analysis_data['min_gpu']['runtime']}\n\n" +
+                                               f"**Optimal Configuration:**\n" +
+                                               f"- GPU: {analysis_data['optimal_gpu']['type']}\n" +
+                                               f"- Quantity: {analysis_data['optimal_gpu']['quantity']}\n" +
+                                               f"- VRAM: {analysis_data['optimal_gpu']['vram_gb']} GB\n" +
+                                               f"- Runtime: {analysis_data['optimal_gpu']['runtime']}\n\n" +
+                                               f"**Additional Information:**\n" +
+                                               f"- SXM Required: {'Yes' if analysis_data['sxm_required'] else 'No'}\n" +
+                                               f"- ARM Compatibility: {analysis_data['arm_compatibility']}\n" +
+                                               f"- Analysis Confidence: {analysis_data['confidence']}%\n" +
+                                               f"- LLM Enhanced: {'Yes' if analysis_data['llm_enhanced'] else 'No'}\n" +
+                                               (f"- NVIDIA Compliance Score: {analysis_data.get('nvidia_compliance_score', 'N/A')}/100\n" if 'nvidia_compliance_score' in analysis_data else "")
+                                    }
+                                ],
+                                'analysis_data': analysis_data
+                            },
+                            'id': request_id
+                        })
+                    else:
+                        return jsonify({
+                            'jsonrpc': '2.0',
+                            'error': {'code': -32000, 'message': 'Failed to analyze notebook'},
+                            'id': request_id
+                        }), 400
+                        
+                except Exception as e:
+                    return jsonify({
+                        'jsonrpc': '2.0',
+                        'error': {'code': -32000, 'message': f'Analysis error: {str(e)}'},
+                        'id': request_id
+                    }), 500
+            
+            elif tool_name == 'get_gpu_recommendations':
+                workload_type = arguments.get('workload_type')
+                model_size = arguments.get('model_size', 'medium')
+                batch_size = arguments.get('batch_size', 1)
+                
+                if not workload_type:
+                    return jsonify({
+                        'jsonrpc': '2.0',
+                        'error': {'code': -32602, 'message': 'Invalid params - workload_type is required'},
+                        'id': request_id
+                    }), 400
+                
+                # Simple GPU recommendations based on workload
+                recommendations = {
+                    'inference': {
+                        'small': {'gpu': 'RTX 4080', 'vram': 16, 'quantity': 1},
+                        'medium': {'gpu': 'RTX 4090', 'vram': 24, 'quantity': 1},
+                        'large': {'gpu': 'A100 40GB', 'vram': 40, 'quantity': 1},
+                        'xlarge': {'gpu': 'H100 SXM 80GB', 'vram': 80, 'quantity': 1}
+                    },
+                    'training': {
+                        'small': {'gpu': 'RTX 4090', 'vram': 24, 'quantity': 1},
+                        'medium': {'gpu': 'A100 40GB', 'vram': 40, 'quantity': 2},
+                        'large': {'gpu': 'A100 80GB', 'vram': 80, 'quantity': 4},
+                        'xlarge': {'gpu': 'H100 SXM 80GB', 'vram': 80, 'quantity': 8}
+                    },
+                    'fine-tuning': {
+                        'small': {'gpu': 'RTX 4090', 'vram': 24, 'quantity': 1},
+                        'medium': {'gpu': 'A100 40GB', 'vram': 40, 'quantity': 1},
+                        'large': {'gpu': 'A100 80GB', 'vram': 80, 'quantity': 2},
+                        'xlarge': {'gpu': 'H100 SXM 80GB', 'vram': 80, 'quantity': 4}
+                    }
+                }
+                
+                rec = recommendations.get(workload_type, {}).get(model_size, {})
+                if not rec:
+                    return jsonify({
+                        'jsonrpc': '2.0',
+                        'error': {'code': -32602, 'message': 'Invalid workload_type or model_size'},
+                        'id': request_id
+                    }), 400
+                
+                # Adjust for batch size
+                if batch_size > 32:
+                    rec['quantity'] *= 2
+                elif batch_size > 128:
+                    rec['quantity'] *= 4
+                
+                return jsonify({
+                    'jsonrpc': '2.0',
+                    'result': {
+                        'content': [
+                            {
+                                'type': 'text',
+                                'text': f"GPU Recommendations for {workload_type} ({model_size} model, batch size {batch_size}):\n\n" +
+                                       f"**Recommended Configuration:**\n" +
+                                       f"- GPU: {rec['gpu']}\n" +
+                                       f"- Quantity: {rec['quantity']}\n" +
+                                       f"- VRAM per GPU: {rec['vram']} GB\n" +
+                                       f"- Total VRAM: {rec['vram'] * rec['quantity']} GB\n\n" +
+                                       f"**Performance Considerations:**\n" +
+                                       f"- Workload type: {workload_type.title()}\n" +
+                                       f"- Model size category: {model_size.title()}\n" +
+                                       f"- Batch size: {batch_size}"
+                            }
+                        ],
+                        'recommendation': rec
+                    },
+                    'id': request_id
+                })
+            
+            else:
+                return jsonify({
+                    'jsonrpc': '2.0',
+                    'error': {'code': -32601, 'message': f'Method not found: {tool_name}'},
+                    'id': request_id
+                }), 404
+        
+        else:
+            return jsonify({
+                'jsonrpc': '2.0',
+                'error': {'code': -32601, 'message': f'Method not found: {method}'},
+                'id': request_id
+            }), 404
+            
+    except Exception as e:
+        return jsonify({
+            'jsonrpc': '2.0',
+            'error': {'code': -32603, 'message': f'Internal error: {str(e)}'},
+            'id': data.get('id') if 'data' in locals() else None
+        }), 500
 
 # Error handlers
 @app.errorhandler(404)

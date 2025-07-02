@@ -3,22 +3,23 @@
 {% block title %}Analysis Results - Notebook Analyzer{% endblock %}
 
 {% block content %}
-<div id="loadingResults" class="text-center py-5">
-    <div class="spinner-border text-nvidia mb-3" role="status">
-        <span class="visually-hidden">Loading...</span>
+<div class="container-fluid mt-4">
+    <div id="streamingResults" class="d-none">
+        <!-- This will be populated by JavaScript when results arrive -->
     </div>
-    <p>Loading analysis results...</p>
-</div>
-
-<div id="resultsContent" style="display: none;">
-    <!-- Results will be populated by JavaScript -->
-</div>
-
-<div id="noResults" style="display: none;" class="text-center py-5">
-    <div class="alert alert-warning">
-        <h4>No Analysis Results Found</h4>
-        <p>It looks like you navigated here directly. Please start a new analysis.</p>
-        <a href="/" class="btn btn-nvidia">Start New Analysis</a>
+    
+    <div id="streamingError" class="d-none">
+        <div class="row justify-content-center">
+            <div class="col-lg-8">
+                <div class="alert alert-danger">
+                    <h5><i class="bi bi-exclamation-triangle me-2"></i>Analysis Failed</h5>
+                    <p id="errorMessage"></p>
+                    <a href="{{ url_for('index') }}" class="btn btn-outline-danger">
+                        <i class="bi bi-arrow-left me-1"></i>Try Again
+                    </a>
+                </div>
+            </div>
+        </div>
     </div>
 </div>
 {% endblock %}
@@ -26,256 +27,232 @@
 {% block scripts %}
 <script>
 document.addEventListener('DOMContentLoaded', function() {
+    // Get analysis results from sessionStorage (set by streaming interface)
     const resultsData = sessionStorage.getItem('analysisResults');
-    
-    if (!resultsData) {
-        document.getElementById('loadingResults').style.display = 'none';
-        document.getElementById('noResults').style.display = 'block';
-        return;
-    }
-    
-    try {
-        const data = JSON.parse(resultsData);
-        renderResults(data);
-        
-        // Clear the stored data to prevent stale results
-        sessionStorage.removeItem('analysisResults');
-        
-    } catch (e) {
-        console.error('Failed to parse results data:', e);
-        document.getElementById('loadingResults').style.display = 'none';
-        document.getElementById('noResults').style.display = 'block';
+    if (resultsData) {
+        try {
+            const data = JSON.parse(resultsData);
+            displayResults(data);
+            sessionStorage.removeItem('analysisResults'); // Clean up
+        } catch (e) {
+            showError('Failed to parse analysis results');
+        }
+    } else {
+        showError('No analysis results found');
     }
 });
 
-function renderResults(data) {
+function displayResults(data) {
+    const container = document.getElementById('streamingResults');
     const analysis = data.analysis;
-    const sourceType = data.source_type;
     const sourceName = data.source_name;
+    const sourceType = data.source_type;
     
-    document.getElementById('loadingResults').style.display = 'none';
-    document.getElementById('resultsContent').style.display = 'block';
-    
-    document.getElementById('resultsContent').innerHTML = `
-<div class="row">
-    <div class="col-12">
-        <!-- Header -->
-        <div class="d-flex justify-content-between align-items-center mb-4">
-            <div>
-                <h2 class="text-nvidia mb-1">
-                    <i class="bi bi-clipboard-data me-2"></i>
-                    Analysis Results
-                </h2>
-                <p class="text-muted mb-0">
-                    ${sourceType === 'file' ? 
-                        `<i class="bi bi-file-earmark-code me-1"></i>File: ${sourceName}` :
-                        `<i class="bi bi-link-45deg me-1"></i>URL: <a href="${sourceName}" target="_blank" class="text-decoration-none">${sourceName}</a>`
-                    }
-                </p>
-            </div>
-            <a href="/" class="btn btn-outline-secondary">
-                <i class="bi bi-arrow-left me-1"></i>
-                Analyze Another
-            </a>
-        </div>
-
-        <!-- Main Results Grid -->
+    container.innerHTML = `
         <div class="row">
-            <!-- GPU Requirements -->
-            <div class="col-lg-8 mb-4">
-                <div class="card">
-                    <div class="card-header">
-                        <h5 class="mb-0">
-                            <i class="bi bi-gpu-card me-2"></i>
-                            GPU Requirements
-                        </h5>
+            <div class="col-12">
+                <!-- Header -->
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <div>
+                        <h2 class="text-nvidia mb-1">
+                            <i class="bi bi-clipboard-data me-2"></i>
+                            Analysis Results
+                        </h2>
+                        <p class="text-muted mb-0">
+                            ${sourceType === 'file' ? 
+                                `<i class="bi bi-file-earmark-code me-1"></i>File: ${sourceName}` :
+                                `<i class="bi bi-link-45deg me-1"></i>URL: <a href="${sourceName}" target="_blank" class="text-decoration-none">${sourceName}</a>`
+                            }
+                        </p>
                     </div>
-                    <div class="card-body">
-                        <div class="row">
-                            <!-- Minimum Configuration -->
-                            <div class="col-md-6 mb-3">
-                                <div class="border-start border-warning border-3 ps-3">
-                                    <h6 class="text-warning mb-2">
-                                        <i class="bi bi-shield-fill-exclamation me-1"></i>
-                                        Minimum Requirements
+                    <a href="/" class="btn btn-outline-secondary">
+                        <i class="bi bi-arrow-left me-1"></i>
+                        Analyze Another
+                    </a>
+                </div>
+
+                <!-- Main Results Grid -->
+                <div class="row">
+                    <!-- GPU Requirements -->
+                    <div class="col-lg-8 mb-4">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5 class="mb-0">
+                                    <i class="bi bi-gpu-card me-2"></i>
+                                    GPU Requirements
+                                </h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="row">
+                                    <!-- Minimum Configuration -->
+                                    <div class="col-md-6 mb-3">
+                                        <div class="border-start border-warning border-3 ps-3">
+                                            <h6 class="text-warning mb-2">
+                                                <i class="bi bi-shield-fill-exclamation me-1"></i>
+                                                Minimum Requirements
+                                            </h6>
+                                            <div class="mb-2">
+                                                <strong>GPU:</strong> 
+                                                <span class="badge bg-warning text-dark ms-1">${analysis.min_gpu.type}</span>
+                                            </div>
+                                            <div class="mb-2">
+                                                <strong>Quantity:</strong> ${analysis.min_gpu.quantity}
+                                            </div>
+                                            <div class="mb-2">
+                                                <strong>VRAM:</strong> ${analysis.min_gpu.vram_gb} GB
+                                            </div>
+                                            <div class="mb-0">
+                                                <strong>Runtime:</strong> 
+                                                <span class="text-muted">${analysis.min_gpu.runtime}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Optimal Configuration -->
+                                    <div class="col-md-6 mb-3">
+                                        <div class="border-start border-success border-3 ps-3">
+                                            <h6 class="text-success mb-2">
+                                                <i class="bi bi-rocket-takeoff me-1"></i>
+                                                Optimal Configuration
+                                            </h6>
+                                            <div class="mb-2">
+                                                <strong>GPU:</strong> 
+                                                <span class="badge bg-success ms-1">${analysis.optimal_gpu.type}</span>
+                                            </div>
+                                            <div class="mb-2">
+                                                <strong>Quantity:</strong> ${analysis.optimal_gpu.quantity}
+                                            </div>
+                                            <div class="mb-2">
+                                                <strong>VRAM:</strong> ${analysis.optimal_gpu.vram_gb} GB
+                                            </div>
+                                            <div class="mb-0">
+                                                <strong>Runtime:</strong> 
+                                                <span class="text-muted">${analysis.optimal_gpu.runtime}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Additional Requirements -->
+                                <div class="row mt-3">
+                                    <div class="col-md-6">
+                                        <div class="small">
+                                            <strong>SXM Required:</strong>
+                                            ${analysis.sxm_required ? 
+                                                '<span class="badge bg-info ms-1">Yes</span>' :
+                                                '<span class="badge bg-secondary ms-1">No</span>'
+                                            }
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="small">
+                                            <strong>ARM Compatibility:</strong>
+                                            ${getArmCompatibilityBadge(analysis.arm_compatibility)}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Compliance & Confidence -->
+                    <div class="col-lg-4 mb-4">
+                        <div class="card">
+                            <div class="card-header">
+                                <h6 class="mb-0">
+                                    <i class="bi bi-speedometer2 me-2"></i>
+                                    Assessment Metrics
+                                </h6>
+                            </div>
+                            <div class="card-body text-center">
+                                <!-- Compliance Score -->
+                                <div class="mb-3">
+                                    <div class="compliance-score ${getComplianceClass(analysis.nvidia_compliance_score)}">
+                                        ${analysis.nvidia_compliance_score}/100
+                                    </div>
+                                    <small class="text-muted">NVIDIA Compliance Score</small>
+                                </div>
+
+                                <!-- Confidence -->
+                                <div class="mb-3">
+                                    <div class="compliance-score text-primary">
+                                        ${analysis.confidence}%
+                                    </div>
+                                    <small class="text-muted">Analysis Confidence</small>
+                                </div>
+
+                                <!-- Enhancement Status -->
+                                ${analysis.llm_enhanced ?
+                                    '<span class="badge bg-nvidia"><i class="bi bi-robot me-1"></i>LLM Enhanced</span>' :
+                                    '<span class="badge bg-secondary"><i class="bi bi-gear me-1"></i>Static Analysis</span>'
+                                }
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Detailed Analysis -->
+                <div class="row">
+                    <!-- Reasoning -->
+                    <div class="col-lg-6 mb-4">
+                        <div class="card">
+                            <div class="card-header">
+                                <h6 class="mb-0">
+                                    <i class="bi bi-lightbulb me-2"></i>
+                                    Analysis Reasoning
+                                </h6>
+                            </div>
+                            <div class="card-body">
+                                ${analysis.reasoning ? analysis.reasoning.map(reason => 
+                                    `<div class="reasoning-item">${reason}</div>`
+                                ).join('') : ''}
+                                
+                                ${analysis.llm_reasoning && analysis.llm_reasoning.length > 0 ? `
+                                    <h6 class="mt-3 text-nvidia">
+                                        <i class="bi bi-robot me-1"></i>
+                                        LLM Insights
                                     </h6>
-                                    <div class="mb-2">
-                                        <strong>GPU:</strong> 
-                                        <span class="badge bg-warning text-dark ms-1">${analysis.min_gpu.type}</span>
-                                    </div>
-                                    <div class="mb-2">
-                                        <strong>Quantity:</strong> ${analysis.min_gpu.quantity}
-                                    </div>
-                                    <div class="mb-2">
-                                        <strong>VRAM:</strong> ${analysis.min_gpu.vram_gb} GB
-                                    </div>
-                                    <div class="mb-0">
-                                        <strong>Runtime:</strong> 
-                                        <span class="text-muted">${analysis.min_gpu.runtime}</span>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <!-- Optimal Configuration -->
-                            <div class="col-md-6 mb-3">
-                                <div class="border-start border-success border-3 ps-3">
-                                    <h6 class="text-success mb-2">
-                                        <i class="bi bi-rocket-takeoff me-1"></i>
-                                        Optimal Configuration
-                                    </h6>
-                                    <div class="mb-2">
-                                        <strong>GPU:</strong> 
-                                        <span class="badge bg-success ms-1">${analysis.optimal_gpu.type}</span>
-                                    </div>
-                                    <div class="mb-2">
-                                        <strong>Quantity:</strong> ${analysis.optimal_gpu.quantity}
-                                    </div>
-                                    <div class="mb-2">
-                                        <strong>VRAM:</strong> ${analysis.optimal_gpu.vram_gb} GB
-                                    </div>
-                                    <div class="mb-0">
-                                        <strong>Runtime:</strong> 
-                                        <span class="text-muted">${analysis.optimal_gpu.runtime}</span>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Additional Requirements -->
-                        <div class="row mt-3">
-                            <div class="col-md-6">
-                                <div class="small">
-                                    <strong>SXM Required:</strong>
-                                    <span class="badge ${analysis.sxm_required ? 'bg-info' : 'bg-secondary'} ms-1">
-                                        ${analysis.sxm_required ? 'Yes' : 'No'}
-                                    </span>
-                                </div>
-                            </div>
-                            <div class="col-md-6">
-                                <div class="small">
-                                    <strong>ARM Compatibility:</strong>
-                                    <span class="badge ${getArmBadgeClass(analysis.arm_compatibility)} ms-1">
-                                        ${analysis.arm_compatibility}
-                                    </span>
-                                </div>
+                                    ${analysis.llm_reasoning.map(reason => 
+                                        `<div class="reasoning-item">${reason}</div>`
+                                    ).join('')}
+                                ` : ''}
                             </div>
                         </div>
                     </div>
-                </div>
-            </div>
 
-            <!-- Compliance & Confidence -->
-            <div class="col-lg-4 mb-4">
-                <div class="card">
-                    <div class="card-header">
-                        <h6 class="mb-0">
-                            <i class="bi bi-speedometer2 me-2"></i>
-                            Assessment Metrics
-                        </h6>
-                    </div>
-                    <div class="card-body text-center">
-                        <!-- Compliance Score -->
-                        <div class="mb-3">
-                            <div class="compliance-score ${getScoreClass(analysis.nvidia_compliance_score)}">
-                                ${analysis.nvidia_compliance_score}/100
+                    <!-- Compliance Details -->
+                    <div class="col-lg-6 mb-4">
+                        <div class="card">
+                            <div class="card-header">
+                                <h6 class="mb-0">
+                                    <i class="bi bi-shield-check me-2"></i>
+                                    NVIDIA Compliance
+                                </h6>
                             </div>
-                            <small class="text-muted">NVIDIA Compliance Score</small>
-                        </div>
-
-                        <!-- Confidence -->
-                        <div class="mb-3">
-                            <div class="compliance-score text-primary">
-                                ${analysis.confidence}%
+                            <div class="card-body">
+                                ${renderComplianceDetails(analysis)}
                             </div>
-                            <small class="text-muted">Analysis Confidence</small>
                         </div>
-
-                        <!-- Enhancement Status -->
-                        <span class="badge ${analysis.llm_enhanced ? 'bg-nvidia' : 'bg-secondary'}">
-                            <i class="bi bi-${analysis.llm_enhanced ? 'robot' : 'gear'} me-1"></i>
-                            ${analysis.llm_enhanced ? 'LLM Enhanced' : 'Static Analysis'}
-                        </span>
                     </div>
                 </div>
             </div>
         </div>
-
-        <!-- Detailed Analysis -->
-        <div class="row">
-            <!-- Reasoning -->
-            <div class="col-lg-6 mb-4">
-                <div class="card">
-                    <div class="card-header">
-                        <h6 class="mb-0">
-                            <i class="bi bi-lightbulb me-2"></i>
-                            Analysis Reasoning
-                        </h6>
-                    </div>
-                    <div class="card-body">
-                        ${renderReasoningList(analysis.reasoning)}
-                        ${analysis.llm_reasoning && analysis.llm_reasoning.length > 0 ? `
-                            <h6 class="mt-3 text-nvidia">
-                                <i class="bi bi-robot me-1"></i>
-                                LLM Insights
-                            </h6>
-                            ${renderReasoningList(analysis.llm_reasoning)}
-                        ` : ''}
-                        ${analysis.sxm_reasoning && analysis.sxm_reasoning.length > 0 ? `
-                            <h6 class="mt-3 text-info">SXM Analysis</h6>
-                            ${renderReasoningList(analysis.sxm_reasoning)}
-                        ` : ''}
-                        ${analysis.arm_reasoning && analysis.arm_reasoning.length > 0 ? `
-                            <h6 class="mt-3 text-success">ARM Compatibility</h6>
-                            ${renderReasoningList(analysis.arm_reasoning)}
-                        ` : ''}
-                    </div>
-                </div>
-            </div>
-
-            <!-- Compliance Details -->
-            <div class="col-lg-6 mb-4">
-                <div class="card">
-                    <div class="card-header">
-                        <h6 class="mb-0">
-                            <i class="bi bi-shield-check me-2"></i>
-                            NVIDIA Compliance Details
-                        </h6>
-                    </div>
-                    <div class="card-body">
-                        ${renderComplianceDetails(analysis)}
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- API Example -->
-        <div class="card">
-            <div class="card-header">
-                <h6 class="mb-0">
-                    <i class="bi bi-code-slash me-2"></i>
-                    API Access
-                </h6>
-            </div>
-            <div class="card-body">
-                <p class="text-muted mb-2">Use the API endpoint for programmatic access:</p>
-                <div class="bg-light p-3 rounded">
-                    <code>
-                        POST ${window.location.origin}/api/analyze<br>
-                        Content-Type: application/json<br><br>
-                        ${sourceType === 'url' ? 
-                            `{"url": "${sourceName}"}` :
-                            '# For file uploads, use multipart/form-data with \'file\' field'
-                        }
-                    </code>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
     `;
+    
+    container.classList.remove('d-none');
 }
 
-function getScoreClass(score) {
+function getArmCompatibilityBadge(compatibility) {
+    if (compatibility.includes('Compatible')) {
+        return `<span class="badge bg-success ms-1">${compatibility}</span>`;
+    } else if (compatibility.includes('Likely')) {
+        return `<span class="badge bg-warning ms-1">${compatibility}</span>`;
+    } else {
+        return `<span class="badge bg-danger ms-1">${compatibility}</span>`;
+    }
+}
+
+function getComplianceClass(score) {
     if (score >= 90) return 'score-excellent';
     if (score >= 80) return 'score-good';
     if (score >= 70) return 'score-fair';
@@ -283,47 +260,59 @@ function getScoreClass(score) {
     return 'score-critical';
 }
 
-function getArmBadgeClass(compatibility) {
-    if (compatibility.includes('Compatible')) return 'bg-success';
-    if (compatibility.includes('Likely')) return 'bg-warning';
-    return 'bg-danger';
-}
-
-function renderReasoningList(items) {
-    if (!items || items.length === 0) return '';
-    return items.map(item => `<div class="reasoning-item">${item}</div>`).join('');
-}
-
 function renderComplianceDetails(analysis) {
     let html = '';
     
-    if (analysis.structure_assessment && Object.keys(analysis.structure_assessment).length > 0) {
-        html += '<h6 class="text-nvidia">Structure & Layout</h6><ul class="list-unstyled">';
-        for (const [category, assessment] of Object.entries(analysis.structure_assessment)) {
-            const className = assessment.includes('Good') || assessment.includes('✅') ? 'text-success' :
-                            assessment.includes('Warning') || assessment.includes('⚠️') ? 'text-warning' : 'text-danger';
-            html += `<li class="mb-1"><strong>${category.replace(/_/g, ' ').replace(/\\b\\w/g, l => l.toUpperCase())}:</strong> <span class="${className}">${assessment}</span></li>`;
+    if (analysis.structure_assessment) {
+        html += '<h6 class="text-primary">Structure Assessment</h6>';
+        for (const [key, value] of Object.entries(analysis.structure_assessment)) {
+            html += `<div class="small mb-1"><strong>${key}:</strong> ${value}</div>`;
         }
-        html += '</ul>';
     }
     
     if (analysis.content_quality_issues && analysis.content_quality_issues.length > 0) {
-        html += '<h6 class="text-warning mt-3">Content Quality Issues</h6><ul class="small">';
+        html += '<h6 class="text-warning mt-3">Content Recommendations</h6>';
         analysis.content_quality_issues.forEach(issue => {
-            html += `<li>${issue}</li>`;
+            html += `<div class="small mb-1">• ${issue}</div>`;
         });
-        html += '</ul>';
     }
     
     if (analysis.technical_recommendations && analysis.technical_recommendations.length > 0) {
-        html += '<h6 class="text-info mt-3">Technical Recommendations</h6><ul class="small">';
+        html += '<h6 class="text-info mt-3">Technical Recommendations</h6>';
         analysis.technical_recommendations.forEach(rec => {
-            html += `<li>${rec}</li>`;
+            html += `<div class="small mb-1">• ${rec}</div>`;
         });
-        html += '</ul>';
     }
     
     return html || '<p class="text-muted">No detailed compliance information available.</p>';
 }
+
+function showError(message) {
+    document.getElementById('errorMessage').textContent = message;
+    document.getElementById('streamingError').classList.remove('d-none');
+}
 </script>
+
+<style>
+.compliance-score {
+    font-size: 2rem;
+    font-weight: bold;
+    line-height: 1;
+}
+
+.score-excellent { color: #198754; }
+.score-good { color: #76b900; }
+.score-fair { color: #fd7e14; }
+.score-poor { color: #dc3545; }
+.score-critical { color: #6f42c1; }
+
+.reasoning-item {
+    padding: 0.25rem 0.5rem;
+    margin: 0.1rem 0;
+    background: #f8f9fa;
+    border-left: 3px solid #76b900;
+    border-radius: 0 0.25rem 0.25rem 0;
+    font-size: 0.875rem;
+}
+</style>
 {% endblock %} 
