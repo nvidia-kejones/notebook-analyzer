@@ -55,7 +55,8 @@ class GPURequirement:
 
 class LLMAnalyzer:
     def __init__(self, base_url: str, model: str, api_key: str):
-        self.base_url = base_url.rstrip('/')
+        # Remove trailing slashes and /v1 suffix to avoid double /v1 in URLs
+        self.base_url = base_url.rstrip('/').rstrip('/v1')
         self.model = model
         self.api_key = api_key
         self.headers = {

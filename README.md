@@ -62,7 +62,7 @@ A comprehensive tool for analyzing Jupyter notebooks (.ipynb) and marimo noteboo
 3. **Optional: Configure Environment Variables**:
    ```bash
    # For LLM Enhancement
-   export OPENAI_BASE_URL="https://integrate.api.nvidia.com/v1/"
+   export OPENAI_BASE_URL="https://integrate.api.nvidia.com"  # NOTE: Do NOT include /v1 - it's added automatically
    export OPENAI_API_KEY="your-api-key-here"
    export OPENAI_MODEL="nvidia/llama-3.1-nemotron-ultra-253b-v1"  # optional, defaults to gpt-4
    
@@ -140,6 +140,23 @@ export OPENAI_API_KEY="dummy"
 export OPENAI_MODEL="llama3:8b"
 python notebook-analyzer.py -v ./local-notebook.ipynb
 ```
+
+## 🔧 Troubleshooting
+
+### LLM Enhancement Issues
+
+**Problem**: Getting 404 errors from LLM API, falling back to static analysis  
+**Solution**: Make sure your `OPENAI_BASE_URL` does NOT include `/v1` at the end. The application adds this automatically.
+
+```bash
+# ❌ Wrong - will cause 404 errors
+export OPENAI_BASE_URL="https://integrate.api.nvidia.com/v1"
+
+# ✅ Correct
+export OPENAI_BASE_URL="https://integrate.api.nvidia.com"
+```
+
+The application automatically constructs the full endpoint: `{base_url}/v1/chat/completions`
 
 ### JSON Output for Automation
 ```bash

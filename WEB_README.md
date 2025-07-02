@@ -198,7 +198,7 @@ docker compose up -d
 #### Option 2: Shell environment variables
 ```bash
 # LLM Enhancement
-export OPENAI_BASE_URL="https://integrate.api.nvidia.com/v1"
+export OPENAI_BASE_URL="https://integrate.api.nvidia.com"
 export OPENAI_API_KEY="your-api-key-here"
 export OPENAI_MODEL="nvidia/llama-3.1-nemotron-ultra-253b-v1"
 
@@ -217,23 +217,25 @@ OPENAI_API_KEY=your-key docker compose up -d
 
 ### LLM Provider Examples
 
+**Important**: Do NOT include `/v1` in the base URL - it's added automatically by the application.
+
 #### NVIDIA NIM
 ```bash
-OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1
+OPENAI_BASE_URL=https://integrate.api.nvidia.com
 OPENAI_API_KEY=your-nvidia-api-key
 OPENAI_MODEL=nvidia/llama-3.1-nemotron-ultra-253b-v1
 ```
 
 #### OpenAI
 ```bash
-OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_BASE_URL=https://api.openai.com
 OPENAI_API_KEY=sk-your-openai-key
 OPENAI_MODEL=gpt-4
 ```
 
 #### Local Ollama
 ```bash
-OPENAI_BASE_URL=http://host.docker.internal:11434/v1
+OPENAI_BASE_URL=http://host.docker.internal:11434
 OPENAI_API_KEY=dummy
 OPENAI_MODEL=llama3:8b
 ```
@@ -372,6 +374,21 @@ This project is licensed under the Apache License 2.0 - see the original [LICENS
 - Ensure tokens have proper permissions
 - Verify token format and validity
 - Check environment variable configuration
+
+### LLM API Issues
+
+**Problem**: Getting 404 errors from LLM API, analysis falls back to static mode  
+**Solution**: Ensure your `OPENAI_BASE_URL` does NOT include `/v1` at the end.
+
+```bash
+# ❌ Wrong - causes 404 errors  
+OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1
+
+# ✅ Correct
+OPENAI_BASE_URL=https://integrate.api.nvidia.com
+```
+
+The application automatically constructs: `{base_url}/v1/chat/completions`
 
 ### Getting Help
 - Check the application logs: `docker-compose logs notebook-analyzer-web`
