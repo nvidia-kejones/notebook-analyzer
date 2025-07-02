@@ -49,3 +49,4 @@ Werkzeug>=3.0.0
 # - CLI tool: python notebook-analyzer.py [options]
 # - Web interface: python app.py (requires Flask dependencies above)
 # - Web interface specific: Bootstrap 5.1.3 and Bootstrap Icons are loaded via CDN
+# - Vercel deployment: Optimized for serverless functions with /tmp storage

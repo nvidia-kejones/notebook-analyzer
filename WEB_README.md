@@ -308,9 +308,9 @@ curl http://localhost:8080/health
 curl -X POST http://localhost:8080/api/analyze -H "Content-Type: application/json" -d '{"url": "test-url"}'
 ```
 
-## 🐳 Docker Deployment
+## 🐳 Deployment Options
 
-### Production Docker Compose
+### Docker Deployment (Recommended for Heavy Workloads)
 
 ```yaml
 version: '3.8'
@@ -318,7 +318,7 @@ services:
   notebook-analyzer:
     image: notebook-analyzer-web:latest
     ports:
-      - "5000:5000"
+      - "8080:5000"
     environment:
       - HOST=0.0.0.0
       - PORT=5000
@@ -338,6 +338,32 @@ services:
       - notebook-analyzer
     restart: unless-stopped
 ```
+
+### Vercel Deployment (Quick & Simple)
+
+For simple notebooks and quick prototyping, you can deploy to Vercel:
+
+**✅ Good for:**
+- Simple notebook analysis (<60 seconds)
+- API-only usage
+- Low traffic applications
+- Quick prototyping
+
+**❌ Limitations:**
+- 10s timeout (Hobby) / 60s timeout (Pro)
+- Memory limits for large notebooks
+- No persistent storage
+
+**Deploy to Vercel:**
+```bash
+# Install Vercel CLI
+npm i -g vercel
+
+# Deploy
+vercel --prod
+```
+
+**See [`VERCEL_DEPLOYMENT.md`](VERCEL_DEPLOYMENT.md) for complete setup instructions.**
 
 ### Health Monitoring
 The application includes health check endpoints:
