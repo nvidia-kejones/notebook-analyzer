@@ -2,9 +2,20 @@
   "functions": {
     "api/app.py": {
       "maxDuration": 60
+    },
+    "api/debug.py": {
+      "maxDuration": 30
     }
   },
   "rewrites": [
+    {
+      "source": "/debug",
+      "destination": "/api/debug"
+    },
+    {
+      "source": "/test-import",
+      "destination": "/api/debug"
+    },
     {
       "source": "/(.*)",
       "destination": "/api/app"

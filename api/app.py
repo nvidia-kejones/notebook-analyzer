@@ -15,19 +15,40 @@ from flask import Flask, render_template, request, jsonify, flash, redirect, url
 from werkzeug.utils import secure_filename
 import sys
 
+# Add parent directory to Python path for imports
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+
 # Import the classes from the notebook analyzer script
-import importlib.util
-spec = importlib.util.spec_from_file_location("notebook_analyzer", "../notebook-analyzer.py")
-if spec is not None and spec.loader is not None:
-    notebook_analyzer = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(notebook_analyzer)
-else:
-    raise ImportError("Could not load notebook-analyzer.py module")
+try:
+    import importlib.util
+    notebook_analyzer_path = os.path.join(parent_dir, "notebook-analyzer.py")
+    
+    if not os.path.exists(notebook_analyzer_path):
+        raise ImportError(f"notebook-analyzer.py not found at {notebook_analyzer_path}")
+    
+    spec = importlib.util.spec_from_file_location("notebook_analyzer", notebook_analyzer_path)
+    if spec is not None and spec.loader is not None:
+        notebook_analyzer = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(notebook_analyzer)
+    else:
+        raise ImportError("Could not load notebook-analyzer.py module spec")
+        
+    GPUAnalyzer = notebook_analyzer.GPUAnalyzer
+    GPURequirement = notebook_analyzer.GPURequirement
+    
+except Exception as e:
+    print(f"Import error: {e}")
+    print(f"Current dir: {current_dir}")
+    print(f"Parent dir: {parent_dir}")
+    print(f"Files in parent dir: {os.listdir(parent_dir) if os.path.exists(parent_dir) else 'N/A'}")
+    raise
 
-GPUAnalyzer = notebook_analyzer.GPUAnalyzer
-GPURequirement = notebook_analyzer.GPURequirement
-
-app = Flask(__name__, template_folder='../templates')
+# Set up Flask app with proper template path
+templates_dir = os.path.join(parent_dir, 'templates')
+app = Flask(__name__, template_folder=templates_dir)
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
 
 # Configuration for Vercel (use /tmp for temporary files)
@@ -84,12 +105,21 @@ def index():
 @app.route('/health')
 def health():
     """Health check endpoint."""
-    return jsonify({'status': 'healthy', 'platform': 'vercel'})
+    return jsonify({
+        'status': 'healthy', 
+        'platform': 'vercel',
+        'current_dir': os.path.dirname(os.path.abspath(__file__)),
+        'parent_dir': os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        'analyzer_available': 'GPUAnalyzer' in globals()
+    })
 
 @app.route('/api/analyze', methods=['POST'])
 def api_analyze():
     """API endpoint for programmatic analysis - optimized for Vercel."""
     try:
+        if 'GPUAnalyzer' not in globals():
+            return jsonify({'error': 'GPUAnalyzer not available - import failed'}), 500
+            
         analyzer = GPUAnalyzer(quiet_mode=True)
         
         if request.is_json:
@@ -139,6 +169,7 @@ def api_analyze():
             
     except Exception as e:
         print(f"API analysis error: {e}")
+        print(f"Traceback: {traceback.format_exc()}")
         return jsonify({'error': f'Analysis failed: {str(e)}'}), 500
 
 # For Vercel, we need to expose the app directly
