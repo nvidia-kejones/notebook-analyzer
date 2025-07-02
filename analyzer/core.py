@@ -605,7 +605,11 @@ class GPUAnalyzer:
             'diffusers': [r'from diffusers', r'diffusers\.'],
             'accelerate': [r'from accelerate', r'accelerate\.'],
             'peft': [r'from peft', r'peft\.', r'lora'],
-            'quantization': [r'quantiz', r'int8', r'int4', r'bnb', r'bitsandbytes']
+            'quantization': [r'quantiz', r'int8', r'int4', r'bnb', r'bitsandbytes'],
+            'cudf': [r'cudf\.', r'import cudf', r'from cudf', r'backend=["\']cudf["\']', r'engine=["\']cudf["\']'],
+            'rapids': [r'cupy\.', r'import cupy', r'from cupy', r'cuml\.', r'import cuml', r'from cuml', r'cugraph\.', r'import cugraph'],
+            'cuda_computing': [r'numba\.cuda', r'from numba import cuda', r'cuda\.', r'pycuda\.', r'import pycuda'],
+            'nvidia_frameworks': [r'nemo\.', r'import nemo', r'triton\.', r'import triton', r'tensorrt\.', r'import tensorrt']
         }
         
         # SXM requirement patterns (enhanced)
@@ -620,7 +624,8 @@ class GPUAnalyzer:
             'tensorflow', 'pytorch', 'torch', 'jax', 'cupy', 'rapids',
             'transformers', 'diffusers', 'accelerate', 'peft', 'numpy',
             'scipy', 'scikit-learn', 'pandas', 'matplotlib', 'seaborn',
-            'opencv-python', 'pillow', 'numba', 'dask'
+            'opencv-python', 'pillow', 'numba', 'dask',
+            'cudf', 'cuml', 'cugraph', 'nemo', 'triton'
         ]
         
         # Enhanced ARM incompatible patterns with more comprehensive detection
@@ -1345,7 +1350,14 @@ class GPUAnalyzer:
             # Deep learning frameworks in actual usage (not just imports)
             r'\b(?:torch\.|tf\.|tensorflow\.|model\.|transformers\.|datasets\.)\w+',
             # Data processing for ML
-            r'\b(?:DataLoader|Dataset|batch_size|transform|preprocessing)\b'
+            r'\b(?:DataLoader|Dataset|batch_size|transform|preprocessing)\b',
+            # GPU-accelerated data processing (cuDF/RAPIDS)
+            r'\b(?:cudf\.|cupy\.|cuml\.|cugraph\.)\w+',
+            r'backend=["\']cudf["\']|engine=["\']cudf["\']',
+            # NVIDIA GPU computing
+            r'\b(?:numba\.cuda|pycuda\.|tensorrt\.)\w+',
+            # GPU memory management
+            r'\b(?:cuda_memory|gpu_memory|cuda\.mem)\b'
         ]
         
         workload_detected = any(re.search(pattern, all_code, re.IGNORECASE) for pattern in gpu_workload_patterns)
