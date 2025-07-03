@@ -1348,6 +1348,16 @@ class GPUAnalyzer:
                 # the consumer/enterprise recommendations based on the new estimates
                 self._generate_comprehensive_recommendations(static_analysis)
                 
+                # CONSISTENCY FIX: Ensure minimum VRAM shows total available VRAM when quantity > 1
+                # This must happen AFTER LLM enhancement to get the correct final VRAM value
+                if static_analysis.get('min_quantity', 1) > 1:
+                    # Convert per-GPU VRAM to total VRAM for multi-GPU minimum setups
+                    min_gpu_type = static_analysis.get('min_gpu_type', '')
+                    if min_gpu_type in self.gpu_specs:
+                        per_gpu_vram = self.gpu_specs[min_gpu_type]['vram']
+                        min_quantity = static_analysis.get('min_quantity', 1)
+                        static_analysis['min_vram_gb'] = per_gpu_vram * min_quantity
+                
                 if not self.quiet_mode:
                     print(f"✅ LLM analysis complete (confidence: {llm_context.get('confidence', 0.5)*100:.0f}%)")
         
@@ -1658,16 +1668,27 @@ class GPUAnalyzer:
             analysis['min_vram_gb'] = max(estimated_vram, 24)
             analysis['min_runtime_estimate'] = '4-8 hours'
 
-        # Set quantities based on multi-GPU detection
-        analysis['min_quantity'] = 1
+        # Set quantities based on multi-GPU detection and workload requirements
         if multi_gpu_detected or analysis.get('sxm_required', False):
-            analysis['optimal_quantity'] = 2
-            if multi_gpu_detected and not analysis.get('sxm_required', False):
+            # Multi-GPU workload - minimum should be at least 2
+            if analysis.get('sxm_required', False):
+                # Large-scale training typically needs 4+ GPUs minimum
+                analysis['min_quantity'] = 4
+                analysis['optimal_quantity'] = 8
+                analysis['reasoning'].append("Large-scale training requires minimum 4 GPUs, optimal 8")
+            else:
+                # Standard multi-GPU setup
+                analysis['min_quantity'] = 2
+                analysis['optimal_quantity'] = 2
                 analysis['reasoning'].append("Multi-GPU setup recommended - PCIe GPUs with NVLink sufficient")
-            elif analysis.get('sxm_required', False):
-                analysis['reasoning'].append("Multi-GPU setup recommended for large-scale training")
         else:
+            # Single GPU workload
+            analysis['min_quantity'] = 1
             analysis['optimal_quantity'] = 1
+        
+        # Validate and normalize quantities to allowed values (1, 2, 4, 8, multiples of 8)
+        analysis['min_quantity'] = self._normalize_gpu_quantity(analysis['min_quantity'])
+        analysis['optimal_quantity'] = self._normalize_gpu_quantity(analysis['optimal_quantity'])
         
         # CRITICAL FIX: Validate SXM requirements against selected GPUs
         analysis = self._validate_sxm_requirements(analysis)
@@ -1990,10 +2011,13 @@ class GPUAnalyzer:
             new_max = max(0.5, max_time / 2)
             runtime = f"{new_min:.1f}-{new_max:.1f} hours"
         
+        final_quantity = min(quantity, 2)  # Cap at 2 for consumer
+        total_vram = vram * final_quantity  # Calculate total available VRAM
+        
         return {
             'type': gpu_type,
-            'quantity': min(quantity, 2),  # Cap at 2 for consumer
-            'vram': vram,
+            'quantity': final_quantity,
+            'vram': total_vram,
             'runtime': runtime
         }
     
@@ -2032,10 +2056,12 @@ class GPUAnalyzer:
                 vram = 80
                 runtime = '20-40 minutes'
         
+        total_vram = vram * quantity  # Calculate total available VRAM
+        
         return {
             'type': gpu_type,
             'quantity': quantity,
-            'vram': vram,
+            'vram': total_vram,
             'runtime': runtime
         }
 
@@ -2164,6 +2190,20 @@ class GPUAnalyzer:
             full_url = full_url[1:-1]
         
         return full_url 
+
+    def _normalize_gpu_quantity(self, quantity: int) -> int:
+        """Normalize GPU quantity to valid values: 1, 2, 4, 8, or multiples of 8."""
+        if quantity <= 1:
+            return 1
+        elif quantity <= 2:
+            return 2
+        elif quantity <= 4:
+            return 4
+        elif quantity <= 8:
+            return 8
+        else:
+            # For quantities > 8, round to nearest multiple of 8
+            return ((quantity + 7) // 8) * 8
 
     def _generate_comprehensive_recommendations(self, analysis: Dict):
         """Generate minimum, consumer, and enterprise recommendations and set optimal fields."""
