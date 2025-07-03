@@ -177,6 +177,18 @@ Examples:
     print(f"   LLM Enhanced: {'Yes' if result.llm_enhanced else 'No'}")
     print(f"   NVIDIA Best Practices: ✅ Loaded")
     
+    # Show confidence factors if available and verbose mode
+    if hasattr(result, 'confidence_factors') and result.confidence_factors and args.verbose:
+        print(f"\n🔍 CONFIDENCE FACTORS:")
+        for factor in result.confidence_factors:
+            print(f"     • {factor}")
+    elif hasattr(result, 'confidence_factors') and result.confidence_factors:
+        print(f"\n🔍 CONFIDENCE FACTORS (top 3):")
+        for factor in result.confidence_factors[:3]:
+            print(f"     • {factor}")
+        if len(result.confidence_factors) > 3:
+            print(f"     • ... and {len(result.confidence_factors) - 3} more (use -v for all)")
+    
     if args.verbose:
         if result.reasoning:
             print("\n🔍 GPU Requirements Reasoning:")

@@ -139,7 +139,8 @@ def format_analysis_for_web(analysis) -> dict:
         'nvidia_compliance_score': round(analysis.nvidia_compliance_score, 1),
         'structure_assessment': analysis.structure_assessment or {},
         'content_quality_issues': analysis.content_quality_issues or [],
-        'technical_recommendations': analysis.technical_recommendations or []
+        'technical_recommendations': analysis.technical_recommendations or [],
+        'confidence_factors': analysis.confidence_factors or []
     }
     
     # Add consumer GPU recommendation if available

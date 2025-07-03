@@ -60,6 +60,7 @@ class GPURequirement:
     structure_assessment: Optional[Dict[str, str]] = None
     content_quality_issues: Optional[List[str]] = None
     technical_recommendations: Optional[List[str]] = None
+    confidence_factors: Optional[List[str]] = None
     
     def __post_init__(self):
         # Ensure lists are properly initialized
@@ -71,6 +72,8 @@ class GPURequirement:
             self.content_quality_issues = []
         if self.technical_recommendations is None:
             self.technical_recommendations = []
+        if self.confidence_factors is None:
+            self.confidence_factors = []
 
 
 class NVIDIABestPracticesLoader:
@@ -1478,8 +1481,12 @@ class GPUAnalyzer:
                     # Same hardware - use consumer runtime for consistency
                     static_analysis['min_runtime_estimate'] = static_analysis['consumer_runtime_estimate']
                 
+                # Recalculate confidence with LLM context
+                enhanced_confidence = self._calculate_dynamic_confidence(static_analysis, llm_context)
+                static_analysis['confidence'] = enhanced_confidence
+                
                 if not self.quiet_mode:
-                    print(f"✅ LLM analysis complete (confidence: {llm_context.get('confidence', 0.5)*100:.0f}%)")
+                    print(f"✅ LLM analysis complete (confidence: {enhanced_confidence*100:.0f}%)")
         
         # Evaluate NVIDIA Best Practices compliance
         if not self.quiet_mode:
@@ -1533,7 +1540,8 @@ class GPUAnalyzer:
             nvidia_compliance_score=compliance_score,
             structure_assessment=structure_assessment,
             content_quality_issues=content_issues,
-            technical_recommendations=technical_recommendations
+            technical_recommendations=technical_recommendations,
+            confidence_factors=static_analysis.get('confidence_factors', [])
         )
         
     def _extract_notebook_content(self, url_or_path: str) -> Tuple[List[str], List[str]]:
@@ -1656,7 +1664,7 @@ class GPUAnalyzer:
             'sxm_reasoning': [],
             'arm_compatibility': 'Likely Compatible',
             'arm_reasoning': [],
-            'confidence': 0.7,
+            'confidence': 0.7,  # Will be recalculated dynamically
             'reasoning': [],
             'workload_detected': False,
             'workload_type': 'none'
@@ -1931,6 +1939,10 @@ class GPUAnalyzer:
         
         # Add summary score for transparency
         analysis['arm_reasoning'].append(f"ARM compatibility score: {arm_compatibility_score} (higher is better)")
+        
+        # Calculate dynamic confidence based on analysis quality
+        dynamic_confidence = self._calculate_dynamic_confidence(analysis)
+        analysis['confidence'] = dynamic_confidence
         
         return analysis
     
@@ -2676,3 +2688,175 @@ class GPUAnalyzer:
         except:
             # If parsing fails, return the original string
             return runtime_str
+
+    def _calculate_dynamic_confidence(self, analysis: Dict, llm_context: Optional[Dict] = None) -> float:
+        """
+        Calculate dynamic confidence based on analysis quality factors.
+        Returns a confidence score between 0.0 and 1.0.
+        """
+        base_confidence = 0.3  # Start with low baseline
+        confidence_factors = []
+        
+        # Factor 1: Workload Detection Quality (0.0 - 0.25)
+        workload_detected = analysis.get('workload_detected', False)
+        workload_type = analysis.get('workload_type', 'none')
+        
+        if workload_type == 'none':
+            workload_confidence = 0.0
+            confidence_factors.append("No GPU workload detected")
+        elif workload_type == 'demonstration':
+            workload_confidence = 0.1
+            confidence_factors.append("ML libraries present but no active workload")
+        elif workload_type == 'basic':
+            workload_confidence = 0.15
+            confidence_factors.append("Basic GPU workload patterns detected")
+        elif workload_type in ['training', 'inference']:
+            workload_confidence = 0.25
+            confidence_factors.append(f"Clear {workload_type} workload identified")
+        else:
+            workload_confidence = 0.1
+            confidence_factors.append("Ambiguous workload type")
+        
+        base_confidence += workload_confidence
+        
+        # Factor 2: Framework Detection Quality (0.0 - 0.2)
+        reasoning = analysis.get('reasoning', [])
+        framework_mentions = sum(1 for reason in reasoning if any(fw in reason.lower() for fw in 
+                               ['pytorch', 'tensorflow', 'transformers', 'keras', 'jax', 'cudf', 'rapids']))
+        
+        if framework_mentions >= 3:
+            framework_confidence = 0.2
+            confidence_factors.append("Multiple ML frameworks clearly identified")
+        elif framework_mentions >= 2:
+            framework_confidence = 0.15
+            confidence_factors.append("Multiple frameworks detected")
+        elif framework_mentions >= 1:
+            framework_confidence = 0.1
+            confidence_factors.append("Framework detected")
+        else:
+            framework_confidence = 0.0
+            confidence_factors.append("No clear framework identification")
+        
+        base_confidence += framework_confidence
+        
+        # Factor 3: Model Identification Quality (0.0 - 0.2)
+        model_mentions = sum(1 for reason in reasoning if any(model in reason.lower() for model in 
+                           ['bert', 'gpt', 'llama', 'stable diffusion', 'resnet', 'transformer', 'model']))
+        
+        if model_mentions >= 3:
+            model_confidence = 0.2
+            confidence_factors.append("Multiple specific models identified")
+        elif model_mentions >= 2:
+            model_confidence = 0.15
+            confidence_factors.append("Multiple models detected")
+        elif model_mentions >= 1:
+            model_confidence = 0.1
+            confidence_factors.append("Model architecture identified")
+        else:
+            model_confidence = 0.0
+            confidence_factors.append("No specific models identified")
+        
+        base_confidence += model_confidence
+        
+        # Factor 4: VRAM Estimation Confidence (0.0 - 0.15)
+        min_vram = analysis.get('min_vram_gb', 0)
+        if min_vram > 0:
+            if min_vram >= 80:
+                vram_confidence = 0.15
+                confidence_factors.append("High VRAM requirement clearly identified")
+            elif min_vram >= 24:
+                vram_confidence = 0.12
+                confidence_factors.append("Substantial VRAM requirement identified")
+            elif min_vram >= 8:
+                vram_confidence = 0.1
+                confidence_factors.append("VRAM requirement estimated")
+            else:
+                vram_confidence = 0.05
+                confidence_factors.append("Basic VRAM requirement")
+        else:
+            vram_confidence = 0.0
+            confidence_factors.append("No VRAM requirement identified")
+        
+        base_confidence += vram_confidence
+        
+        # Factor 5: Multi-GPU Detection Confidence (0.0 - 0.1)
+        multi_gpu_detected = analysis.get('min_quantity', 1) > 1
+        sxm_required = analysis.get('sxm_required', False)
+        
+        if sxm_required:
+            multi_gpu_confidence = 0.1
+            confidence_factors.append("Large-scale multi-GPU requirement identified")
+        elif multi_gpu_detected:
+            multi_gpu_confidence = 0.08
+            confidence_factors.append("Multi-GPU setup detected")
+        else:
+            multi_gpu_confidence = 0.05
+            confidence_factors.append("Single-GPU workload")
+        
+        base_confidence += multi_gpu_confidence
+        
+        # Factor 6: LLM Enhancement Impact (can modify total confidence)
+        if llm_context:
+            llm_confidence = llm_context.get('confidence', 0.5)
+            llm_reasoning = analysis.get('llm_reasoning', [])
+            
+            # Check for LLM-static analysis agreement
+            llm_vram = llm_context.get('estimated_vram_gb', 0)
+            static_vram = min_vram
+            
+            if llm_vram > 0 and static_vram > 0:
+                vram_agreement = 1.0 - min(abs(llm_vram - static_vram) / max(llm_vram, static_vram), 1.0)
+                if vram_agreement > 0.8:
+                    confidence_factors.append("LLM analysis strongly agrees with static analysis")
+                    base_confidence += 0.1
+                elif vram_agreement > 0.6:
+                    confidence_factors.append("LLM analysis moderately agrees with static analysis")
+                    base_confidence += 0.05
+                else:
+                    confidence_factors.append("LLM analysis disagrees with static analysis")
+                    base_confidence -= 0.05
+            
+            # Incorporate LLM's own confidence
+            if llm_confidence > 0.7:
+                confidence_factors.append("LLM analysis has high confidence")
+                base_confidence += 0.1
+            elif llm_confidence > 0.5:
+                confidence_factors.append("LLM analysis has moderate confidence")
+                base_confidence += 0.05
+            else:
+                confidence_factors.append("LLM analysis has low confidence")
+                base_confidence -= 0.05
+            
+            # Check for memory optimizations (increases confidence)
+            if llm_context.get('memory_optimizations'):
+                confidence_factors.append("Memory optimizations identified by LLM")
+                base_confidence += 0.05
+        else:
+            confidence_factors.append("No LLM enhancement available")
+        
+        # Factor 7: Pattern Clarity Penalties
+        reasoning_text = ' '.join(reasoning).lower()
+        
+        # Penalty for uncertainty indicators
+        uncertainty_patterns = ['might', 'could', 'possibly', 'unclear', 'ambiguous', 'basic']
+        uncertainty_count = sum(1 for pattern in uncertainty_patterns if pattern in reasoning_text)
+        if uncertainty_count > 0:
+            penalty = min(uncertainty_count * 0.05, 0.15)
+            base_confidence -= penalty
+            confidence_factors.append(f"Uncertainty indicators detected ({uncertainty_count})")
+        
+        # Bonus for definitive patterns
+        definitive_patterns = ['detected', 'identified', 'requires', 'training', 'inference']
+        definitive_count = sum(1 for pattern in definitive_patterns if pattern in reasoning_text)
+        if definitive_count >= 3:
+            bonus = min(definitive_count * 0.02, 0.08)
+            base_confidence += bonus
+            confidence_factors.append(f"Strong pattern detection ({definitive_count} definitive indicators)")
+        
+        # Ensure confidence stays within bounds
+        final_confidence = max(0.1, min(base_confidence, 1.0))
+        
+        # Store confidence factors for debugging/transparency
+        analysis['confidence_factors'] = confidence_factors
+        
+        return final_confidence
