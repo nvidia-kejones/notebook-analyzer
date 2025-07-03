@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-bs-theme="light">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -15,11 +15,41 @@
             --nvidia-green: #76b900;
             --nvidia-dark: #1a1a1a;
             --nvidia-gray: #666;
+            
+            /* Light theme variables */
+            --bg-primary: #f8f9fa;
+            --bg-secondary: #ffffff;
+            --text-primary: #212529;
+            --text-secondary: #6c757d;
+            --border-color: #dee2e6;
+            --shadow-color: rgba(0, 0, 0, 0.075);
+            --upload-bg: #f8f9fa;
+            --upload-border: #dee2e6;
+            --reasoning-bg: #f8f9fa;
+        }
+        
+        [data-bs-theme="dark"] {
+            --nvidia-green: #76b900;
+            --nvidia-dark: #1a1a1a;
+            --nvidia-gray: #9ca3af;
+            
+            /* Dark theme variables */
+            --bg-primary: #121212;
+            --bg-secondary: #1e1e1e;
+            --text-primary: #ffffff;
+            --text-secondary: #b3b3b3;
+            --border-color: #404040;
+            --shadow-color: rgba(0, 0, 0, 0.3);
+            --upload-bg: #2a2a2a;
+            --upload-border: #404040;
+            --reasoning-bg: #2a2a2a;
         }
         
         body {
-            background-color: #f8f9fa;
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            transition: background-color 0.3s ease, color 0.3s ease;
         }
         
         .navbar-brand {
@@ -39,10 +69,49 @@
             color: white;
         }
         
+        .btn-outline-nvidia {
+            color: var(--nvidia-green);
+            border-color: var(--nvidia-green);
+            background-color: transparent;
+        }
+        
+        .btn-outline-nvidia:hover {
+            background-color: var(--nvidia-green);
+            border-color: var(--nvidia-green);
+            color: white;
+        }
+        
+        /* Dark theme button adjustments */
+        [data-bs-theme="dark"] .btn-outline-nvidia {
+            color: var(--nvidia-green);
+            border-color: var(--nvidia-green);
+            background-color: rgba(118, 185, 0, 0.1);
+        }
+        
+        [data-bs-theme="dark"] .btn-outline-nvidia:hover {
+            background-color: var(--nvidia-green);
+            border-color: var(--nvidia-green);
+            color: white;
+        }
+        
+        [data-bs-theme="dark"] .btn-outline-secondary {
+            color: var(--text-secondary);
+            border-color: var(--border-color);
+            background-color: rgba(108, 117, 125, 0.1);
+        }
+        
+        [data-bs-theme="dark"] .btn-outline-secondary:hover {
+            background-color: var(--text-secondary);
+            border-color: var(--text-secondary);
+            color: var(--bg-primary);
+        }
+        
         .card {
             border: none;
-            box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+            box-shadow: 0 0.125rem 0.25rem var(--shadow-color);
             border-radius: 0.75rem;
+            background-color: var(--bg-secondary);
+            transition: background-color 0.3s ease, box-shadow 0.3s ease;
         }
         
         .card-header {
@@ -60,9 +129,9 @@
         }
         
         .upload-area {
-            border: 2px dashed #dee2e6;
+            border: 2px dashed var(--upload-border);
             border-radius: 0.75rem;
-            background-color: #f8f9fa;
+            background-color: var(--upload-bg);
             transition: all 0.3s ease;
             cursor: pointer;
             position: relative;
@@ -100,17 +169,96 @@
         .score-critical { color: #dc3545; }
         
         .reasoning-item {
-            background-color: #f8f9fa;
+            background-color: var(--reasoning-bg);
             border-left: 3px solid var(--nvidia-green);
             padding: 0.75rem;
             margin: 0.5rem 0;
             border-radius: 0 0.25rem 0.25rem 0;
+            transition: background-color 0.3s ease;
+            color: var(--text-primary);
+        }
+        
+        /* Explicit dark mode reasoning items */
+        [data-bs-theme="dark"] .reasoning-item {
+            background-color: #2a2a2a !important;
+            color: #ffffff !important;
+            border-left-color: var(--nvidia-green) !important;
+        }
+        
+        /* Light mode reasoning items (explicit) */
+        [data-bs-theme="light"] .reasoning-item {
+            background-color: #f8f9fa !important;
+            color: #212529 !important;
+            border-left-color: var(--nvidia-green) !important;
         }
         
         .footer {
             background-color: var(--nvidia-dark);
             color: white;
             margin-top: 3rem;
+        }
+        
+        /* Theme switcher styles */
+        .theme-switcher {
+            position: relative;
+        }
+        
+        .theme-switcher .dropdown-toggle::after {
+            display: none;
+        }
+        
+        .theme-switcher .dropdown-menu {
+            min-width: 8rem;
+            border-radius: 0.5rem;
+            box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+        }
+        
+        .theme-switcher .dropdown-item {
+            padding: 0.5rem 1rem;
+            font-size: 0.9rem;
+            transition: all 0.2s ease;
+        }
+        
+        .theme-switcher .dropdown-item:hover {
+            background-color: rgba(118, 185, 0, 0.1);
+        }
+        
+        .theme-switcher .dropdown-item.active {
+            background-color: var(--nvidia-green);
+            color: white;
+        }
+        
+        .theme-switcher .dropdown-item i {
+            width: 1.2rem;
+            text-align: center;
+        }
+        
+        /* Bootstrap dark mode adjustments */
+        [data-bs-theme="dark"] .modal-content {
+            background-color: var(--bg-secondary);
+            border-color: var(--border-color);
+        }
+        
+        [data-bs-theme="dark"] .modal-header {
+            border-bottom-color: var(--border-color);
+        }
+        
+        [data-bs-theme="dark"] .alert {
+            border-color: var(--border-color);
+        }
+        
+        /* Ensure text visibility in all theme-aware elements */
+        .card-body {
+            color: var(--text-primary);
+        }
+        
+        .text-muted {
+            color: var(--text-secondary) !important;
+        }
+        
+        /* Fix any remaining text visibility issues */
+        .small {
+            color: var(--text-primary);
         }
     </style>
 </head>
@@ -136,6 +284,29 @@
                         <a class="nav-link" href="#" data-bs-toggle="modal" data-bs-target="#helpModal">
                             <i class="bi bi-question-circle me-1"></i>Help
                         </a>
+                    </li>
+                    <li class="nav-item dropdown theme-switcher">
+                        <a class="nav-link dropdown-toggle" href="#" id="themeDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                            <i class="bi bi-circle-half me-1" id="themeIcon"></i>
+                            <span id="themeText">Theme</span>
+                        </a>
+                        <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="themeDropdown">
+                            <li>
+                                <a class="dropdown-item" href="#" data-theme="light">
+                                    <i class="bi bi-sun-fill me-2"></i>Light
+                                </a>
+                            </li>
+                            <li>
+                                <a class="dropdown-item" href="#" data-theme="dark">
+                                    <i class="bi bi-moon-stars-fill me-2"></i>Dark
+                                </a>
+                            </li>
+                            <li>
+                                <a class="dropdown-item" href="#" data-theme="system">
+                                    <i class="bi bi-circle-half me-2"></i>System
+                                </a>
+                            </li>
+                        </ul>
                     </li>
                 </ul>
             </div>
@@ -214,6 +385,102 @@
 
     <!-- Bootstrap JS -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    
+    <!-- Theme Switcher Script -->
+    <script>
+        (function() {
+            'use strict';
+            
+            // Theme management
+            const ThemeManager = {
+                STORAGE_KEY: 'notebook-analyzer-theme',
+                
+                // Get the current theme preference
+                getCurrentTheme() {
+                    return localStorage.getItem(this.STORAGE_KEY) || 'system';
+                },
+                
+                // Set theme preference
+                setTheme(theme) {
+                    localStorage.setItem(this.STORAGE_KEY, theme);
+                    this.applyTheme(theme);
+                    this.updateUI(theme);
+                },
+                
+                // Apply theme to the document
+                applyTheme(theme) {
+                    const html = document.documentElement;
+                    
+                    if (theme === 'system') {
+                        // Use system preference
+                        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+                        html.setAttribute('data-bs-theme', prefersDark ? 'dark' : 'light');
+                    } else {
+                        // Use explicit theme
+                        html.setAttribute('data-bs-theme', theme);
+                    }
+                },
+                
+                // Update UI elements
+                updateUI(theme) {
+                    const themeIcon = document.getElementById('themeIcon');
+                    const themeText = document.getElementById('themeText');
+                    const dropdownItems = document.querySelectorAll('[data-theme]');
+                    
+                    // Update icon and text
+                    switch(theme) {
+                        case 'light':
+                            themeIcon.className = 'bi bi-sun-fill me-1';
+                            themeText.textContent = 'Light';
+                            break;
+                        case 'dark':
+                            themeIcon.className = 'bi bi-moon-stars-fill me-1';
+                            themeText.textContent = 'Dark';
+                            break;
+                        case 'system':
+                            themeIcon.className = 'bi bi-circle-half me-1';
+                            themeText.textContent = 'System';
+                            break;
+                    }
+                    
+                    // Update dropdown active state
+                    dropdownItems.forEach(item => {
+                        item.classList.toggle('active', item.dataset.theme === theme);
+                    });
+                },
+                
+                // Initialize theme system
+                init() {
+                    // Apply current theme
+                    const currentTheme = this.getCurrentTheme();
+                    this.applyTheme(currentTheme);
+                    this.updateUI(currentTheme);
+                    
+                    // Listen for system theme changes
+                    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+                        if (this.getCurrentTheme() === 'system') {
+                            this.applyTheme('system');
+                        }
+                    });
+                    
+                    // Add event listeners to dropdown items
+                    document.querySelectorAll('[data-theme]').forEach(item => {
+                        item.addEventListener('click', (e) => {
+                            e.preventDefault();
+                            this.setTheme(item.dataset.theme);
+                        });
+                    });
+                }
+            };
+            
+            // Initialize when DOM is loaded
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', () => ThemeManager.init());
+            } else {
+                ThemeManager.init();
+            }
+        })();
+    </script>
     
     {% block scripts %}{% endblock %}
 </body>

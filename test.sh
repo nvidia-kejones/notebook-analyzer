@@ -405,7 +405,8 @@ test_web_form_analysis() {
     
     local response_file="$TEMP_DIR/webform_response"
     
-    if curl -s -m "$TIMEOUT" -o "$response_file" -w "%{http_code}" \
+    # Use -L flag to follow redirects since /analyze now redirects to streaming interface
+    if curl -s -L -m "$TIMEOUT" -o "$response_file" -w "%{http_code}" \
         -F "file=@examples/jupyter_example.ipynb" \
         -F "analysis_type=basic" \
         "$BASE_URL/analyze" > "$TEMP_DIR/webform_code" 2>/dev/null; then
@@ -413,7 +414,8 @@ test_web_form_analysis() {
         local http_code=$(cat "$TEMP_DIR/webform_code")
         if [ "$http_code" = "200" ]; then
             local content=$(cat "$response_file")
-            if echo "$content" | grep -q "GPU" && (echo "$content" | grep -qi "recommendation\|analysis"); then
+            # Check for streaming interface content and analysis data
+            if echo "$content" | grep -q "GPU" && (echo "$content" | grep -qi "recommendation\|analysis\|streaming"); then
                 log_result "Web Form Analysis" "true" "File upload and analysis working"
                 return 0
             else

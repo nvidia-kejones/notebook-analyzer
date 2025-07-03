@@ -30,6 +30,18 @@
 let globalAnalysisData = null;
 
 document.addEventListener('DOMContentLoaded', function() {
+    // Check if we have direct results from traditional form submission
+    {% if direct_results and analysis_data %}
+        const data = {
+            analysis: {{ analysis_data.analysis | tojson }},
+            source_name: "{{ analysis_data.source_name }}",
+            source_type: "{{ analysis_data.source_type }}"
+        };
+        globalAnalysisData = data; // Store for copy function
+        displayResults(data);
+        return;
+    {% endif %}
+    
     // Get analysis results from sessionStorage (set by streaming interface)
     const resultsData = sessionStorage.getItem('analysisResults');
     if (resultsData) {
@@ -253,11 +265,177 @@ function displayResults(data) {
                         </div>
                     </div>
                 </div>
+                
+                <!-- API Access Section -->
+                <div class="card mb-4">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h6 class="mb-0">
+                            <i class="bi bi-code-slash me-2"></i>
+                            API Access
+                        </h6>
+                        <button id="copyCurlBtn" class="btn btn-sm btn-outline-nvidia" onclick="copyCurlCommand()">
+                            <i class="bi bi-clipboard me-1"></i>
+                            Copy curl
+                        </button>
+                    </div>
+                    <div class="card-body">
+                        <p class="text-muted mb-3">
+                            <i class="bi bi-info-circle me-1"></i>
+                            Reproduce this analysis programmatically using the API endpoint:
+                        </p>
+                        
+                        ${getCurlCommand(sourceName, sourceType)}
+                        
+                        <!-- Actual API Response -->
+                        <div class="mt-3">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <h6 class="text-nvidia mb-0">
+                                    <i class="bi bi-braces me-1"></i>
+                                    Actual API Response
+                                </h6>
+                                <button id="copyApiBtn" class="btn btn-sm btn-outline-nvidia" onclick="copyApiResponse()">
+                                    <i class="bi bi-clipboard me-1"></i>
+                                    Copy JSON
+                                </button>
+                            </div>
+                            <div class="bg-dark text-light p-3 rounded" style="background-color: #212529 !important; color: #f8f9fa !important;">
+                                <div class="text-success mb-2" style="color: #198754 !important;">
+                                    # This is the actual response for your analysis
+                                </div>
+                                <code id="apiResponse" class="text-light small" style="font-family: 'Courier New', monospace; color: #f8f9fa !important;">
+                                    <!-- Will be populated by JavaScript -->
+                                </code>
+                            </div>
+                            <div class="small text-muted mt-2">
+                                <i class="bi bi-info-circle me-1"></i>
+                                Note: Some arrays truncated for display. Copy JSON for complete data.
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     `;
     
     container.classList.remove('d-none');
+    
+    // Populate the API response after results are displayed
+    if (globalAnalysisData) {
+        populateApiResponse(globalAnalysisData);
+    }
+}
+
+function populateApiResponse(data) {
+    const apiResponseElement = document.getElementById('apiResponse');
+    if (apiResponseElement) {
+        // Generate the actual API response JSON
+        const apiResponse = generateApiResponse(data);
+        apiResponseElement.innerHTML = apiResponse;
+    }
+}
+
+function generateApiResponse(data) {
+    const analysis = data.analysis;
+    
+    // Create truncated display version for readability
+    const displayResponse = {
+        success: true,
+        source_type: data.source_type,
+        source_name: data.source_name,
+        analysis: {
+            min_gpu: {
+                type: analysis.min_gpu.type,
+                quantity: analysis.min_gpu.quantity,
+                vram_gb: analysis.min_gpu.vram_gb,
+                runtime: analysis.min_gpu.runtime
+            },
+            consumer_gpu: analysis.consumer_viable ? {
+                type: analysis.consumer_gpu.type,
+                quantity: analysis.consumer_gpu.quantity,
+                vram_gb: analysis.consumer_gpu.vram_gb,
+                runtime: analysis.consumer_gpu.runtime
+            } : null,
+            consumer_viable: analysis.consumer_viable,
+            consumer_limitation: analysis.consumer_limitation,
+            enterprise_gpu: {
+                type: analysis.enterprise_gpu.type,
+                quantity: analysis.enterprise_gpu.quantity,
+                vram_gb: analysis.enterprise_gpu.vram_gb,
+                runtime: analysis.enterprise_gpu.runtime
+            },
+            confidence: analysis.confidence,
+            nvidia_compliance_score: analysis.nvidia_compliance_score,
+            sxm_required: analysis.sxm_required,
+            arm_compatibility: analysis.arm_compatibility,
+            llm_enhanced: analysis.llm_enhanced,
+            reasoning: analysis.reasoning ? analysis.reasoning.slice(0, 3) : [], // First 3 items
+            llm_reasoning: analysis.llm_reasoning ? analysis.llm_reasoning.slice(0, 2) : [], // First 2 items
+            structure_assessment: analysis.structure_assessment,
+            content_quality_issues: analysis.content_quality_issues ? analysis.content_quality_issues.slice(0, 3) : [],
+            technical_recommendations: analysis.technical_recommendations ? analysis.technical_recommendations.slice(0, 3) : []
+        }
+    };
+    
+    return JSON.stringify(displayResponse, null, 2)
+        .replace(/\n/g, '<br>')
+        .replace(/  /g, '&nbsp;&nbsp;');
+}
+
+function copyApiResponse() {
+    const copyBtn = document.getElementById('copyApiBtn');
+    const originalText = copyBtn.innerHTML;
+    
+    try {
+        if (!globalAnalysisData) {
+            throw new Error('No analysis data available');
+        }
+        
+        // Create complete response for copying (not truncated)
+        const completeResponse = {
+            success: true,
+            source_type: globalAnalysisData.source_type,
+            source_name: globalAnalysisData.source_name,
+            analysis: globalAnalysisData.analysis
+        };
+        
+        const jsonString = JSON.stringify(completeResponse, null, 2);
+        
+        // Copy to clipboard
+        navigator.clipboard.writeText(jsonString).then(() => {
+            copyBtn.innerHTML = '<i class="bi bi-check-circle me-1"></i>Copied!';
+            copyBtn.classList.remove('btn-outline-nvidia');
+            copyBtn.classList.add('btn-success');
+            
+            setTimeout(() => {
+                copyBtn.innerHTML = originalText;
+                copyBtn.classList.remove('btn-success');
+                copyBtn.classList.add('btn-outline-nvidia');
+            }, 2000);
+        }).catch(err => {
+            // Fallback
+            fallbackCopyTextToClipboard(jsonString);
+            copyBtn.innerHTML = '<i class="bi bi-check-circle me-1"></i>Copied!';
+            copyBtn.classList.remove('btn-outline-nvidia');
+            copyBtn.classList.add('btn-success');
+            
+            setTimeout(() => {
+                copyBtn.innerHTML = originalText;
+                copyBtn.classList.remove('btn-success');
+                copyBtn.classList.add('btn-outline-nvidia');
+            }, 2000);
+        });
+    } catch (err) {
+        console.error('Error copying API response:', err);
+        copyBtn.innerHTML = '<i class="bi bi-exclamation-triangle me-1"></i>Error';
+        copyBtn.classList.remove('btn-outline-nvidia');
+        copyBtn.classList.add('btn-danger');
+        
+        setTimeout(() => {
+            copyBtn.innerHTML = originalText;
+            copyBtn.classList.remove('btn-danger');
+            copyBtn.classList.add('btn-outline-nvidia');
+        }, 2000);
+    }
 }
 
 function copyResultsToClipboard() {
@@ -396,6 +574,124 @@ function fallbackCopyTextToClipboard(text) {
     }
     
     document.body.removeChild(textArea);
+}
+
+function getCurlCommand(sourceName, sourceType) {
+    const baseUrl = window.location.origin;
+    
+    if (sourceType === 'file') {
+        return `
+            <div class="bg-dark text-light p-3 rounded mb-3" style="background-color: #212529 !important; color: #f8f9fa !important; font-family: 'Courier New', monospace;">
+                <div class="d-flex justify-content-between align-items-start">
+                    <div class="flex-grow-1">
+                        <div class="text-success mb-2" style="color: #198754 !important;"># Analyze uploaded file</div>
+                        <div id="curlCommand" class="text-break">curl -X POST "${baseUrl}/api/analyze" \\<br>
+&nbsp;&nbsp;&nbsp;&nbsp;-F "file=@${sourceName}"</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="bg-dark text-light p-3 rounded" style="background-color: #212529 !important; color: #f8f9fa !important;">
+                <div class="text-success mb-2" style="color: #198754 !important;">
+                    # For URL analysis, use JSON payload
+                </div>
+                <code class="text-light" style="font-family: 'Courier New', monospace; color: #f8f9fa !important;">
+                    curl -X POST "${baseUrl}/api/analyze" \\<br>
+                    &nbsp;&nbsp;&nbsp;&nbsp;-H "Content-Type: application/json" \\<br>
+                    &nbsp;&nbsp;&nbsp;&nbsp;-d '{"url": "https://example.com/notebook.ipynb"}'
+                </code>
+            </div>
+        `;
+    } else {
+        return `
+            <div class="bg-dark text-light p-3 rounded mb-3" style="background-color: #212529 !important; color: #f8f9fa !important; font-family: 'Courier New', monospace;">
+                <div class="d-flex justify-content-between align-items-start">
+                    <div class="flex-grow-1">
+                        <div class="text-success mb-2" style="color: #198754 !important;"># Analyze from URL</div>
+                        <div id="curlCommand" class="text-break">curl -X POST "${baseUrl}/api/analyze" \\<br>
+&nbsp;&nbsp;&nbsp;&nbsp;-H "Content-Type: application/json" \\<br>
+&nbsp;&nbsp;&nbsp;&nbsp;-d '{"url": "${sourceName.replace(/"/g, '\\"')}"}'</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="bg-dark text-light p-3 rounded" style="background-color: #212529 !important; color: #f8f9fa !important;">
+                <div class="text-success mb-2" style="color: #198754 !important;">
+                    # For file uploads, use multipart/form-data
+                </div>
+                <code class="text-light" style="font-family: 'Courier New', monospace; color: #f8f9fa !important;">
+                    curl -X POST "${baseUrl}/api/analyze" \\<br>
+                    &nbsp;&nbsp;&nbsp;&nbsp;-F "file=@/path/to/notebook.ipynb"
+                </code>
+            </div>
+        `;
+    }
+}
+
+function copyCurlCommand() {
+    const copyBtn = document.getElementById('copyCurlBtn');
+    const originalText = copyBtn.innerHTML;
+    
+    try {
+        // Get the curl command text from the DOM
+        const curlCommandElement = document.getElementById('curlCommand');
+        if (!curlCommandElement) {
+            console.error('Could not find curl command element');
+            return;
+        }
+        
+        // Extract the curl command text and clean it up
+        let curlCommand = curlCommandElement.textContent || curlCommandElement.innerText;
+        
+        // Clean up the command by removing HTML entities and extra whitespace
+        curlCommand = curlCommand
+            .replace(/&nbsp;/g, ' ')           // Replace HTML non-breaking spaces
+            .replace(/\s+/g, ' ')             // Replace multiple spaces with single space
+            .replace(/\\\s+/g, ' \\\n  ')     // Format line continuations properly
+            .trim();                          // Remove leading/trailing whitespace
+        
+        // Copy to clipboard
+        navigator.clipboard.writeText(curlCommand).then(() => {
+            // Success feedback
+            copyBtn.innerHTML = '<i class="bi bi-check-circle me-1"></i>Copied!';
+            copyBtn.classList.remove('btn-outline-nvidia');
+            copyBtn.classList.add('btn-success');
+            
+            // Reset button after 2 seconds
+            setTimeout(() => {
+                copyBtn.innerHTML = originalText;
+                copyBtn.classList.remove('btn-success');
+                copyBtn.classList.add('btn-outline-nvidia');
+            }, 2000);
+        }).catch(err => {
+            // Fallback for older browsers
+            fallbackCopyTextToClipboard(curlCommand);
+            
+            // Show success feedback even for fallback
+            copyBtn.innerHTML = '<i class="bi bi-check-circle me-1"></i>Copied!';
+            copyBtn.classList.remove('btn-outline-nvidia');
+            copyBtn.classList.add('btn-success');
+            
+            setTimeout(() => {
+                copyBtn.innerHTML = originalText;
+                copyBtn.classList.remove('btn-success');
+                copyBtn.classList.add('btn-outline-nvidia');
+            }, 2000);
+        });
+    } catch (err) {
+        console.error('Error copying curl command:', err);
+        
+        // Show error feedback
+        copyBtn.innerHTML = '<i class="bi bi-exclamation-triangle me-1"></i>Error';
+        copyBtn.classList.remove('btn-outline-nvidia');
+        copyBtn.classList.add('btn-danger');
+        
+        setTimeout(() => {
+            copyBtn.innerHTML = originalText;
+            copyBtn.classList.remove('btn-danger');
+            copyBtn.classList.add('btn-outline-nvidia');
+        }, 2000);
+    }
 }
 
 function extractAnalysisDataFromDOM() {

@@ -11,7 +11,7 @@ import json
 import tempfile
 import traceback
 from pathlib import Path
-from flask import Flask, render_template, request, jsonify, flash, redirect, url_for, Response
+from flask import Flask, render_template, request, jsonify, flash, redirect, url_for, Response, session
 from werkzeug.utils import secure_filename
 import sys
 import time
@@ -237,10 +237,14 @@ def analyze():
                         result = analyzer.analyze_notebook(temp_path)
                         if result:
                             analysis_data = format_analysis_for_web(result)
-                            return render_template('results.html', 
-                                                 analysis=analysis_data, 
-                                                 source_type='file',
-                                                 source_name=filename)
+                            # Store analysis data in session for streaming interface
+                            session['analysis_results'] = {
+                                'analysis': analysis_data,
+                                'source_type': 'file',
+                                'source_name': filename
+                            }
+                            # Redirect to streaming results
+                            return redirect(url_for('results'))
                         else:
                             flash('Failed to analyze the uploaded notebook. Please check the file format.', 'error')
                     finally:
@@ -266,10 +270,14 @@ def analyze():
             
             if result:
                 analysis_data = format_analysis_for_web(result)
-                return render_template('results.html', 
-                                     analysis=analysis_data, 
-                                     source_type='url',
-                                     source_name=url)
+                # Store analysis data in session for streaming interface
+                session['analysis_results'] = {
+                    'analysis': analysis_data,
+                    'source_type': 'url',
+                    'source_name': url
+                }
+                # Redirect to streaming results
+                return redirect(url_for('results'))
             else:
                 flash('Failed to analyze the notebook from the provided URL. Please check the URL and try again.', 'error')
         else:
@@ -505,7 +513,13 @@ def analyze_stream():
 @app.route('/results')
 def results():
     """Display analysis results (for streaming interface)."""
-    # This route is meant for streaming results display
+    # Check if we have analysis results from the session (traditional form submission)
+    if 'analysis_results' in session:
+        analysis_data = session.pop('analysis_results')  # Get and remove from session
+        return render_template('results_stream.html', 
+                             analysis_data=analysis_data, 
+                             direct_results=True)
+    
     # When accessed directly, it should guide users to start an analysis
     return render_template('results_stream.html', direct_access=True)
 

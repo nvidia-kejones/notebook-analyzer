@@ -80,7 +80,7 @@ notebook-analyzer/
 ├── templates/                    # HTML templates (unchanged)
 │   ├── base.html
 │   ├── index.html
-│   └── results.html
+│   └── results_stream.html
 ├── notebook-analyzer.py          # Core analyzer (unchanged)
 ├── requirements.txt              # Python dependencies
 ├── vercel.json                   # Vercel configuration

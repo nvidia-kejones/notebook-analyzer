@@ -285,8 +285,7 @@ notebook-analyzer-web/
 ├── templates/               # HTML templates
 │   ├── base.html           # Base template with common layout
 │   ├── index.html          # Main analysis form
-│   ├── results.html        # Analysis results display
-│   └── results_stream.html # Streaming analysis display
+│   └── results_stream.html # Analysis results display (streaming interface)
 └── notebook-analyzer/       # Original analyzer code
     ├── notebook-analyzer.py # Core analysis engine
     ├── requirements.txt    # Original dependencies
