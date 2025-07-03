@@ -2557,6 +2557,24 @@ class GPUAnalyzer:
             analysis['min_runtime_estimate'] = enterprise_rec['runtime']
             analysis['reasoning'].append(
                 f"Updated minimum recommendation to enterprise GPU ({enterprise_rec['type']}) since consumer GPUs are not viable for this workload")
+        elif consumer_rec:
+            # CONSISTENCY FIX: When consumer GPUs are viable, ensure minimum is not more powerful than consumer
+            # This maintains the logical hierarchy: minimum ≤ consumer ≤ enterprise
+            current_min_gpu = analysis.get('min_gpu_type', '')
+            consumer_gpu = consumer_rec['type']
+            
+            # Get performance factors to compare GPU power
+            min_perf = self.gpu_specs.get(current_min_gpu, {}).get('performance_factor', 1.0)
+            consumer_perf = self.gpu_specs.get(consumer_gpu, {}).get('performance_factor', 1.0)
+            
+            # If minimum is more powerful than consumer, adjust minimum to match consumer
+            if min_perf > consumer_perf:
+                analysis['min_gpu_type'] = consumer_gpu
+                analysis['min_quantity'] = consumer_rec['quantity']
+                analysis['min_vram_gb'] = consumer_rec['vram']
+                analysis['min_runtime_estimate'] = consumer_rec['runtime']
+                analysis['reasoning'].append(
+                    f"Adjusted minimum recommendation from {current_min_gpu} to {consumer_gpu} to maintain logical hierarchy (minimum ≤ consumer)")
         
         # VRAM FIX: Ensure all vRAM values are calculated correctly based on GPU specs
         self._fix_vram_calculations(analysis)
