@@ -48,7 +48,7 @@
                     <div class="card-body">
                         <div class="row">
                             <!-- Minimum Configuration -->
-                            <div class="col-md-6 mb-3">
+                            <div class="col-md-4 mb-3">
                                 <div class="border-start border-warning border-3 ps-3">
                                     <h6 class="text-warning mb-2">
                                         <i class="bi bi-shield-fill-exclamation me-1"></i>
@@ -71,26 +71,70 @@
                                 </div>
                             </div>
 
-                            <!-- Optimal Configuration -->
-                            <div class="col-md-6 mb-3">
-                                <div class="border-start border-success border-3 ps-3">
-                                    <h6 class="text-success mb-2">
-                                        <i class="bi bi-rocket-takeoff me-1"></i>
-                                        Optimal Configuration
+                            <!-- Consumer Optimal Configuration -->
+                            {% if analysis.consumer_viable and analysis.consumer_gpu %}
+                            <div class="col-md-4 mb-3">
+                                <div class="border-start border-primary border-3 ps-3">
+                                    <h6 class="text-primary mb-2">
+                                        <i class="bi bi-controller me-1"></i>
+                                        Consumer Optimal
                                     </h6>
                                     <div class="mb-2">
                                         <strong>GPU:</strong> 
-                                        <span class="badge bg-success ms-1">{{ analysis.optimal_gpu.type }}</span>
+                                        <span class="badge bg-primary ms-1">{{ analysis.consumer_gpu.type }}</span>
                                     </div>
                                     <div class="mb-2">
-                                        <strong>Quantity:</strong> {{ analysis.optimal_gpu.quantity }}
+                                        <strong>Quantity:</strong> {{ analysis.consumer_gpu.quantity }}
                                     </div>
                                     <div class="mb-2">
-                                        <strong>VRAM:</strong> {{ analysis.optimal_gpu.vram_gb }} GB
+                                        <strong>VRAM:</strong> {{ analysis.consumer_gpu.vram_gb }} GB
                                     </div>
                                     <div class="mb-0">
                                         <strong>Runtime:</strong> 
-                                        <span class="text-muted">{{ analysis.optimal_gpu.runtime }}</span>
+                                        <span class="text-muted">{{ analysis.consumer_gpu.runtime }}</span>
+                                    </div>
+                                </div>
+                            </div>
+                            {% elif not analysis.consumer_viable %}
+                            <div class="col-md-4 mb-3">
+                                <div class="border-start border-secondary border-3 ps-3">
+                                    <h6 class="text-secondary mb-2">
+                                        <i class="bi bi-controller me-1"></i>
+                                        Consumer Optimal
+                                    </h6>
+                                    <div class="text-muted">
+                                        <i class="bi bi-x-circle me-1"></i>
+                                        Not Recommended
+                                    </div>
+                                    {% if analysis.consumer_limitation %}
+                                    <div class="small text-muted mt-2">
+                                        {{ analysis.consumer_limitation }}
+                                    </div>
+                                    {% endif %}
+                                </div>
+                            </div>
+                            {% endif %}
+
+                            <!-- Enterprise Optimal Configuration -->
+                            <div class="col-md-4 mb-3">
+                                <div class="border-start border-success border-3 ps-3">
+                                    <h6 class="text-success mb-2">
+                                        <i class="bi bi-building me-1"></i>
+                                        Enterprise Optimal
+                                    </h6>
+                                    <div class="mb-2">
+                                        <strong>GPU:</strong> 
+                                        <span class="badge bg-success ms-1">{{ analysis.enterprise_gpu.type }}</span>
+                                    </div>
+                                    <div class="mb-2">
+                                        <strong>Quantity:</strong> {{ analysis.enterprise_gpu.quantity }}
+                                    </div>
+                                    <div class="mb-2">
+                                        <strong>VRAM:</strong> {{ analysis.enterprise_gpu.vram_gb }} GB
+                                    </div>
+                                    <div class="mb-0">
+                                        <strong>Runtime:</strong> 
+                                        <span class="text-muted">{{ analysis.enterprise_gpu.runtime }}</span>
                                     </div>
                                 </div>
                             </div>
@@ -342,15 +386,30 @@ ${sourceInfo}
 • GPU: ${data.min_gpu.type}
 • Quantity: ${data.min_gpu.quantity}
 • VRAM: ${data.min_gpu.vram_gb} GB
-• Runtime: ${data.min_gpu.runtime}
+• Runtime: ${data.min_gpu.runtime}`;
 
-**⚡ Optimal Configuration:**
-• GPU: ${data.optimal_gpu.type}
-• Quantity: ${data.optimal_gpu.quantity}
-• VRAM: ${data.optimal_gpu.vram_gb} GB
-• Runtime: ${data.optimal_gpu.runtime}
+    // Add Consumer Optimal if available
+    if (data.consumer_viable && data.consumer_gpu) {
+        text += `\n\n**🎮 Consumer Optimal:**
+• GPU: ${data.consumer_gpu.type}
+• Quantity: ${data.consumer_gpu.quantity}
+• VRAM: ${data.consumer_gpu.vram_gb} GB
+• Runtime: ${data.consumer_gpu.runtime}`;
+    } else if (data.consumer_limitation) {
+        text += `\n\n**🎮 Consumer Optimal:**
+• Not Recommended: ${data.consumer_limitation}`;
+    }
 
-**📊 Technical Details:**
+    // Add Enterprise Optimal
+    if (data.enterprise_gpu) {
+        text += `\n\n**🏢 Enterprise Optimal:**
+• GPU: ${data.enterprise_gpu.type}
+• Quantity: ${data.enterprise_gpu.quantity}
+• VRAM: ${data.enterprise_gpu.vram_gb} GB
+• Runtime: ${data.enterprise_gpu.runtime}`;
+    }
+
+    text += `\n\n**📊 Technical Details:**
 • SXM Required: ${data.sxm_required ? 'Yes' : 'No'}
 • ARM Compatibility: ${data.arm_compatibility}
 • NVIDIA Compliance: ${data.nvidia_compliance_score}/100
@@ -385,15 +444,12 @@ function extractAnalysisDataFromDOM() {
     const isFile = sourceText.includes('File:');
     const sourceName = sourceText.replace(/^(File:|URL:)\s*/, '');
     
-    // Extract GPU requirements from badges and text
-    const minGpuBadge = document.querySelector('.border-warning .badge');
-    const optimalGpuBadge = document.querySelector('.border-success .badge');
-    
-    // Get all text content to parse requirements
+    // Extract GPU requirements from the three sections
     const minSection = document.querySelector('.border-warning');
-    const optimalSection = document.querySelector('.border-success');
+    const consumerSection = document.querySelector('.border-primary');
+    const enterpriseSection = document.querySelector('.border-success');
     
-    // Extract quantities, VRAM, and runtime from text content
+    // Extract GPU info from a section
     const extractGpuInfo = (section) => {
         if (!section) return { type: '', quantity: 1, vram_gb: 0, runtime: '' };
         
@@ -401,7 +457,7 @@ function extractAnalysisDataFromDOM() {
         const type = section.querySelector('.badge')?.textContent.trim() || '';
         const quantityMatch = text.match(/Quantity:\s*(\d+)/);
         const vramMatch = text.match(/VRAM:\s*(\d+)\s*GB/);
-        const runtimeMatch = text.match(/Runtime:\s*(.{0,50}?)(?=\s|$)/); // Match up to 50 chars or whitespace
+        const runtimeMatch = text.match(/Runtime:\s*(.{0,50}?)(?=\s|$)/);
         
         return {
             type: type,
@@ -412,7 +468,24 @@ function extractAnalysisDataFromDOM() {
     };
     
     const minGpu = extractGpuInfo(minSection);
-    const optimalGpu = extractGpuInfo(optimalSection);
+    const enterpriseGpu = extractGpuInfo(enterpriseSection);
+    
+    // Check consumer viability
+    let consumerGpu = null;
+    let consumerViable = false;
+    let consumerLimitation = null;
+    
+    if (consumerSection) {
+        const isNotRecommended = consumerSection.textContent.includes('Not Recommended');
+        if (isNotRecommended) {
+            consumerViable = false;
+            const limitationElement = consumerSection.querySelector('.small.text-muted');
+            consumerLimitation = limitationElement ? limitationElement.textContent.trim() : null;
+        } else {
+            consumerViable = true;
+            consumerGpu = extractGpuInfo(consumerSection);
+        }
+    }
     
     // Extract technical details
     const sxmElement = document.querySelector('.small:contains("SXM Required")') || 
@@ -454,7 +527,12 @@ function extractAnalysisDataFromDOM() {
         source_name: sourceName,
         source_type: isFile ? 'file' : 'url',
         min_gpu: minGpu,
-        optimal_gpu: optimalGpu,
+        consumer_gpu: consumerGpu,
+        consumer_viable: consumerViable,
+        consumer_limitation: consumerLimitation,
+        enterprise_gpu: enterpriseGpu,
+        // Keep optimal_gpu for backward compatibility (use enterprise)
+        optimal_gpu: enterpriseGpu,
         sxm_required: sxmRequired,
         arm_compatibility: armCompatibility,
         nvidia_compliance_score: complianceScore,

@@ -15,26 +15,45 @@ import sys
 import ipaddress
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from urllib.parse import urlparse, quote_plus
 
 
 @dataclass
 class GPURequirement:
+    # Minimum requirements (entry-level viable option)
     min_gpu_type: str
     min_quantity: int
     min_vram_gb: int
-    optimal_gpu_type: str
-    optimal_quantity: int
-    optimal_vram_gb: int
     min_runtime_estimate: str
-    optimal_runtime_estimate: str
-    sxm_required: bool
-    sxm_reasoning: List[str]
-    arm_compatibility: str
-    arm_reasoning: List[str]
-    confidence: float
-    reasoning: List[str]
+    
+    # Consumer optimal (best RTX/GeForce option)
+    consumer_gpu_type: Optional[str] = None
+    consumer_quantity: Optional[int] = None
+    consumer_vram_gb: Optional[int] = None
+    consumer_runtime_estimate: Optional[str] = None
+    consumer_viable: bool = True
+    consumer_limitation: Optional[str] = None  # Why not viable if consumer_viable is False
+    
+    # Enterprise optimal (best data center option)
+    enterprise_gpu_type: str = ""
+    enterprise_quantity: int = 1
+    enterprise_vram_gb: int = 0
+    enterprise_runtime_estimate: str = ""
+    
+    # Backward compatibility - optimal will be consumer if viable, else enterprise
+    optimal_gpu_type: str = ""
+    optimal_quantity: int = 1
+    optimal_vram_gb: int = 0
+    optimal_runtime_estimate: str = ""
+    
+    # Existing fields
+    sxm_required: bool = False
+    sxm_reasoning: List[str] = field(default_factory=list)
+    arm_compatibility: str = ""
+    arm_reasoning: List[str] = field(default_factory=list)
+    confidence: float = 0.0
+    reasoning: List[str] = field(default_factory=list)
     llm_enhanced: bool = False
     llm_reasoning: Optional[List[str]] = None
     nvidia_compliance_score: float = 0.0
@@ -603,66 +622,89 @@ class GPUAnalyzer:
             if not self.quiet_mode:
                 print("⚠️ No LLM API key found. Analysis will use static patterns only.")
         
-        # Enhanced GPU specifications with detailed metadata
+        # Enhanced GPU specifications with detailed metadata and categorization
         self.gpu_specs = {
-            # RTX 50 Series
+            # RTX 50 Series (Consumer)
             'RTX 5090': {
                 'vram': 32, 'compute_capability': 9.0, 'form_factor': 'PCIe', 'nvlink': False,
-                'release_year': 2025, 'tier': 'flagship', 'tensor_cores': True
+                'release_year': 2025, 'tier': 'flagship', 'tensor_cores': True,
+                'category': 'consumer', 'max_reasonable_quantity': 2
             },
             'RTX 5080': {
                 'vram': 16, 'compute_capability': 9.0, 'form_factor': 'PCIe', 'nvlink': False,
-                'release_year': 2025, 'tier': 'high', 'tensor_cores': True
+                'release_year': 2025, 'tier': 'high', 'tensor_cores': True,
+                'category': 'consumer', 'max_reasonable_quantity': 2
             },
             
-            # RTX 40 Series
+            # RTX 40 Series (Consumer)
             'RTX 4090': {
                 'vram': 24, 'compute_capability': 8.9, 'form_factor': 'PCIe', 'nvlink': False,
-                'release_year': 2022, 'tier': 'flagship', 'tensor_cores': True
+                'release_year': 2022, 'tier': 'flagship', 'tensor_cores': True,
+                'category': 'consumer', 'max_reasonable_quantity': 2
             },
             'RTX 4080': {
                 'vram': 16, 'compute_capability': 8.9, 'form_factor': 'PCIe', 'nvlink': False,
-                'release_year': 2022, 'tier': 'high', 'tensor_cores': True
+                'release_year': 2022, 'tier': 'high', 'tensor_cores': True,
+                'category': 'consumer', 'max_reasonable_quantity': 2
+            },
+            'RTX 4070': {
+                'vram': 12, 'compute_capability': 8.9, 'form_factor': 'PCIe', 'nvlink': False,
+                'release_year': 2023, 'tier': 'mid', 'tensor_cores': True,
+                'category': 'consumer', 'max_reasonable_quantity': 2
+            },
+            'RTX 4060': {
+                'vram': 8, 'compute_capability': 8.9, 'form_factor': 'PCIe', 'nvlink': False,
+                'release_year': 2023, 'tier': 'entry', 'tensor_cores': True,
+                'category': 'consumer', 'max_reasonable_quantity': 2
             },
             
-            # Professional GPUs
+            # Professional GPUs (Enterprise)
             'L4': {
                 'vram': 24, 'compute_capability': 8.9, 'form_factor': 'PCIe', 'nvlink': False,
-                'release_year': 2023, 'tier': 'mid', 'tensor_cores': True
+                'release_year': 2023, 'tier': 'mid', 'tensor_cores': True,
+                'category': 'enterprise', 'max_reasonable_quantity': 8
             },
             'L40': {
                 'vram': 48, 'compute_capability': 8.9, 'form_factor': 'PCIe', 'nvlink': False,
-                'release_year': 2023, 'tier': 'high', 'tensor_cores': True
+                'release_year': 2023, 'tier': 'high', 'tensor_cores': True,
+                'category': 'enterprise', 'max_reasonable_quantity': 8
             },
             'L40S': {
                 'vram': 48, 'compute_capability': 8.9, 'form_factor': 'PCIe', 'nvlink': False,
-                'release_year': 2023, 'tier': 'high', 'tensor_cores': True
+                'release_year': 2023, 'tier': 'high', 'tensor_cores': True,
+                'category': 'enterprise', 'max_reasonable_quantity': 8
             },
             
-            # Data Center GPUs
+            # Data Center GPUs (Enterprise)
             'A100 SXM 80G': {
                 'vram': 80, 'compute_capability': 8.0, 'form_factor': 'SXM', 'nvlink': True,
-                'release_year': 2020, 'tier': 'enterprise', 'tensor_cores': True
+                'release_year': 2020, 'tier': 'enterprise', 'tensor_cores': True,
+                'category': 'enterprise', 'max_reasonable_quantity': 32
             },
             'A100 PCIe 80G': {
                 'vram': 80, 'compute_capability': 8.0, 'form_factor': 'PCIe', 'nvlink': False,
-                'release_year': 2020, 'tier': 'enterprise', 'tensor_cores': True
+                'release_year': 2020, 'tier': 'enterprise', 'tensor_cores': True,
+                'category': 'enterprise', 'max_reasonable_quantity': 8
             },
             'H100 SXM': {
                 'vram': 80, 'compute_capability': 9.0, 'form_factor': 'SXM', 'nvlink': True,
-                'release_year': 2022, 'tier': 'cutting_edge', 'tensor_cores': True
+                'release_year': 2022, 'tier': 'cutting_edge', 'tensor_cores': True,
+                'category': 'enterprise', 'max_reasonable_quantity': 32
             },
             'H100 PCIe': {
                 'vram': 80, 'compute_capability': 9.0, 'form_factor': 'PCIe', 'nvlink': False,
-                'release_year': 2022, 'tier': 'cutting_edge', 'tensor_cores': True
+                'release_year': 2022, 'tier': 'cutting_edge', 'tensor_cores': True,
+                'category': 'enterprise', 'max_reasonable_quantity': 8
             },
             'H200 SXM': {
                 'vram': 141, 'compute_capability': 9.0, 'form_factor': 'SXM', 'nvlink': True,
-                'release_year': 2023, 'tier': 'cutting_edge', 'tensor_cores': True
+                'release_year': 2023, 'tier': 'cutting_edge', 'tensor_cores': True,
+                'category': 'enterprise', 'max_reasonable_quantity': 32
             },
             'B200 SXM': {
                 'vram': 192, 'compute_capability': 10.0, 'form_factor': 'SXM', 'nvlink': True,
-                'release_year': 2024, 'tier': 'cutting_edge', 'tensor_cores': True
+                'release_year': 2024, 'tier': 'cutting_edge', 'tensor_cores': True,
+                'category': 'enterprise', 'max_reasonable_quantity': 32
             }
         }
         
@@ -1329,11 +1371,21 @@ class GPUAnalyzer:
             min_gpu_type=static_analysis['min_gpu_type'],
             min_quantity=static_analysis['min_quantity'],
             min_vram_gb=static_analysis['min_vram_gb'],
-            optimal_gpu_type=static_analysis['optimal_gpu_type'],
-            optimal_quantity=static_analysis['optimal_quantity'],
-            optimal_vram_gb=static_analysis['optimal_vram_gb'],
             min_runtime_estimate=static_analysis['min_runtime_estimate'],
-            optimal_runtime_estimate=static_analysis['optimal_runtime_estimate'],
+            consumer_gpu_type=static_analysis.get('consumer_gpu_type'),
+            consumer_quantity=static_analysis.get('consumer_quantity'),
+            consumer_vram_gb=static_analysis.get('consumer_vram_gb'),
+            consumer_runtime_estimate=static_analysis.get('consumer_runtime_estimate'),
+            consumer_viable=static_analysis.get('consumer_viable', True),
+            consumer_limitation=static_analysis.get('consumer_limitation'),
+            enterprise_gpu_type=static_analysis.get('enterprise_gpu_type', ""),
+            enterprise_quantity=static_analysis.get('enterprise_quantity', 1),
+            enterprise_vram_gb=static_analysis.get('enterprise_vram_gb', 0),
+            enterprise_runtime_estimate=static_analysis.get('enterprise_runtime_estimate', ""),
+            optimal_gpu_type=static_analysis.get('optimal_gpu_type', ""),
+            optimal_quantity=static_analysis.get('optimal_quantity', 1),
+            optimal_vram_gb=static_analysis.get('optimal_vram_gb', 0),
+            optimal_runtime_estimate=static_analysis.get('optimal_runtime_estimate', ""),
             sxm_required=static_analysis['sxm_required'],
             sxm_reasoning=static_analysis['sxm_reasoning'],
             arm_compatibility=static_analysis['arm_compatibility'],
@@ -1453,11 +1505,17 @@ class GPUAnalyzer:
             'min_gpu_type': 'CPU-only',
             'min_quantity': 0,
             'min_vram_gb': 0,
-            'optimal_gpu_type': 'CPU-only',
-            'optimal_quantity': 0,
-            'optimal_vram_gb': 0,
             'min_runtime_estimate': 'N/A',
-            'optimal_runtime_estimate': 'N/A',
+            'consumer_gpu_type': None,
+            'consumer_quantity': None,
+            'consumer_vram_gb': None,
+            'consumer_runtime_estimate': None,
+            'consumer_viable': True,
+            'consumer_limitation': None,
+            'enterprise_gpu_type': "",
+            'enterprise_quantity': 1,
+            'enterprise_vram_gb': 0,
+            'enterprise_runtime_estimate': "",
             'sxm_required': False,
             'sxm_reasoning': [],
             'arm_compatibility': 'Likely Compatible',
@@ -1529,11 +1587,11 @@ class GPUAnalyzer:
             analysis['min_gpu_type'] = 'RTX 4060'
             analysis['min_quantity'] = 1
             analysis['min_vram_gb'] = 8
-            analysis['optimal_gpu_type'] = 'RTX 4070'
-            analysis['optimal_quantity'] = 1
-            analysis['optimal_vram_gb'] = 12
             analysis['min_runtime_estimate'] = '30-60 minutes'
-            analysis['optimal_runtime_estimate'] = '15-30 minutes'
+            analysis['consumer_gpu_type'] = 'RTX 4070'
+            analysis['consumer_quantity'] = 1
+            analysis['consumer_vram_gb'] = 12
+            analysis['consumer_runtime_estimate'] = '1-2 hours'
             analysis['reasoning'].append("Basic GPU workload detected - entry-level GPU recommended")
             return analysis
         
@@ -1572,43 +1630,27 @@ class GPUAnalyzer:
                 analysis['sxm_reasoning'].append(f"Large-scale training pattern detected: {pattern}")
                 break
         
-        # Set GPU recommendations based on estimated VRAM needs
+        # Set minimum GPU recommendations based on estimated VRAM needs
         if estimated_vram <= 8:
             # Entry-level workload
             analysis['min_gpu_type'] = 'RTX 4060'
             analysis['min_vram_gb'] = 8
-            analysis['optimal_gpu_type'] = 'RTX 4070'
-            analysis['optimal_vram_gb'] = 12
-            analysis['min_runtime_estimate'] = '1-2 hours'
-            analysis['optimal_runtime_estimate'] = '30-60 minutes'
+            analysis['min_runtime_estimate'] = '2-3 hours'
         elif estimated_vram <= 16:
             # Mid-tier workload
             analysis['min_gpu_type'] = 'RTX 4070'
             analysis['min_vram_gb'] = 12
-            analysis['optimal_gpu_type'] = 'RTX 4080'
-            analysis['optimal_vram_gb'] = 16
             analysis['min_runtime_estimate'] = '2-4 hours'
-            analysis['optimal_runtime_estimate'] = '1-2 hours'
         elif estimated_vram <= 24:
             # High-end workload
             analysis['min_gpu_type'] = 'RTX 4090'
             analysis['min_vram_gb'] = 24
-            analysis['optimal_gpu_type'] = 'L4'
-            analysis['optimal_vram_gb'] = 24
             analysis['min_runtime_estimate'] = '3-6 hours'
-            analysis['optimal_runtime_estimate'] = '1-2 hours'
         else:
-            # Enterprise workload - use PCIe by default unless SXM specifically required
-            if analysis.get('sxm_required', False):
-                analysis['min_gpu_type'] = 'A100 SXM 80G'
-                analysis['optimal_gpu_type'] = 'H100 SXM'
-            else:
-                analysis['min_gpu_type'] = 'L40S'
-                analysis['optimal_gpu_type'] = 'A100 PCIe 80G'
-            analysis['min_vram_gb'] = max(estimated_vram, 48)
-            analysis['optimal_vram_gb'] = max(estimated_vram, 80)
+            # Enterprise workload - set minimum to enterprise GPU
+            analysis['min_gpu_type'] = 'L4'
+            analysis['min_vram_gb'] = max(estimated_vram, 24)
             analysis['min_runtime_estimate'] = '4-8 hours'
-            analysis['optimal_runtime_estimate'] = '1-3 hours'
 
         # Set quantities based on multi-GPU detection
         analysis['min_quantity'] = 1
@@ -1623,6 +1665,9 @@ class GPUAnalyzer:
         
         # CRITICAL FIX: Validate SXM requirements against selected GPUs
         analysis = self._validate_sxm_requirements(analysis)
+
+        # Generate comprehensive recommendations: minimum, consumer, enterprise
+        self._generate_comprehensive_recommendations(analysis)
 
         # Enhanced ARM compatibility assessment
         arm_compatibility_score = 0
@@ -1873,6 +1918,119 @@ class GPUAnalyzer:
         # Decision threshold: SXM needed if score >= 50
         return total_score >= 50
     
+    def _assess_consumer_viability(self, analysis: Dict) -> Tuple[bool, Optional[str]]:
+        """
+        Assess if consumer GPUs are viable for this workload.
+        Returns (is_viable, limitation_reason)
+        """
+        # Check VRAM requirements
+        vram_needed = analysis.get('min_vram_gb', 8)
+        max_consumer_vram = 24  # RTX 4090
+        
+        if vram_needed > max_consumer_vram:
+            return False, f"VRAM requirement ({vram_needed}GB) exceeds consumer GPU capacity (max {max_consumer_vram}GB)"
+        
+        # Check scale requirements
+        optimal_quantity = analysis.get('optimal_quantity', 1)
+        if optimal_quantity > 2:
+            return False, f"Multi-GPU setup ({optimal_quantity} GPUs) beyond consumer capabilities (max 2)"
+        
+        # Check SXM requirements
+        if analysis.get('sxm_required', False):
+            return False, "Workload requires enterprise-grade interconnect (SXM)"
+        
+        # Check workload complexity
+        workload_complexity = analysis.get('workload_complexity', 'moderate')
+        if workload_complexity == 'extreme':
+            return False, "Workload complexity requires enterprise-grade features"
+        
+        # Check for enterprise-specific patterns
+        reasoning_text = ' '.join(analysis.get('reasoning', [])).lower()
+        enterprise_indicators = ['large-scale', 'multi-node', 'enterprise', 'data center', 'production scale']
+        for indicator in enterprise_indicators:
+            if indicator in reasoning_text:
+                return False, f"Workload type requires enterprise infrastructure ({indicator})"
+        
+        return True, None
+    
+    def _generate_consumer_recommendation(self, vram_needed: int, quantity: int, workload_type: str) -> Dict:
+        """Generate consumer GPU recommendation based on requirements."""
+        
+        # Select best consumer GPU based on VRAM needs
+        if vram_needed <= 8:
+            gpu_type = 'RTX 4060'
+            vram = 8
+            runtime = '2-3 hours'
+        elif vram_needed <= 12:
+            gpu_type = 'RTX 4070'
+            vram = 12
+            runtime = '1.5-2.5 hours'
+        elif vram_needed <= 16:
+            gpu_type = 'RTX 4080'
+            vram = 16
+            runtime = '1-2 hours'
+        else:  # Up to 24GB
+            gpu_type = 'RTX 4090'
+            vram = 24
+            runtime = '1-1.5 hours'
+        
+        # Adjust for multi-GPU if needed
+        if quantity > 1:
+            runtime_parts = runtime.split('-')
+            base_time = float(runtime_parts[0])
+            max_time = float(runtime_parts[1].split()[0])
+            new_max = max(0.5, max_time / 2)
+            runtime = f"{base_time:.1f}-{new_max:.1f} hours"
+        
+        return {
+            'type': gpu_type,
+            'quantity': min(quantity, 2),  # Cap at 2 for consumer
+            'vram': vram,
+            'runtime': runtime
+        }
+    
+    def _generate_enterprise_recommendation(self, vram_needed: int, quantity: int, workload_type: str, sxm_required: bool) -> Dict:
+        """Generate enterprise GPU recommendation based on requirements."""
+        
+        # Select based on VRAM needs and SXM requirements
+        if sxm_required:
+            # Use SXM GPUs for large-scale workloads
+            if vram_needed <= 80:
+                gpu_type = 'A100 SXM 80G'
+                vram = 80
+            elif vram_needed <= 141:
+                gpu_type = 'H200 SXM'
+                vram = 141
+            else:
+                gpu_type = 'B200 SXM'
+                vram = 192
+            runtime = '30-60 minutes'
+        else:
+            # Use PCIe enterprise GPUs for more moderate scale
+            if vram_needed <= 24:
+                gpu_type = 'L4'
+                vram = 24
+                runtime = '45-90 minutes'
+            elif vram_needed <= 48:
+                gpu_type = 'L40S'
+                vram = 48
+                runtime = '30-60 minutes'
+            elif vram_needed <= 80:
+                gpu_type = 'A100 PCIe 80G'
+                vram = 80
+                runtime = '30-45 minutes'
+            else:
+                gpu_type = 'H100 PCIe'
+                vram = 80
+                runtime = '20-40 minutes'
+        
+        return {
+            'type': gpu_type,
+            'quantity': quantity,
+            'vram': vram,
+            'runtime': runtime
+        }
+
     def _compare_versions(self, version1: str, version2: str) -> int:
         """
         Compare two version strings.
@@ -1998,3 +2156,56 @@ class GPUAnalyzer:
             full_url = full_url[1:-1]
         
         return full_url 
+
+    def _generate_comprehensive_recommendations(self, analysis: Dict):
+        """Generate minimum, consumer, and enterprise recommendations and set optimal fields."""
+        
+        vram_needed = analysis.get('min_vram_gb', 8)
+        quantity_needed = analysis.get('optimal_quantity', 1)
+        workload_type = analysis.get('workload_type', 'inference')
+        sxm_required = analysis.get('sxm_required', False)
+        
+        # Generate enterprise recommendation (always available)
+        enterprise_rec = self._generate_enterprise_recommendation(
+            vram_needed, quantity_needed, workload_type, sxm_required
+        )
+        analysis['enterprise_gpu_type'] = enterprise_rec['type']
+        analysis['enterprise_quantity'] = enterprise_rec['quantity']
+        analysis['enterprise_vram_gb'] = enterprise_rec['vram']
+        analysis['enterprise_runtime_estimate'] = enterprise_rec['runtime']
+        
+        # Assess consumer viability and generate recommendation if viable
+        consumer_viable, limitation = self._assess_consumer_viability(analysis)
+        analysis['consumer_viable'] = consumer_viable
+        analysis['consumer_limitation'] = limitation
+        
+        if consumer_viable:
+            consumer_rec = self._generate_consumer_recommendation(
+                vram_needed, quantity_needed, workload_type
+            )
+            analysis['consumer_gpu_type'] = consumer_rec['type']
+            analysis['consumer_quantity'] = consumer_rec['quantity']
+            analysis['consumer_vram_gb'] = consumer_rec['vram']
+            analysis['consumer_runtime_estimate'] = consumer_rec['runtime']
+            
+            # Set optimal to consumer since it's viable
+            analysis['optimal_gpu_type'] = consumer_rec['type']
+            analysis['optimal_quantity'] = consumer_rec['quantity']
+            analysis['optimal_vram_gb'] = consumer_rec['vram']
+            analysis['optimal_runtime_estimate'] = consumer_rec['runtime']
+        else:
+            # Consumer not viable - clear consumer fields
+            analysis['consumer_gpu_type'] = None
+            analysis['consumer_quantity'] = None
+            analysis['consumer_vram_gb'] = None
+            analysis['consumer_runtime_estimate'] = None
+            
+            # Set optimal to enterprise
+            analysis['optimal_gpu_type'] = enterprise_rec['type']
+            analysis['optimal_quantity'] = enterprise_rec['quantity']
+            analysis['optimal_vram_gb'] = enterprise_rec['vram']
+            analysis['optimal_runtime_estimate'] = enterprise_rec['runtime']
+            
+            # Add reasoning about why consumer isn't viable
+            if limitation:
+                analysis['reasoning'].append(f"Consumer GPUs not recommended: {limitation}")

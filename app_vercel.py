@@ -115,7 +115,7 @@ def format_analysis_for_web(analysis) -> dict:
     if not analysis:
         return {}
         
-    return {
+    formatted_data = {
         'min_gpu': {
             'type': analysis.min_gpu_type,
             'quantity': analysis.min_quantity,
@@ -141,6 +141,31 @@ def format_analysis_for_web(analysis) -> dict:
         'content_quality_issues': analysis.content_quality_issues or [],
         'technical_recommendations': analysis.technical_recommendations or []
     }
+    
+    # Add consumer GPU recommendation if available
+    if analysis.consumer_gpu_type:
+        formatted_data['consumer_gpu'] = {
+            'type': analysis.consumer_gpu_type,
+            'quantity': analysis.consumer_quantity,
+            'vram_gb': analysis.consumer_vram_gb,
+            'runtime': analysis.consumer_runtime_estimate
+        }
+    else:
+        formatted_data['consumer_gpu'] = None
+    
+    # Add consumer viability information
+    formatted_data['consumer_viable'] = analysis.consumer_viable
+    formatted_data['consumer_limitation'] = analysis.consumer_limitation
+    
+    # Add enterprise GPU recommendation
+    formatted_data['enterprise_gpu'] = {
+        'type': analysis.enterprise_gpu_type,
+        'quantity': analysis.enterprise_quantity,
+        'vram_gb': analysis.enterprise_vram_gb,
+        'runtime': analysis.enterprise_runtime_estimate
+    }
+    
+    return formatted_data
 
 @app.route('/')
 def index():
@@ -483,6 +508,46 @@ def results():
     # This route is meant for streaming results display
     # When accessed directly, it should guide users to start an analysis
     return render_template('results_stream.html', direct_access=True)
+
+@app.route('/debug-analysis', methods=['POST'])
+def debug_analysis():
+    """Debug endpoint to see analysis data structure."""
+    if not GPUAnalyzer:
+        return jsonify({'error': 'Analysis service not available'}), 503
+    
+    try:
+        analyzer = GPUAnalyzer(quiet_mode=True)
+        
+        if request.is_json:
+            data = request.get_json()
+            url = data.get('url')
+        else:
+            url = request.form.get('url')
+            
+        if not url:
+            return jsonify({'error': 'URL is required'}), 400
+            
+        result = analyzer.analyze_notebook(url)
+        if result:
+            analysis_data = format_analysis_for_web(result)
+            return jsonify({
+                'success': True, 
+                'raw_analysis': {
+                    'consumer_viable': getattr(result, 'consumer_viable', 'MISSING'),
+                    'consumer_gpu_type': getattr(result, 'consumer_gpu_type', 'MISSING'),
+                    'enterprise_gpu_type': getattr(result, 'enterprise_gpu_type', 'MISSING'),
+                },
+                'formatted_analysis': {
+                    'consumer_viable': analysis_data.get('consumer_viable', 'MISSING'),
+                    'consumer_gpu': analysis_data.get('consumer_gpu', 'MISSING'),
+                    'enterprise_gpu': analysis_data.get('enterprise_gpu', 'MISSING'),
+                }
+            })
+        else:
+            return jsonify({'error': 'Failed to analyze notebook'}), 400
+            
+    except Exception as e:
+        return jsonify({'error': f'Analysis failed: {str(e)}'}), 500
 
 @app.route('/mcp', methods=['POST'])
 def mcp_endpoint():
