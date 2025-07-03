@@ -22,7 +22,6 @@ def main():
 Environment Variables:
   OPENAI_BASE_URL    OpenAI API endpoint (for LLM enhancement)
   OPENAI_API_KEY     OpenAI API key (for LLM enhancement)  
-  NVIDIA_API_KEY     NVIDIA API key (for LLM enhancement)
   OPENAI_MODEL       Model name (default: gpt-4)
   GITHUB_TOKEN       GitHub personal access token (for private repos)
   GITLAB_TOKEN       GitLab personal access token (for private repos)
@@ -208,7 +207,7 @@ Examples:
             print(f"     Source: {best_practices_summary['guidelines_source']}")
     
     if not result.llm_enhanced:
-        print(f"\n💡 Tip: Set NVIDIA_API_KEY or OPENAI_API_KEY environment variables for enhanced LLM analysis")
+        print(f"\n💡 Tip: Set OPENAI_API_KEY environment variables for enhanced LLM analysis")
     
     print("="*70)
 

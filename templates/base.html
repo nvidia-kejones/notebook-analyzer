@@ -130,21 +130,33 @@
         
         .upload-area {
             border: 2px dashed var(--upload-border);
-            border-radius: 0.75rem;
+            border-radius: 0.5rem;
             background-color: var(--upload-bg);
             transition: all 0.3s ease;
             cursor: pointer;
-            position: relative;
         }
         
-        .upload-area:hover {
+        .upload-area:hover:not(.disabled) {
             border-color: var(--nvidia-green);
-            background-color: rgba(118, 185, 0, 0.05);
+            background-color: var(--reasoning-bg);
         }
         
         .upload-area.dragover {
             border-color: var(--nvidia-green);
-            background-color: rgba(118, 185, 0, 0.1);
+            background-color: var(--reasoning-bg);
+            transform: scale(1.02);
+        }
+        
+        .upload-area.disabled {
+            border-color: #ccc;
+            background-color: #f8f9fa;
+            cursor: not-allowed;
+            transition: all 0.3s ease;
+        }
+        
+        [data-bs-theme="dark"] .upload-area.disabled {
+            border-color: #555;
+            background-color: #333;
         }
         
         .spinner-border-sm {

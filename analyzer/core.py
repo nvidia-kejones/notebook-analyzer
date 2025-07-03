@@ -251,6 +251,13 @@ class LLMAnalyzer:
 5. **Multi-GPU Patterns**: Is distributed training or model parallelism used?
 6. **Dataset Scale**: How large is the dataset being processed?
 7. **Runtime Estimation**: Based on workload complexity, model size, optimizations, and typical convergence
+8. **Performance Considerations**: Consider GPU performance differences when recommending hardware
+
+GPU Performance Context:
+- Consumer GPUs: RTX 4060 (0.35×), RTX 4070 (0.50×), RTX 4080 (0.70×), RTX 4090 (1.0× baseline)
+- Enterprise GPUs: L4 (0.25×), L40S (0.75×), A100 PCIe (1.0×), H100 PCIe (2.2×)
+- Performance factors relative to RTX 4090. Higher = faster execution.
+- Enterprise GPUs should provide equal or better performance than consumer alternatives.
 
 Notebook Content:
 {notebook_content}
@@ -268,6 +275,7 @@ Respond in JSON format with:
     "baseline_runtime_hours": "1.5-2.5",
     "baseline_reference_gpu": "RTX 4090",
     "optimization_speedup_factor": 0.7,
+    "performance_considerations": ["Consider enterprise GPU performance vs consumer options"],
     "confidence": 0.0-1.0,
     "reasoning": ["reason1", "reason2"],
     "runtime_reasoning": ["runtime factor1", "runtime factor2"]
@@ -277,7 +285,8 @@ For runtime estimation:
 - baseline_runtime_hours: Estimated time on baseline_reference_gpu (single GPU)
 - baseline_reference_gpu: Reference GPU for the estimate (typically RTX 4090 or A100)  
 - optimization_speedup_factor: Combined speedup from optimizations (0.5 = 50% faster, 1.0 = no change)
-- Consider: model parameters, dataset size, epochs, optimizations like LoRA/quantization"""
+- performance_considerations: Notes about GPU performance trade-offs and recommendations
+- Consider: model parameters, dataset size, epochs, optimizations like LoRA/quantization, and GPU performance factors"""
 
             response = requests.post(
                 f"{self.base_url}/v1/chat/completions",
@@ -502,6 +511,10 @@ For runtime estimation:
         if 'reasoning' in llm_context:
             llm_reasoning.extend(llm_context['reasoning'])
         
+        # Add LLM performance considerations
+        if 'performance_considerations' in llm_context:
+            llm_reasoning.extend(llm_context['performance_considerations'])
+        
         return enhanced_analysis, llm_reasoning
     
     def evaluate_notebook_compliance(self, code_cells: List[str], markdown_cells: List[str]) -> Optional[Dict]:
@@ -696,10 +709,20 @@ class GPUAnalyzer:
             },
             
             # Data Center GPUs (Enterprise)
+            'A100 SXM 40G': {
+                'vram': 40, 'compute_capability': 8.0, 'form_factor': 'SXM', 'nvlink': True,
+                'release_year': 2020, 'tier': 'enterprise', 'tensor_cores': True,
+                'category': 'enterprise', 'max_reasonable_quantity': 32, 'performance_factor': 1.2
+            },
             'A100 SXM 80G': {
                 'vram': 80, 'compute_capability': 8.0, 'form_factor': 'SXM', 'nvlink': True,
                 'release_year': 2020, 'tier': 'enterprise', 'tensor_cores': True,
                 'category': 'enterprise', 'max_reasonable_quantity': 32, 'performance_factor': 1.2
+            },
+            'A100 PCIe 40G': {
+                'vram': 40, 'compute_capability': 8.0, 'form_factor': 'PCIe', 'nvlink': False,
+                'release_year': 2020, 'tier': 'enterprise', 'tensor_cores': True,
+                'category': 'enterprise', 'max_reasonable_quantity': 8, 'performance_factor': 1.0
             },
             'A100 PCIe 80G': {
                 'vram': 80, 'compute_capability': 8.0, 'form_factor': 'PCIe', 'nvlink': False,
@@ -2069,16 +2092,26 @@ class GPUAnalyzer:
                 vram = 192
         else:
             # Use PCIe enterprise GPUs for more moderate scale
+            # INTELLIGENT SELECTION: Choose based on vRAM needs with performance considerations
             if vram_needed <= 24:
-                gpu_type = 'L4'
-                vram = 24
+                # For smaller workloads, use L40S (48GB, 0.75) - good performance-to-cost ratio
+                # Avoid L4 (0.25 performance) unless specifically needed
+                gpu_type = 'L40S'
+                vram = 48
+            elif vram_needed <= 40:
+                # Use A100 40G for mid-range requirements
+                gpu_type = 'A100 PCIe 40G'
+                vram = 40
             elif vram_needed <= 48:
+                # L40S is good for this range
                 gpu_type = 'L40S'
                 vram = 48
             elif vram_needed <= 80:
+                # Use A100 80G for high VRAM needs
                 gpu_type = 'A100 PCIe 80G'
                 vram = 80
             else:
+                # For very high VRAM needs, use H100 PCIe
                 gpu_type = 'H100 PCIe'
                 vram = 80
         
@@ -2140,75 +2173,107 @@ class GPUAnalyzer:
     
     def sanitize_file_content(self, file_content: bytes, filename: str) -> tuple:
         """
-        Sanitize uploaded file content for security.
+        Sanitize uploaded file content for security using comprehensive sandbox validation.
         Returns (is_safe: bool, error_msg: str, sanitized_content: dict/str)
         """
         try:
+            # Import the security sandbox
+            from .security_sandbox import SecuritySandbox
+            
+            # Create sandbox with strict limits
+            sandbox = SecuritySandbox(max_memory_mb=256, max_time_seconds=10)
+            
+            # Decode file content
+            try:
+                content_str = file_content.decode('utf-8')
+            except UnicodeDecodeError:
+                return False, "Invalid file encoding - please use UTF-8", None
+            
+            # Validate based on file type
             if filename.lower().endswith('.ipynb'):
-                # Jupyter notebook - validate JSON structure
+                # Use sandbox validation for Jupyter notebooks
+                is_safe, error_msg, sanitized_content = sandbox.validate_notebook_structure(content_str)
+                return is_safe, error_msg, sanitized_content
+                
+            elif filename.lower().endswith('.py'):
+                # Use sandbox validation for Python files
+                is_safe, error_msg, sanitized_content = sandbox.validate_python_file(content_str)
+                return is_safe, error_msg, sanitized_content
+                
+            else:
+                return False, "Unsupported file type - only .ipynb and .py files are allowed", None
+                
+        except ImportError:
+            # Fallback to basic validation if sandbox not available
+            return self._basic_sanitize_file_content(file_content, filename)
+        except Exception as e:
+            return False, f"Security validation error: {str(e)}", None
+    
+    def _basic_sanitize_file_content(self, file_content: bytes, filename: str) -> tuple:
+        """
+        Basic fallback sanitization (original method) - should not be used in production.
+        """
+        try:
+            content_str = file_content.decode('utf-8')
+            
+            if filename.lower().endswith('.ipynb'):
+                import json
                 try:
-                    import json
-                    content_str = file_content.decode('utf-8')
                     notebook_data = json.loads(content_str)
                     
-                    # Basic validation
                     if not isinstance(notebook_data, dict):
                         return False, "Invalid notebook format - not a JSON object", None
-                    
                     if 'cells' not in notebook_data:
                         return False, "Invalid notebook format - missing cells", None
-                    
                     if not isinstance(notebook_data['cells'], list):
                         return False, "Invalid notebook format - cells must be an array", None
                     
-                    # Basic security checks
+                    # Enhanced dangerous pattern detection
                     content_lower = content_str.lower()
                     dangerous_patterns = [
-                        'subprocess.', 'os.system', 'eval(', 'exec(',
-                        '__import__', 'open(', 'file(', 'input('
+                        'subprocess.', 'os.system', 'eval(', 'exec(', '__import__', 
+                        'open(', 'file(', 'input(', 'getattr(', 'setattr(',
+                        'globals(', 'locals(', 'vars(', 'dir(',
+                        'compile(', 'reload(', '__builtins__', 'rm -rf',
+                        'sudo ', 'chmod ', 'wget ', 'curl ', 'nc -l'
                     ]
                     
                     for pattern in dangerous_patterns:
                         if pattern in content_lower:
-                            return False, f"Potentially unsafe code pattern detected: {pattern}", None
+                            return False, f"SECURITY: Blocked dangerous pattern: {pattern}", None
                     
                     return True, "", notebook_data
                     
                 except json.JSONDecodeError:
                     return False, "Invalid JSON format", None
-                except UnicodeDecodeError:
-                    return False, "Invalid file encoding - please use UTF-8", None
                     
             elif filename.lower().endswith('.py'):
-                # Python/marimo file
+                # Enhanced Python validation
+                import ast
                 try:
-                    content_str = file_content.decode('utf-8')
-                    
-                    # Basic security checks
-                    content_lower = content_str.lower()
-                    dangerous_patterns = [
-                        'subprocess.', 'os.system', 'eval(', 'exec(',
-                        '__import__', 'open(', 'file(', 'input('
-                    ]
-                    
-                    for pattern in dangerous_patterns:
-                        if pattern in content_lower:
-                            return False, f"Potentially unsafe code pattern detected: {pattern}", None
-                    
-                    # Basic Python syntax validation
-                    import ast
-                    try:
-                        ast.parse(content_str)
-                    except SyntaxError:
-                        return False, "Invalid Python syntax", None
-                    
-                    return True, "", {"content": content_str}
-                    
-                except UnicodeDecodeError:
-                    return False, "Invalid file encoding - please use UTF-8", None
+                    ast.parse(content_str)
+                except SyntaxError:
+                    return False, "Invalid Python syntax", None
+                
+                content_lower = content_str.lower()
+                dangerous_patterns = [
+                    'subprocess.', 'os.system', 'eval(', 'exec(', '__import__', 
+                    'open(', 'file(', 'input(', 'getattr(', 'setattr(',
+                    'globals(', 'locals(', 'vars(', 'dir(',
+                    'compile(', 'reload(', '__builtins__', 'rm -rf',
+                    'sudo ', 'chmod ', 'wget ', 'curl ', 'nc -l'
+                ]
+                
+                for pattern in dangerous_patterns:
+                    if pattern in content_lower:
+                        return False, f"SECURITY: Blocked dangerous pattern: {pattern}", None
+                
+                return True, "", {"content": content_str}
             else:
                 return False, "Unsupported file type", None
                 
+        except UnicodeDecodeError:
+            return False, "Invalid file encoding - please use UTF-8", None
         except Exception as e:
             return False, f"File validation error: {str(e)}", None
     
@@ -2317,20 +2382,12 @@ class GPUAnalyzer:
         # Extract LLM runtime data if available
         llm_runtime_data = analysis.get('llm_runtime_data')
         
-        # Generate enterprise recommendation (always available)
-        enterprise_rec = self._generate_enterprise_recommendation(
-            vram_needed, quantity_needed, workload_type, sxm_required, llm_runtime_data
-        )
-        analysis['enterprise_gpu_type'] = enterprise_rec['type']
-        analysis['enterprise_quantity'] = enterprise_rec['quantity']
-        analysis['enterprise_vram_gb'] = enterprise_rec['vram']
-        analysis['enterprise_runtime_estimate'] = enterprise_rec['runtime']
-        
         # Assess consumer viability and generate recommendation if viable
         consumer_viable, limitation = self._assess_consumer_viability(analysis)
         analysis['consumer_viable'] = consumer_viable
         analysis['consumer_limitation'] = limitation
         
+        consumer_rec = None
         if consumer_viable:
             consumer_rec = self._generate_consumer_recommendation(
                 vram_needed, quantity_needed, workload_type, llm_runtime_data
@@ -2339,12 +2396,6 @@ class GPUAnalyzer:
             analysis['consumer_quantity'] = consumer_rec['quantity']
             analysis['consumer_vram_gb'] = consumer_rec['vram']
             analysis['consumer_runtime_estimate'] = consumer_rec['runtime']
-            
-            # Set optimal to consumer since it's viable
-            analysis['optimal_gpu_type'] = consumer_rec['type']
-            analysis['optimal_quantity'] = consumer_rec['quantity']
-            analysis['optimal_vram_gb'] = consumer_rec['vram']
-            analysis['optimal_runtime_estimate'] = consumer_rec['runtime']
         else:
             # Consumer not viable - clear consumer fields
             analysis['consumer_gpu_type'] = None
@@ -2352,15 +2403,79 @@ class GPUAnalyzer:
             analysis['consumer_vram_gb'] = None
             analysis['consumer_runtime_estimate'] = None
             
+            # Add reasoning about why consumer isn't viable
+            if limitation:
+                analysis['reasoning'].append(f"Consumer GPUs not recommended: {limitation}")
+        
+        # Generate enterprise recommendation (always available)
+        # PERFORMANCE FIX: If consumer is viable, ensure enterprise is at least as fast
+        enterprise_rec = self._generate_enterprise_recommendation(
+            vram_needed, quantity_needed, workload_type, sxm_required, llm_runtime_data
+        )
+        
+        # Check if enterprise recommendation is slower than consumer
+        if consumer_viable and consumer_rec:
+            consumer_perf = self.gpu_specs.get(consumer_rec['type'], {}).get('performance_factor', 1.0)
+            enterprise_perf = self.gpu_specs.get(enterprise_rec['type'], {}).get('performance_factor', 1.0)
+            
+            # If enterprise is slower than consumer, upgrade enterprise recommendation
+            if enterprise_perf < consumer_perf:
+                analysis['reasoning'].append(f"Upgraded enterprise recommendation from {enterprise_rec['type']} to ensure better performance than consumer option")
+                
+                # Find a faster enterprise GPU
+                faster_options = [
+                    ('L40S', 48, 0.75),
+                    ('A100 PCIe 40G', 40, 1.0),
+                    ('A100 PCIe 80G', 80, 1.0),
+                    ('A100 SXM 40G', 40, 1.2),
+                    ('A100 SXM 80G', 80, 1.2),
+                    ('H100 PCIe', 80, 2.2),
+                    ('H100 SXM', 80, 2.5),
+                    ('H200 SXM', 141, 3.0),
+                    ('B200 SXM', 192, 4.0)
+                ]
+                
+                for gpu_name, gpu_vram, gpu_perf in faster_options:
+                    if gpu_perf >= consumer_perf and gpu_vram >= vram_needed:
+                        enterprise_rec['type'] = gpu_name
+                        enterprise_rec['vram'] = gpu_vram * quantity_needed
+                        
+                        # Calculate runtime with proper None checks
+                        baseline_runtime = '2-3'
+                        baseline_gpu = 'RTX 4090'
+                        optimization_factor = 1.0
+                        
+                        if llm_runtime_data:
+                            baseline_runtime = llm_runtime_data.get('baseline_runtime_hours', '2-3')
+                            baseline_gpu = llm_runtime_data.get('baseline_reference_gpu', 'RTX 4090')
+                            optimization_factor = llm_runtime_data.get('optimization_speedup_factor', 1.0)
+                        
+                        enterprise_rec['runtime'] = self._calculate_runtime_for_gpu(
+                            baseline_runtime, baseline_gpu, gpu_name, quantity_needed, optimization_factor
+                        )
+                        break
+        
+        analysis['enterprise_gpu_type'] = enterprise_rec['type']
+        analysis['enterprise_quantity'] = enterprise_rec['quantity']
+        analysis['enterprise_vram_gb'] = enterprise_rec['vram']
+        analysis['enterprise_runtime_estimate'] = enterprise_rec['runtime']
+        
+        # VRAM FIX: Ensure all vRAM values are calculated correctly based on GPU specs
+        self._fix_vram_calculations(analysis)
+        
+        # Set optimal recommendation
+        if consumer_viable and consumer_rec:
+            # Set optimal to consumer since it's viable
+            analysis['optimal_gpu_type'] = consumer_rec['type']
+            analysis['optimal_quantity'] = consumer_rec['quantity']
+            analysis['optimal_vram_gb'] = consumer_rec['vram']
+            analysis['optimal_runtime_estimate'] = consumer_rec['runtime']
+        else:
             # Set optimal to enterprise
             analysis['optimal_gpu_type'] = enterprise_rec['type']
             analysis['optimal_quantity'] = enterprise_rec['quantity']
             analysis['optimal_vram_gb'] = enterprise_rec['vram']
             analysis['optimal_runtime_estimate'] = enterprise_rec['runtime']
-            
-            # Add reasoning about why consumer isn't viable
-            if limitation:
-                analysis['reasoning'].append(f"Consumer GPUs not recommended: {limitation}")
         
         # Generate minimum runtime using LLM data if available
         if llm_runtime_data and analysis.get('min_gpu_type'):
@@ -2372,3 +2487,34 @@ class GPUAnalyzer:
             analysis['min_runtime_estimate'] = self._calculate_runtime_for_gpu(
                 baseline_runtime, baseline_gpu, min_gpu_type, min_quantity, optimization_factor
             )
+
+    def _fix_vram_calculations(self, analysis: Dict):
+        """Fix vRAM calculations to ensure they are based on actual GPU specs * quantity."""
+        
+        # Fix minimum vRAM
+        min_gpu_type = analysis.get('min_gpu_type', '')
+        min_quantity = analysis.get('min_quantity', 1)
+        if min_gpu_type and min_gpu_type in self.gpu_specs:
+            gpu_vram = self.gpu_specs[min_gpu_type]['vram']
+            analysis['min_vram_gb'] = gpu_vram * min_quantity
+        
+        # Fix consumer vRAM
+        consumer_gpu_type = analysis.get('consumer_gpu_type')
+        consumer_quantity = analysis.get('consumer_quantity', 1)
+        if consumer_gpu_type and consumer_gpu_type in self.gpu_specs:
+            gpu_vram = self.gpu_specs[consumer_gpu_type]['vram']
+            analysis['consumer_vram_gb'] = gpu_vram * consumer_quantity
+        
+        # Fix enterprise vRAM
+        enterprise_gpu_type = analysis.get('enterprise_gpu_type', '')
+        enterprise_quantity = analysis.get('enterprise_quantity', 1)
+        if enterprise_gpu_type and enterprise_gpu_type in self.gpu_specs:
+            gpu_vram = self.gpu_specs[enterprise_gpu_type]['vram']
+            analysis['enterprise_vram_gb'] = gpu_vram * enterprise_quantity
+        
+        # Fix optimal vRAM
+        optimal_gpu_type = analysis.get('optimal_gpu_type', '')
+        optimal_quantity = analysis.get('optimal_quantity', 1)
+        if optimal_gpu_type and optimal_gpu_type in self.gpu_specs:
+            gpu_vram = self.gpu_specs[optimal_gpu_type]['vram']
+            analysis['optimal_vram_gb'] = gpu_vram * optimal_quantity

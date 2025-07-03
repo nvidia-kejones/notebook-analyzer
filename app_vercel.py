@@ -195,8 +195,16 @@ def analyze():
     try:
         analyzer = GPUAnalyzer(quiet_mode=True)
         
-        # Check if it's a file upload or URL
-        if 'file' in request.files and request.files['file'].filename:
+        # Check for both inputs provided (improved UX)
+        has_file = 'file' in request.files and request.files['file'].filename
+        has_url = 'url' in request.form and request.form['url'].strip()
+        
+        if has_file and has_url:
+            # Both provided - inform user about precedence
+            flash('Both file and URL provided. Processing uploaded file and ignoring URL.', 'info')
+        
+        # Check if it's a file upload or URL (file takes precedence)
+        if has_file:
             # File upload analysis with sanitization
             file = request.files['file']
             if file and allowed_file(file.filename):
@@ -213,25 +221,44 @@ def analyze():
                         flash(f'File upload blocked for security: {error_msg}', 'error')
                         return redirect(url_for('index'))
                     
-                    # Use secure temporary file handling - P1 Security Fix
-                    import tempfile
-                    
-                    # Create secure temporary file with proper cleanup
-                    if filename.lower().endswith('.ipynb'):
-                        # For notebooks, save the sanitized JSON
-                        with tempfile.NamedTemporaryFile(mode='w', suffix='.ipynb', delete=False, 
-                                                       prefix='notebook_', dir='/tmp') as temp_file:
-                            json.dump(sanitized_content, temp_file)
-                            temp_file.flush()  # Ensure content is written
-                            temp_path = temp_file.name
-                    elif filename.lower().endswith('.py'):
-                        # For Python files, save the sanitized content
-                        python_content = sanitized_content.get('content', '') if sanitized_content else ''
-                        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, 
-                                                       prefix='notebook_', dir='/tmp') as temp_file:
-                            temp_file.write(python_content)
-                            temp_file.flush()  # Ensure content is written
-                            temp_path = temp_file.name
+                    # Use secure temporary file handling with sandbox - P1 Security Fix
+                    try:
+                        from analyzer.security_sandbox import SecuritySandbox
+                        sandbox = SecuritySandbox()
+                        
+                        # Create secure temporary file with proper isolation
+                        if filename.lower().endswith('.ipynb'):
+                            # For notebooks, save the sanitized JSON
+                            temp_content = json.dumps(sanitized_content, indent=2)
+                            temp_path = sandbox.create_secure_temp_file(temp_content, '.ipynb')
+                        elif filename.lower().endswith('.py'):
+                            # For Python files, save the sanitized content
+                            python_content = sanitized_content.get('content', '') if sanitized_content else ''
+                            temp_path = sandbox.create_secure_temp_file(python_content, '.py')
+                        else:
+                            flash('Unsupported file type after sanitization.', 'error')
+                            return redirect(url_for('index'))
+                    except ImportError:
+                        # Fallback to less secure method if sandbox not available
+                        import tempfile
+                        import os
+                        
+                        # Create more secure temporary directory
+                        temp_dir = tempfile.mkdtemp(prefix='notebook_secure_', dir='/tmp')
+                        os.chmod(temp_dir, 0o700)  # Restrictive permissions
+                        
+                        if filename.lower().endswith('.ipynb'):
+                            temp_path = os.path.join(temp_dir, f'notebook_{os.urandom(8).hex()}.ipynb')
+                            with open(temp_path, 'w', encoding='utf-8') as temp_file:
+                                json.dump(sanitized_content, temp_file)
+                        elif filename.lower().endswith('.py'):
+                            python_content = sanitized_content.get('content', '') if sanitized_content else ''
+                            temp_path = os.path.join(temp_dir, f'notebook_{os.urandom(8).hex()}.py')
+                            with open(temp_path, 'w', encoding='utf-8') as temp_file:
+                                temp_file.write(python_content)
+                        
+                        # Set file permissions to read-only
+                        os.chmod(temp_path, 0o400)
                     
                     try:
                         result = analyzer.analyze_notebook(temp_path)
@@ -248,12 +275,21 @@ def analyze():
                         else:
                             flash('Failed to analyze the uploaded notebook. Please check the file format.', 'error')
                     finally:
-                        # Secure cleanup of temporary file
+                        # Secure cleanup of temporary file using sandbox
                         try:
-                            if 'temp_path' in locals() and os.path.exists(temp_path):
-                                os.unlink(temp_path)
-                        except OSError:
-                            pass  # Ignore cleanup errors
+                            if 'temp_path' in locals() and temp_path:
+                                try:
+                                    from analyzer.security_sandbox import SecuritySandbox
+                                    sandbox = SecuritySandbox()
+                                    sandbox.cleanup_temp_file(temp_path)
+                                except ImportError:
+                                    # Fallback cleanup
+                                    if os.path.exists(temp_path):
+                                        temp_dir = os.path.dirname(temp_path)
+                                        import shutil
+                                        shutil.rmtree(temp_dir, ignore_errors=True)
+                        except Exception:
+                            pass  # Ignore cleanup errors but they should be logged in production
                 except Exception as e:
                     # Sanitized error message - P1 Security Fix
                     if app.debug:
@@ -263,7 +299,7 @@ def analyze():
             else:
                 flash('Invalid file type. Please upload a .ipynb or .py file.', 'error')
                 
-        elif 'url' in request.form and request.form['url'].strip():
+        elif has_url:
             # URL analysis
             url = request.form['url'].strip()
             result = analyzer.analyze_notebook(url)
@@ -386,8 +422,16 @@ def analyze_stream():
     source_name = None
     analysis_input = None
     
-    # Check if it's a file upload or URL
-    if 'file' in request.files and request.files['file'].filename:
+    # Check for both inputs provided (improved UX)
+    has_file = 'file' in request.files and request.files['file'].filename
+    has_url = 'url' in request.form and request.form['url'].strip()
+    
+    if has_file and has_url:
+        # Both provided - return error with clear message
+        return jsonify({'error': 'Both file and URL provided. Please use only one input method.'}), 400
+    
+    # Check if it's a file upload or URL (file takes precedence)
+    if has_file:
         # File upload analysis with sanitization
         file = request.files['file']
         if file and allowed_file(file.filename):
@@ -433,7 +477,7 @@ def analyze_stream():
         else:
             return jsonify({'error': 'Invalid file type. Please upload a .ipynb or .py file.'}), 400
             
-    elif 'url' in request.form and request.form['url'].strip():
+    elif has_url:
         # URL analysis
         source_name = request.form['url'].strip()
         analysis_input = {'type': 'url', 'url': source_name}
