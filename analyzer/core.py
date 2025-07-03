@@ -340,13 +340,17 @@ Respond in JSON format with:
             return enhanced_analysis, llm_reasoning
         
         # Enhance VRAM estimate with LLM insights
+        original_vram = static_analysis.get('min_vram_gb', 8)
+        updated_vram = original_vram
+        
         if 'estimated_vram_gb' in llm_context and llm_context['estimated_vram_gb']:
             llm_vram = llm_context['estimated_vram_gb']
             static_vram = static_analysis.get('min_vram_gb', 8)
             
             # Use higher estimate but cap at reasonable limits
             enhanced_vram = max(llm_vram, static_vram)
-            enhanced_analysis['min_vram_gb'] = min(enhanced_vram, 200)  # Cap at 200GB
+            updated_vram = min(enhanced_vram, 200)  # Cap at 200GB
+            enhanced_analysis['min_vram_gb'] = updated_vram
             
             if abs(llm_vram - static_vram) > 4:  # Significant difference
                 llm_reasoning.append(f"LLM estimated {llm_vram}GB vs static analysis {static_vram}GB")
@@ -360,11 +364,64 @@ Respond in JSON format with:
         if 'memory_optimizations' in llm_context and llm_context['memory_optimizations']:
             optimizations = llm_context['memory_optimizations']
             if optimizations:
-                # Reduce VRAM estimate if memory optimizations are detected
-                reduction_factor = 0.7 if len(optimizations) > 1 else 0.85
+                # More conservative reduction when LLM detected significantly higher VRAM requirement
+                llm_vram = llm_context.get('estimated_vram_gb', 0)
+                static_vram = static_analysis.get('min_vram_gb', 8)
+                has_significant_llm_increase = llm_vram > static_vram + 8  # LLM found 8GB+ more than static
+                
+                if has_significant_llm_increase:
+                    # Be more conservative with memory optimizations for high-VRAM workloads
+                    # Fine-tuning large models still needs substantial memory even with optimizations
+                    reduction_factor = 0.85 if len(optimizations) > 1 else 0.9
+                    llm_reasoning.append(f"Conservative memory optimization applied due to high VRAM requirement ({llm_vram}GB)")
+                else:
+                    # Standard reduction for smaller workloads
+                    reduction_factor = 0.7 if len(optimizations) > 1 else 0.85
+                
                 current_vram = enhanced_analysis.get('min_vram_gb', 8)
-                enhanced_analysis['min_vram_gb'] = max(4, int(current_vram * reduction_factor))
+                updated_vram = max(8, int(current_vram * reduction_factor))  # Min 8GB for GPU workloads
+                enhanced_analysis['min_vram_gb'] = updated_vram
                 llm_reasoning.append(f"Memory optimizations detected: {', '.join(optimizations)}")
+        
+        # CRITICAL FIX: Re-evaluate GPU types if VRAM requirement changed significantly
+        if abs(updated_vram - original_vram) > 4:  # Significant VRAM change
+            llm_reasoning.append(f"Re-evaluating GPU recommendations based on updated VRAM requirement: {updated_vram}GB")
+            
+            # Apply the same GPU selection logic as static analysis, but use the updated VRAM values
+            if updated_vram <= 8:
+                # Entry-level workload
+                enhanced_analysis['min_gpu_type'] = 'RTX 4060'
+                enhanced_analysis['min_vram_gb'] = updated_vram
+                enhanced_analysis['optimal_gpu_type'] = 'RTX 4070'
+                enhanced_analysis['optimal_vram_gb'] = max(updated_vram, 12)
+                enhanced_analysis['min_runtime_estimate'] = '1-2 hours'
+                enhanced_analysis['optimal_runtime_estimate'] = '30-60 minutes'
+            elif updated_vram <= 16:
+                # Mid-tier workload  
+                enhanced_analysis['min_gpu_type'] = 'RTX 4070'
+                enhanced_analysis['min_vram_gb'] = max(updated_vram, 12)
+                enhanced_analysis['optimal_gpu_type'] = 'RTX 4080'
+                enhanced_analysis['optimal_vram_gb'] = max(updated_vram, 16)
+                enhanced_analysis['min_runtime_estimate'] = '2-4 hours'
+                enhanced_analysis['optimal_runtime_estimate'] = '1-2 hours'
+            elif updated_vram <= 24:
+                # High-end workload
+                enhanced_analysis['min_gpu_type'] = 'RTX 4090'
+                enhanced_analysis['min_vram_gb'] = max(updated_vram, 24)
+                enhanced_analysis['optimal_gpu_type'] = 'L4'
+                enhanced_analysis['optimal_vram_gb'] = max(updated_vram, 24)
+                enhanced_analysis['min_runtime_estimate'] = '3-6 hours'
+                enhanced_analysis['optimal_runtime_estimate'] = '1-2 hours'
+            else:
+                # Enterprise workload
+                enhanced_analysis['min_gpu_type'] = 'L4'
+                enhanced_analysis['min_vram_gb'] = max(updated_vram, 24)
+                enhanced_analysis['optimal_gpu_type'] = 'A100 SXM 80G'
+                enhanced_analysis['optimal_vram_gb'] = max(updated_vram, 80)
+                enhanced_analysis['min_runtime_estimate'] = '4-8 hours'
+                enhanced_analysis['optimal_runtime_estimate'] = '1-3 hours'
+            
+            llm_reasoning.append(f"Updated GPU recommendations: {enhanced_analysis['min_gpu_type']} (min) -> {enhanced_analysis['optimal_gpu_type']} (optimal)")
         
         # Multi-GPU insights
         if 'multi_gpu_required' in llm_context and llm_context['multi_gpu_required']:
