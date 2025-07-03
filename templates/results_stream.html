@@ -100,7 +100,7 @@ function displayResults(data) {
                             <div class="card-body">
                                 <div class="row">
                                     <!-- Minimum Configuration -->
-                                    <div class="col-md-6 mb-3">
+                                    <div class="col-md-4 mb-3">
                                         <div class="border-start border-warning border-3 ps-3">
                                             <h6 class="text-warning mb-2">
                                                 <i class="bi bi-shield-fill-exclamation me-1"></i>
@@ -123,26 +123,29 @@ function displayResults(data) {
                                         </div>
                                     </div>
 
-                                    <!-- Optimal Configuration -->
-                                    <div class="col-md-6 mb-3">
+                                    <!-- Consumer Optimal Configuration -->
+                                    ${getConsumerOptimalColumn(analysis)}
+
+                                    <!-- Enterprise Optimal Configuration -->
+                                    <div class="col-md-4 mb-3">
                                         <div class="border-start border-success border-3 ps-3">
                                             <h6 class="text-success mb-2">
-                                                <i class="bi bi-rocket-takeoff me-1"></i>
-                                                Optimal Configuration
+                                                <i class="bi bi-building me-1"></i>
+                                                Enterprise Optimal
                                             </h6>
                                             <div class="mb-2">
                                                 <strong>GPU:</strong> 
-                                                <span class="badge bg-success ms-1">${analysis.optimal_gpu.type}</span>
+                                                <span class="badge bg-success ms-1">${analysis.enterprise_gpu.type}</span>
                                             </div>
                                             <div class="mb-2">
-                                                <strong>Quantity:</strong> ${analysis.optimal_gpu.quantity}
+                                                <strong>Quantity:</strong> ${analysis.enterprise_gpu.quantity}
                                             </div>
                                             <div class="mb-2">
-                                                <strong>VRAM:</strong> ${analysis.optimal_gpu.vram_gb} GB
+                                                <strong>VRAM:</strong> ${analysis.enterprise_gpu.vram_gb} GB
                                             </div>
                                             <div class="mb-0">
                                                 <strong>Runtime:</strong> 
-                                                <span class="text-muted">${analysis.optimal_gpu.runtime}</span>
+                                                <span class="text-muted">${analysis.enterprise_gpu.runtime}</span>
                                             </div>
                                         </div>
                                     </div>
@@ -302,11 +305,26 @@ ${sourceInfo}
 • VRAM: ${analysis.min_gpu.vram_gb} GB
 • Runtime: ${analysis.min_gpu.runtime}
 
-**⚡ Optimal Configuration:**
-• GPU: ${analysis.optimal_gpu.type}
-• Quantity: ${analysis.optimal_gpu.quantity}
-• VRAM: ${analysis.optimal_gpu.vram_gb} GB
-• Runtime: ${analysis.optimal_gpu.runtime}
+**🎮 Consumer Optimal:**`;
+
+    if (analysis.consumer_viable && analysis.consumer_gpu) {
+        text += `
+• GPU: ${analysis.consumer_gpu.type}
+• Quantity: ${analysis.consumer_gpu.quantity}
+• VRAM: ${analysis.consumer_gpu.vram_gb} GB
+• Runtime: ${analysis.consumer_gpu.runtime}`;
+    } else {
+        text += `
+• Not Recommended${analysis.consumer_limitation ? '\n• Reason: ' + analysis.consumer_limitation : ''}`;
+    }
+
+    text += `
+
+**🏢 Enterprise Optimal:**
+• GPU: ${analysis.enterprise_gpu.type}
+• Quantity: ${analysis.enterprise_gpu.quantity}
+• VRAM: ${analysis.enterprise_gpu.vram_gb} GB
+• Runtime: ${analysis.enterprise_gpu.runtime}
 
 **📊 Technical Details:**
 • SXM Required: ${analysis.sxm_required ? 'Yes' : 'No'}
@@ -458,6 +476,55 @@ function extractAnalysisDataFromDOM() {
         reasoning: reasoning,
         llm_reasoning: llmReasoning
     };
+}
+
+function getConsumerOptimalColumn(analysis) {
+    if (analysis.consumer_viable && analysis.consumer_gpu) {
+        return `
+            <div class="col-md-4 mb-3">
+                <div class="border-start border-primary border-3 ps-3">
+                    <h6 class="text-primary mb-2">
+                        <i class="bi bi-controller me-1"></i>
+                        Consumer Optimal
+                    </h6>
+                    <div class="mb-2">
+                        <strong>GPU:</strong> 
+                        <span class="badge bg-primary ms-1">${analysis.consumer_gpu.type}</span>
+                    </div>
+                    <div class="mb-2">
+                        <strong>Quantity:</strong> ${analysis.consumer_gpu.quantity}
+                    </div>
+                    <div class="mb-2">
+                        <strong>VRAM:</strong> ${analysis.consumer_gpu.vram_gb} GB
+                    </div>
+                    <div class="mb-0">
+                        <strong>Runtime:</strong> 
+                        <span class="text-muted">${analysis.consumer_gpu.runtime}</span>
+                    </div>
+                </div>
+            </div>
+        `;
+    } else {
+        return `
+            <div class="col-md-4 mb-3">
+                <div class="border-start border-secondary border-3 ps-3">
+                    <h6 class="text-secondary mb-2">
+                        <i class="bi bi-controller me-1"></i>
+                        Consumer Optimal
+                    </h6>
+                    <div class="text-muted">
+                        <i class="bi bi-x-circle me-1"></i>
+                        Not Recommended
+                    </div>
+                    ${analysis.consumer_limitation ? `
+                    <div class="small text-muted mt-2">
+                        ${analysis.consumer_limitation}
+                    </div>
+                    ` : ''}
+                </div>
+            </div>
+        `;
+    }
 }
 
 function getArmCompatibilityBadge(compatibility) {
