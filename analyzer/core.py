@@ -250,7 +250,7 @@ class LLMAnalyzer:
 4. **Memory Optimization**: Are there techniques like gradient checkpointing, LoRA, quantization?
 5. **Multi-GPU Patterns**: Is distributed training or model parallelism used?
 6. **Dataset Scale**: How large is the dataset being processed?
-7. **Training Duration**: Estimated epochs, steps, or convergence time?
+7. **Runtime Estimation**: Based on workload complexity, model size, optimizations, and typical convergence
 
 Notebook Content:
 {notebook_content}
@@ -265,9 +265,19 @@ Respond in JSON format with:
     "memory_optimizations": ["technique1", "technique2"],
     "batch_size_analysis": "description",
     "runtime_factors": ["factor1", "factor2"],
+    "baseline_runtime_hours": "1.5-2.5",
+    "baseline_reference_gpu": "RTX 4090",
+    "optimization_speedup_factor": 0.7,
     "confidence": 0.0-1.0,
-    "reasoning": ["reason1", "reason2"]
-}}"""
+    "reasoning": ["reason1", "reason2"],
+    "runtime_reasoning": ["runtime factor1", "runtime factor2"]
+}}
+
+For runtime estimation:
+- baseline_runtime_hours: Estimated time on baseline_reference_gpu (single GPU)
+- baseline_reference_gpu: Reference GPU for the estimate (typically RTX 4090 or A100)  
+- optimization_speedup_factor: Combined speedup from optimizations (0.5 = 50% faster, 1.0 = no change)
+- Consider: model parameters, dataset size, epochs, optimizations like LoRA/quantization"""
 
             response = requests.post(
                 f"{self.base_url}/v1/chat/completions",
@@ -416,22 +426,22 @@ Respond in JSON format with:
                     enhanced_analysis['min_vram_gb'] = max(updated_vram, 80)
                     enhanced_analysis['optimal_gpu_type'] = 'H100 SXM'
                     enhanced_analysis['optimal_vram_gb'] = max(updated_vram, 80)
-                    enhanced_analysis['min_runtime_estimate'] = '3-6 hours'
-                    enhanced_analysis['optimal_runtime_estimate'] = '1-2 hours'
+                    enhanced_analysis['min_runtime_estimate'] = '1.0-2.0 hours'  # Will be recalculated
+                    enhanced_analysis['optimal_runtime_estimate'] = '1.0-2.0 hours'  # Will be recalculated
                 elif updated_vram <= 141:
                     enhanced_analysis['min_gpu_type'] = 'H100 SXM'
                     enhanced_analysis['min_vram_gb'] = max(updated_vram, 80)
                     enhanced_analysis['optimal_gpu_type'] = 'H200 SXM'
                     enhanced_analysis['optimal_vram_gb'] = max(updated_vram, 141)
-                    enhanced_analysis['min_runtime_estimate'] = '4-8 hours'
-                    enhanced_analysis['optimal_runtime_estimate'] = '1-3 hours'
+                    enhanced_analysis['min_runtime_estimate'] = '1.0-2.0 hours'  # Will be recalculated
+                    enhanced_analysis['optimal_runtime_estimate'] = '1.0-2.0 hours'  # Will be recalculated
                 else:
                     enhanced_analysis['min_gpu_type'] = 'H200 SXM'
                     enhanced_analysis['min_vram_gb'] = max(updated_vram, 141)
                     enhanced_analysis['optimal_gpu_type'] = 'B200 SXM'
                     enhanced_analysis['optimal_vram_gb'] = max(updated_vram, 192)
-                    enhanced_analysis['min_runtime_estimate'] = '6-12 hours'
-                    enhanced_analysis['optimal_runtime_estimate'] = '2-4 hours'
+                    enhanced_analysis['min_runtime_estimate'] = '1.0-2.0 hours'  # Will be recalculated
+                    enhanced_analysis['optimal_runtime_estimate'] = '1.0-2.0 hours'  # Will be recalculated
                 
                 llm_reasoning.append(f"SXM GPUs selected due to multi-GPU requirement: {enhanced_analysis['min_gpu_type']} -> {enhanced_analysis['optimal_gpu_type']}")
             else:
@@ -442,32 +452,32 @@ Respond in JSON format with:
                     enhanced_analysis['min_vram_gb'] = updated_vram
                     enhanced_analysis['optimal_gpu_type'] = 'RTX 4070'
                     enhanced_analysis['optimal_vram_gb'] = max(updated_vram, 12)
-                    enhanced_analysis['min_runtime_estimate'] = '1-2 hours'
-                    enhanced_analysis['optimal_runtime_estimate'] = '30-60 minutes'
+                    enhanced_analysis['min_runtime_estimate'] = '1.0-2.0 hours'  # Will be recalculated
+                    enhanced_analysis['optimal_runtime_estimate'] = '1.0-2.0 hours'  # Will be recalculated
                 elif updated_vram <= 16:
                     # Mid-tier workload  
                     enhanced_analysis['min_gpu_type'] = 'RTX 4070'
                     enhanced_analysis['min_vram_gb'] = max(updated_vram, 12)
                     enhanced_analysis['optimal_gpu_type'] = 'RTX 4080'
                     enhanced_analysis['optimal_vram_gb'] = max(updated_vram, 16)
-                    enhanced_analysis['min_runtime_estimate'] = '2-4 hours'
-                    enhanced_analysis['optimal_runtime_estimate'] = '1-2 hours'
+                    enhanced_analysis['min_runtime_estimate'] = '1.0-2.0 hours'  # Will be recalculated
+                    enhanced_analysis['optimal_runtime_estimate'] = '1.0-2.0 hours'  # Will be recalculated
                 elif updated_vram <= 24:
                     # High-end workload
                     enhanced_analysis['min_gpu_type'] = 'RTX 4090'
                     enhanced_analysis['min_vram_gb'] = max(updated_vram, 24)
                     enhanced_analysis['optimal_gpu_type'] = 'L4'
                     enhanced_analysis['optimal_vram_gb'] = max(updated_vram, 24)
-                    enhanced_analysis['min_runtime_estimate'] = '3-6 hours'
-                    enhanced_analysis['optimal_runtime_estimate'] = '1-2 hours'
+                    enhanced_analysis['min_runtime_estimate'] = '1.0-2.0 hours'  # Will be recalculated
+                    enhanced_analysis['optimal_runtime_estimate'] = '1.0-2.0 hours'  # Will be recalculated
                 else:
                     # Enterprise workload - use PCIe GPUs for single-GPU high-VRAM needs
                     enhanced_analysis['min_gpu_type'] = 'L40S'
                     enhanced_analysis['min_vram_gb'] = max(updated_vram, 48)
                     enhanced_analysis['optimal_gpu_type'] = 'A100 PCIe 80G'
                     enhanced_analysis['optimal_vram_gb'] = max(updated_vram, 80)
-                    enhanced_analysis['min_runtime_estimate'] = '4-8 hours'
-                    enhanced_analysis['optimal_runtime_estimate'] = '1-3 hours'
+                    enhanced_analysis['min_runtime_estimate'] = '1.0-2.0 hours'  # Will be recalculated
+                    enhanced_analysis['optimal_runtime_estimate'] = '1.0-2.0 hours'  # Will be recalculated
                 
                 llm_reasoning.append(f"Updated GPU recommendations: {enhanced_analysis['min_gpu_type']} (min) -> {enhanced_analysis['optimal_gpu_type']} (optimal)")
         
@@ -477,6 +487,16 @@ Respond in JSON format with:
                 enhanced_analysis['optimal_quantity'] = 2
                 enhanced_analysis['sxm_required'] = True
                 llm_reasoning.append("LLM detected multi-GPU requirements not caught by static analysis")
+        
+        # Extract and store LLM runtime data for use in recommendations
+        if any(key in llm_context for key in ['baseline_runtime_hours', 'baseline_reference_gpu', 'optimization_speedup_factor']):
+            enhanced_analysis['llm_runtime_data'] = {
+                'baseline_runtime_hours': llm_context.get('baseline_runtime_hours', '2-3'),
+                'baseline_reference_gpu': llm_context.get('baseline_reference_gpu', 'RTX 4090'),
+                'optimization_speedup_factor': llm_context.get('optimization_speedup_factor', 1.0)
+            }
+            if 'runtime_reasoning' in llm_context:
+                llm_reasoning.extend(llm_context['runtime_reasoning'])
         
         # Add LLM reasoning
         if 'reasoning' in llm_context:
@@ -628,83 +648,83 @@ class GPUAnalyzer:
             'RTX 5090': {
                 'vram': 32, 'compute_capability': 9.0, 'form_factor': 'PCIe', 'nvlink': False,
                 'release_year': 2025, 'tier': 'flagship', 'tensor_cores': True,
-                'category': 'consumer', 'max_reasonable_quantity': 2
+                'category': 'consumer', 'max_reasonable_quantity': 2, 'performance_factor': 1.7
             },
             'RTX 5080': {
                 'vram': 16, 'compute_capability': 9.0, 'form_factor': 'PCIe', 'nvlink': False,
                 'release_year': 2025, 'tier': 'high', 'tensor_cores': True,
-                'category': 'consumer', 'max_reasonable_quantity': 2
+                'category': 'consumer', 'max_reasonable_quantity': 2, 'performance_factor': 0.85
             },
             
             # RTX 40 Series (Consumer)
             'RTX 4090': {
                 'vram': 24, 'compute_capability': 8.9, 'form_factor': 'PCIe', 'nvlink': False,
                 'release_year': 2022, 'tier': 'flagship', 'tensor_cores': True,
-                'category': 'consumer', 'max_reasonable_quantity': 2
+                'category': 'consumer', 'max_reasonable_quantity': 2, 'performance_factor': 1.0
             },
             'RTX 4080': {
                 'vram': 16, 'compute_capability': 8.9, 'form_factor': 'PCIe', 'nvlink': False,
                 'release_year': 2022, 'tier': 'high', 'tensor_cores': True,
-                'category': 'consumer', 'max_reasonable_quantity': 2
+                'category': 'consumer', 'max_reasonable_quantity': 2, 'performance_factor': 0.70
             },
             'RTX 4070': {
                 'vram': 12, 'compute_capability': 8.9, 'form_factor': 'PCIe', 'nvlink': False,
                 'release_year': 2023, 'tier': 'mid', 'tensor_cores': True,
-                'category': 'consumer', 'max_reasonable_quantity': 2
+                'category': 'consumer', 'max_reasonable_quantity': 2, 'performance_factor': 0.50
             },
             'RTX 4060': {
                 'vram': 8, 'compute_capability': 8.9, 'form_factor': 'PCIe', 'nvlink': False,
                 'release_year': 2023, 'tier': 'entry', 'tensor_cores': True,
-                'category': 'consumer', 'max_reasonable_quantity': 2
+                'category': 'consumer', 'max_reasonable_quantity': 2, 'performance_factor': 0.35
             },
             
             # Professional GPUs (Enterprise)
             'L4': {
                 'vram': 24, 'compute_capability': 8.9, 'form_factor': 'PCIe', 'nvlink': False,
                 'release_year': 2023, 'tier': 'mid', 'tensor_cores': True,
-                'category': 'enterprise', 'max_reasonable_quantity': 8
+                'category': 'enterprise', 'max_reasonable_quantity': 8, 'performance_factor': 0.25
             },
             'L40': {
                 'vram': 48, 'compute_capability': 8.9, 'form_factor': 'PCIe', 'nvlink': False,
                 'release_year': 2023, 'tier': 'high', 'tensor_cores': True,
-                'category': 'enterprise', 'max_reasonable_quantity': 8
+                'category': 'enterprise', 'max_reasonable_quantity': 8, 'performance_factor': 0.65
             },
             'L40S': {
                 'vram': 48, 'compute_capability': 8.9, 'form_factor': 'PCIe', 'nvlink': False,
                 'release_year': 2023, 'tier': 'high', 'tensor_cores': True,
-                'category': 'enterprise', 'max_reasonable_quantity': 8
+                'category': 'enterprise', 'max_reasonable_quantity': 8, 'performance_factor': 0.75
             },
             
             # Data Center GPUs (Enterprise)
             'A100 SXM 80G': {
                 'vram': 80, 'compute_capability': 8.0, 'form_factor': 'SXM', 'nvlink': True,
                 'release_year': 2020, 'tier': 'enterprise', 'tensor_cores': True,
-                'category': 'enterprise', 'max_reasonable_quantity': 32
+                'category': 'enterprise', 'max_reasonable_quantity': 32, 'performance_factor': 1.2
             },
             'A100 PCIe 80G': {
                 'vram': 80, 'compute_capability': 8.0, 'form_factor': 'PCIe', 'nvlink': False,
                 'release_year': 2020, 'tier': 'enterprise', 'tensor_cores': True,
-                'category': 'enterprise', 'max_reasonable_quantity': 8
+                'category': 'enterprise', 'max_reasonable_quantity': 8, 'performance_factor': 1.0
             },
             'H100 SXM': {
                 'vram': 80, 'compute_capability': 9.0, 'form_factor': 'SXM', 'nvlink': True,
                 'release_year': 2022, 'tier': 'cutting_edge', 'tensor_cores': True,
-                'category': 'enterprise', 'max_reasonable_quantity': 32
+                'category': 'enterprise', 'max_reasonable_quantity': 32, 'performance_factor': 2.5
             },
             'H100 PCIe': {
                 'vram': 80, 'compute_capability': 9.0, 'form_factor': 'PCIe', 'nvlink': False,
                 'release_year': 2022, 'tier': 'cutting_edge', 'tensor_cores': True,
-                'category': 'enterprise', 'max_reasonable_quantity': 8
+                'category': 'enterprise', 'max_reasonable_quantity': 8, 'performance_factor': 2.2
             },
             'H200 SXM': {
                 'vram': 141, 'compute_capability': 9.0, 'form_factor': 'SXM', 'nvlink': True,
                 'release_year': 2023, 'tier': 'cutting_edge', 'tensor_cores': True,
-                'category': 'enterprise', 'max_reasonable_quantity': 32
+                'category': 'enterprise', 'max_reasonable_quantity': 32, 'performance_factor': 3.0
             },
             'B200 SXM': {
                 'vram': 192, 'compute_capability': 10.0, 'form_factor': 'SXM', 'nvlink': True,
                 'release_year': 2024, 'tier': 'cutting_edge', 'tensor_cores': True,
-                'category': 'enterprise', 'max_reasonable_quantity': 32
+                'category': 'enterprise', 'max_reasonable_quantity': 32, 'performance_factor': 4.0
             }
         }
         
@@ -1358,6 +1378,18 @@ class GPUAnalyzer:
                         min_quantity = static_analysis.get('min_quantity', 1)
                         static_analysis['min_vram_gb'] = per_gpu_vram * min_quantity
                 
+                # RUNTIME CONSISTENCY FIX: Update minimum runtime to match consumer/enterprise when same hardware
+                # If consumer recommendation exists and uses same GPU, use consumer runtime for consistency
+                consumer_gpu_type = static_analysis.get('consumer_gpu_type')
+                consumer_quantity = static_analysis.get('consumer_quantity')
+                min_gpu_type = static_analysis.get('min_gpu_type', '')
+                min_quantity = static_analysis.get('min_quantity', 1)
+                
+                if (consumer_gpu_type == min_gpu_type and consumer_quantity == min_quantity and
+                    static_analysis.get('consumer_runtime_estimate')):
+                    # Same hardware - use consumer runtime for consistency
+                    static_analysis['min_runtime_estimate'] = static_analysis['consumer_runtime_estimate']
+                
                 if not self.quiet_mode:
                     print(f"✅ LLM analysis complete (confidence: {llm_context.get('confidence', 0.5)*100:.0f}%)")
         
@@ -1603,11 +1635,11 @@ class GPUAnalyzer:
             analysis['min_gpu_type'] = 'RTX 4060'
             analysis['min_quantity'] = 1
             analysis['min_vram_gb'] = 8
-            analysis['min_runtime_estimate'] = '30-60 minutes'
+            analysis['min_runtime_estimate'] = '0.5-1.0 hours'
             analysis['consumer_gpu_type'] = 'RTX 4070'
             analysis['consumer_quantity'] = 1
             analysis['consumer_vram_gb'] = 12
-            analysis['consumer_runtime_estimate'] = '1-2 hours'
+            analysis['consumer_runtime_estimate'] = '1.0-2.0 hours'
             analysis['reasoning'].append("Basic GPU workload detected - entry-level GPU recommended")
             return analysis
         
@@ -1651,22 +1683,22 @@ class GPUAnalyzer:
             # Entry-level workload
             analysis['min_gpu_type'] = 'RTX 4060'
             analysis['min_vram_gb'] = 8
-            analysis['min_runtime_estimate'] = '2-3 hours'
+            analysis['min_runtime_estimate'] = '1.0-2.0 hours'  # Fallback estimate
         elif estimated_vram <= 16:
             # Mid-tier workload
             analysis['min_gpu_type'] = 'RTX 4070'
             analysis['min_vram_gb'] = 12
-            analysis['min_runtime_estimate'] = '2-4 hours'
+            analysis['min_runtime_estimate'] = '1.0-2.0 hours'  # Fallback estimate
         elif estimated_vram <= 24:
             # High-end workload
             analysis['min_gpu_type'] = 'RTX 4090'
             analysis['min_vram_gb'] = 24
-            analysis['min_runtime_estimate'] = '3-6 hours'
+            analysis['min_runtime_estimate'] = '1.0-2.0 hours'  # Fallback estimate
         else:
             # Enterprise workload - set minimum to enterprise GPU
             analysis['min_gpu_type'] = 'L4'
             analysis['min_vram_gb'] = max(estimated_vram, 24)
-            analysis['min_runtime_estimate'] = '4-8 hours'
+            analysis['min_runtime_estimate'] = '1.0-2.0 hours'  # Fallback estimate
 
         # Set quantities based on multi-GPU detection and workload requirements
         if multi_gpu_detected or analysis.get('sxm_required', False):
@@ -1980,39 +2012,37 @@ class GPUAnalyzer:
         
         return True, None
     
-    def _generate_consumer_recommendation(self, vram_needed: int, quantity: int, workload_type: str) -> Dict:
+    def _generate_consumer_recommendation(self, vram_needed: int, quantity: int, workload_type: str, 
+                                        llm_runtime_data: Optional[Dict] = None) -> Dict:
         """Generate consumer GPU recommendation based on requirements."""
         
         # Select best consumer GPU based on VRAM needs
         if vram_needed <= 8:
             gpu_type = 'RTX 4060'
             vram = 8
-            runtime = '2-3 hours'
         elif vram_needed <= 12:
             gpu_type = 'RTX 4070'
             vram = 12
-            runtime = '1.5-2.5 hours'
         elif vram_needed <= 16:
             gpu_type = 'RTX 4080'
             vram = 16
-            runtime = '1-2 hours'
         else:  # Up to 24GB
             gpu_type = 'RTX 4090'
             vram = 24
-            runtime = '1-1.5 hours'
-        
-        # Adjust for multi-GPU if needed
-        if quantity > 1:
-            runtime_parts = runtime.split('-')
-            base_time = float(runtime_parts[0])
-            max_time = float(runtime_parts[1].split()[0])
-            # Improve both min and max times proportionally with multi-GPU
-            new_min = max(0.5, base_time / 2)
-            new_max = max(0.5, max_time / 2)
-            runtime = f"{new_min:.1f}-{new_max:.1f} hours"
         
         final_quantity = min(quantity, 2)  # Cap at 2 for consumer
         total_vram = vram * final_quantity  # Calculate total available VRAM
+        
+        # Calculate runtime using LLM data if available
+        if llm_runtime_data:
+            baseline_runtime = llm_runtime_data.get('baseline_runtime_hours', '2-3')
+            baseline_gpu = llm_runtime_data.get('baseline_reference_gpu', 'RTX 4090')
+            optimization_factor = llm_runtime_data.get('optimization_speedup_factor', 1.0)
+            runtime = self._calculate_runtime_for_gpu(baseline_runtime, baseline_gpu, gpu_type, 
+                                                    final_quantity, optimization_factor)
+        else:
+            # Fallback runtime estimates
+            runtime = '1.0-2.0 hours'
         
         return {
             'type': gpu_type,
@@ -2021,7 +2051,8 @@ class GPUAnalyzer:
             'runtime': runtime
         }
     
-    def _generate_enterprise_recommendation(self, vram_needed: int, quantity: int, workload_type: str, sxm_required: bool) -> Dict:
+    def _generate_enterprise_recommendation(self, vram_needed: int, quantity: int, workload_type: str, 
+                                          sxm_required: bool, llm_runtime_data: Optional[Dict] = None) -> Dict:
         """Generate enterprise GPU recommendation based on requirements."""
         
         # Select based on VRAM needs and SXM requirements
@@ -2036,27 +2067,33 @@ class GPUAnalyzer:
             else:
                 gpu_type = 'B200 SXM'
                 vram = 192
-            runtime = '30-60 minutes'
         else:
             # Use PCIe enterprise GPUs for more moderate scale
             if vram_needed <= 24:
                 gpu_type = 'L4'
                 vram = 24
-                runtime = '45-90 minutes'
             elif vram_needed <= 48:
                 gpu_type = 'L40S'
                 vram = 48
-                runtime = '30-60 minutes'
             elif vram_needed <= 80:
                 gpu_type = 'A100 PCIe 80G'
                 vram = 80
-                runtime = '30-45 minutes'
             else:
                 gpu_type = 'H100 PCIe'
                 vram = 80
-                runtime = '20-40 minutes'
         
         total_vram = vram * quantity  # Calculate total available VRAM
+        
+        # Calculate runtime using LLM data if available
+        if llm_runtime_data:
+            baseline_runtime = llm_runtime_data.get('baseline_runtime_hours', '2-3')
+            baseline_gpu = llm_runtime_data.get('baseline_reference_gpu', 'RTX 4090')
+            optimization_factor = llm_runtime_data.get('optimization_speedup_factor', 1.0)
+            runtime = self._calculate_runtime_for_gpu(baseline_runtime, baseline_gpu, gpu_type, 
+                                                    quantity, optimization_factor)
+        else:
+            # Fallback runtime estimates
+            runtime = '1.0-2.0 hours'
         
         return {
             'type': gpu_type,
@@ -2205,6 +2242,70 @@ class GPUAnalyzer:
             # For quantities > 8, round to nearest multiple of 8
             return ((quantity + 7) // 8) * 8
 
+    def _parse_runtime_range(self, runtime_str: str) -> tuple:
+        """Parse runtime string like '1.5-2.5' into (min, max) float tuple."""
+        try:
+            if '-' in runtime_str:
+                parts = runtime_str.split('-')
+                min_time = float(parts[0])
+                max_time = float(parts[1])
+                return (min_time, max_time)
+            else:
+                # Single value
+                time_val = float(runtime_str)
+                return (time_val, time_val)
+        except:
+            # Fallback for parsing errors
+            return (1.0, 2.0)
+
+    def _calculate_multi_gpu_scaling(self, quantity: int) -> float:
+        """Calculate multi-GPU scaling efficiency factor."""
+        if quantity <= 1:
+            return 1.0
+        elif quantity == 2:
+            return 0.55  # ~45% speedup per GPU (1/0.55 = 1.82x total speedup)
+        elif quantity == 4:
+            return 0.35  # ~65% speedup per GPU (1/0.35 = 2.86x total speedup) 
+        elif quantity == 8:
+            return 0.25  # ~75% speedup per GPU (1/0.25 = 4.0x total speedup)
+        else:
+            # For larger quantities, scaling becomes less efficient
+            return max(0.15, 0.25 * (8 / quantity))
+
+    def _calculate_runtime_for_gpu(self, baseline_runtime: str, baseline_gpu: str, target_gpu: str, 
+                                 quantity: int, optimization_factor: float = 1.0) -> str:
+        """Calculate runtime for target GPU based on baseline estimate."""
+        try:
+            # Parse baseline runtime
+            min_time, max_time = self._parse_runtime_range(baseline_runtime)
+            
+            # Get performance factors
+            baseline_perf = self.gpu_specs.get(baseline_gpu, {}).get('performance_factor', 1.0)
+            target_perf = self.gpu_specs.get(target_gpu, {}).get('performance_factor', 1.0)
+            
+            # Calculate GPU performance scaling
+            gpu_speedup = target_perf / baseline_perf
+            
+            # Calculate multi-GPU scaling
+            multi_gpu_factor = self._calculate_multi_gpu_scaling(quantity)
+            
+            # Apply all factors
+            total_speedup = gpu_speedup * optimization_factor / multi_gpu_factor
+            
+            # Calculate new runtime range
+            new_min = max(0.1, min_time / total_speedup)
+            new_max = max(0.1, max_time / total_speedup)
+            
+            # Format output
+            if new_min == new_max:
+                return f"{new_min:.1f} hours"
+            else:
+                return f"{new_min:.1f}-{new_max:.1f} hours"
+                
+        except Exception as e:
+            # Fallback runtime
+            return "1.0-2.0 hours"
+
     def _generate_comprehensive_recommendations(self, analysis: Dict):
         """Generate minimum, consumer, and enterprise recommendations and set optimal fields."""
         
@@ -2213,9 +2314,12 @@ class GPUAnalyzer:
         workload_type = analysis.get('workload_type', 'inference')
         sxm_required = analysis.get('sxm_required', False)
         
+        # Extract LLM runtime data if available
+        llm_runtime_data = analysis.get('llm_runtime_data')
+        
         # Generate enterprise recommendation (always available)
         enterprise_rec = self._generate_enterprise_recommendation(
-            vram_needed, quantity_needed, workload_type, sxm_required
+            vram_needed, quantity_needed, workload_type, sxm_required, llm_runtime_data
         )
         analysis['enterprise_gpu_type'] = enterprise_rec['type']
         analysis['enterprise_quantity'] = enterprise_rec['quantity']
@@ -2229,7 +2333,7 @@ class GPUAnalyzer:
         
         if consumer_viable:
             consumer_rec = self._generate_consumer_recommendation(
-                vram_needed, quantity_needed, workload_type
+                vram_needed, quantity_needed, workload_type, llm_runtime_data
             )
             analysis['consumer_gpu_type'] = consumer_rec['type']
             analysis['consumer_quantity'] = consumer_rec['quantity']
@@ -2257,3 +2361,14 @@ class GPUAnalyzer:
             # Add reasoning about why consumer isn't viable
             if limitation:
                 analysis['reasoning'].append(f"Consumer GPUs not recommended: {limitation}")
+        
+        # Generate minimum runtime using LLM data if available
+        if llm_runtime_data and analysis.get('min_gpu_type'):
+            min_gpu_type = analysis.get('min_gpu_type', '')
+            min_quantity = analysis.get('min_quantity', 1)
+            baseline_runtime = llm_runtime_data.get('baseline_runtime_hours', '2-3')
+            baseline_gpu = llm_runtime_data.get('baseline_reference_gpu', 'RTX 4090')
+            optimization_factor = llm_runtime_data.get('optimization_speedup_factor', 1.0)
+            analysis['min_runtime_estimate'] = self._calculate_runtime_for_gpu(
+                baseline_runtime, baseline_gpu, min_gpu_type, min_quantity, optimization_factor
+            )
