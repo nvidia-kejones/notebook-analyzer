@@ -1342,6 +1342,12 @@ class GPUAnalyzer:
             if llm_context:
                 enhanced_analysis, llm_reasoning = self.llm_analyzer.enhance_gpu_recommendation(static_analysis, llm_context)
                 static_analysis.update(enhanced_analysis)
+                
+                # CRITICAL FIX: Regenerate comprehensive recommendations after LLM enhancement
+                # The LLM may have significantly changed VRAM requirements, so we need to update
+                # the consumer/enterprise recommendations based on the new estimates
+                self._generate_comprehensive_recommendations(static_analysis)
+                
                 if not self.quiet_mode:
                     print(f"✅ LLM analysis complete (confidence: {llm_context.get('confidence', 0.5)*100:.0f}%)")
         
@@ -1979,8 +1985,10 @@ class GPUAnalyzer:
             runtime_parts = runtime.split('-')
             base_time = float(runtime_parts[0])
             max_time = float(runtime_parts[1].split()[0])
+            # Improve both min and max times proportionally with multi-GPU
+            new_min = max(0.5, base_time / 2)
             new_max = max(0.5, max_time / 2)
-            runtime = f"{base_time:.1f}-{new_max:.1f} hours"
+            runtime = f"{new_min:.1f}-{new_max:.1f} hours"
         
         return {
             'type': gpu_type,
