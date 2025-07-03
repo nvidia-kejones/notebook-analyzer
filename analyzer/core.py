@@ -698,28 +698,58 @@ class GPUAnalyzer:
             'nvidia_frameworks': [r'nemo\.', r'import nemo', r'triton\.', r'import triton', r'tensorrt\.', r'import tensorrt']
         }
         
-        # SXM requirement patterns (enhanced with more precise detection)
-        self.sxm_patterns = [
-            # Real distributed training patterns
+        # Multi-GPU patterns (can work with PCIe + NVLink)
+        self.multi_gpu_patterns = [
+            # Standard PyTorch multi-GPU (works fine with PCIe)
             r'\btorch\.nn\.DataParallel\b', r'\btorch\.nn\.parallel\.DistributedDataParallel\b',
             r'\bmodel\s*=\s*nn\.DataParallel\b', r'\bmodel\s*=\s*DDP\b',
-            r'\bhorovod\b', r'\bnccl\b', r'\ball_reduce\b', r'\ball_gather\b',
-            
-            # Actual multi-GPU training setup (not just mentions)
-            r'\btorch\.cuda\.device_count\(\)\s*>\s*1', r'\bworld_size\s*>\s*1',
             r'\baccelerator\s*=\s*["\']ddp["\']', r'\bstrategy\s*=\s*["\']ddp["\']',
-            r'\bdist\.init_process_group\b', r'\bdist\.barrier\b',
             
-            # Pipeline/tensor parallelism (actual usage, not comments)
-            r'\bPipelineParallel\b', r'\bTensorParallel\b',
-            r'\btensor_model_parallel_size\s*>\s*1',
-            r'\bpipeline_model_parallel_size\s*>\s*1',
+            # GPU availability checks (not necessarily SXM)
+            r'\btorch\.cuda\.device_count\(\)\s*>\s*1', r'\bavailable_gpus\s*>\s*1',
+            r'\bif.*torch\.cuda\.device_count', r'\bgpu_count\s*>\s*1',
             
-            # DeepSpeed multi-GPU
-            r'\bdeepspeed\.initialize\b.*world_size', r'\bzero_stage\s*[>=]\s*2',
+            # Small-scale distributed training (PCIe friendly)
+            r'\bworld_size\s*[=<]\s*[2-4]', r'\bnum_gpus\s*[=<]\s*[2-4]',
+            r'\bdist\.init_process_group\b', r'\ball_reduce\b', r'\ball_gather\b',
             
-            # NVIDIA NeMo multi-GPU
-            r'\btrainer\.num_nodes\s*>\s*1', r'\btrainer\.devices\s*>\s*1'
+            # Framework multi-GPU (usually works with PCIe)
+            r'\bhorovod\b', r'\baccelerate.*multi_gpu',
+            r'\btransformers.*DataParallel', r'\blightning.*gpus\s*=\s*[2-4]'
+        ]
+        
+        # SXM requirement patterns (enhanced with more precise detection for real SXM needs)
+        self.sxm_patterns = [
+            # Large-scale distributed training (real SXM needs)
+            r'\bnum_nodes\s*[>=]\s*[2-9]', r'\bworld_size\s*[>=]\s*8',
+            r'\bgpus_per_node\s*[>=]\s*8', r'\btotal_gpus\s*[>=]\s*8',
+            
+            # Multi-node distributed training
+            r'\btorch\.distributed\.launch.*--nnodes\s+[2-9]',
+            r'\btorchrun.*--nnodes\s+[2-9]', r'\bmpirun.*-np\s+[8-9]',
+            r'\bdist\.init_process_group.*nccl.*rank',
+            
+            # Explicit SXM/NVLink requirements
+            r'\bnvlink.*required', r'\bsxm.*required', r'\bnvswitch',
+            r'\bdgx.*system', r'\bsuperpod', r'\bbasepod',
+            
+            # Large model parallelism requiring SXM bandwidth
+            r'\btensor_model_parallel_size\s*[>=]\s*4',
+            r'\bpipeline_model_parallel_size\s*[>=]\s*4',
+            r'\bmodel_parallel.*degree\s*[>=]\s*4',
+            
+            # High-power training workloads (likely need SXM power limits)
+            r'\bfull.*precision.*training', r'\bbf16.*training.*large',
+            r'\bmixed.*precision.*false', r'\bfp32.*training',
+            
+            # Enterprise/data center specific patterns
+            r'\bslurm.*--gres=gpu:[8-9]', r'\bsbatch.*--gres=gpu:[8-9]',
+            r'\bpbs.*-l.*gpus=[8-9]', r'\btorque.*gpus=[8-9]',
+            
+            # Framework-specific large-scale patterns
+            r'\bdeepspeed.*zero_stage.*3.*offload_param',
+            r'\bfairscale.*fully_sharded_data_parallel',
+            r'\btransformers.*trainer.*dataparallel_process_group_size\s*[>=]\s*8'
         ]
         
         # ARM/Grace compatibility patterns - Enhanced for comprehensive analysis
@@ -1527,11 +1557,20 @@ class GPUAnalyzer:
             analysis['workload_type'] = 'inference'
             analysis['reasoning'].append("Inference workload detected")
         
-        # Check for multi-GPU patterns
+        # Check for multi-GPU patterns (can work with PCIe + NVLink)
+        multi_gpu_detected = False
+        for pattern in self.multi_gpu_patterns:
+            if re.search(pattern, all_code, re.IGNORECASE):
+                multi_gpu_detected = True
+                analysis['reasoning'].append(f"Multi-GPU capability detected: {pattern}")
+                break
+        
+        # Check for SXM-specific patterns (large-scale requirements)
         for pattern in self.sxm_patterns:
             if re.search(pattern, all_code, re.IGNORECASE):
                 analysis['sxm_required'] = True
-                analysis['sxm_reasoning'].append(f"Multi-GPU pattern detected: {pattern}")
+                analysis['sxm_reasoning'].append(f"Large-scale training pattern detected: {pattern}")
+                break
         
         # Set GPU recommendations based on estimated VRAM needs
         if estimated_vram <= 8:
@@ -1559,21 +1598,29 @@ class GPUAnalyzer:
             analysis['min_runtime_estimate'] = '3-6 hours'
             analysis['optimal_runtime_estimate'] = '1-2 hours'
         else:
-            # Enterprise workload
-            analysis['min_gpu_type'] = 'L4'
-            analysis['min_vram_gb'] = 24
-            analysis['optimal_gpu_type'] = 'A100 SXM 80G'
-            analysis['optimal_vram_gb'] = 80
+            # Enterprise workload - use PCIe by default unless SXM specifically required
+            if analysis.get('sxm_required', False):
+                analysis['min_gpu_type'] = 'A100 SXM 80G'
+                analysis['optimal_gpu_type'] = 'H100 SXM'
+            else:
+                analysis['min_gpu_type'] = 'L40S'
+                analysis['optimal_gpu_type'] = 'A100 PCIe 80G'
+            analysis['min_vram_gb'] = max(estimated_vram, 48)
+            analysis['optimal_vram_gb'] = max(estimated_vram, 80)
             analysis['min_runtime_estimate'] = '4-8 hours'
             analysis['optimal_runtime_estimate'] = '1-3 hours'
-        
-        # Set quantities
-        analysis['min_quantity'] = 1
-        analysis['optimal_quantity'] = 1
-        if analysis['sxm_required']:
-            analysis['optimal_quantity'] = 2
-            analysis['reasoning'].append("Multi-GPU setup recommended for optimal performance")
 
+        # Set quantities based on multi-GPU detection
+        analysis['min_quantity'] = 1
+        if multi_gpu_detected or analysis.get('sxm_required', False):
+            analysis['optimal_quantity'] = 2
+            if multi_gpu_detected and not analysis.get('sxm_required', False):
+                analysis['reasoning'].append("Multi-GPU setup recommended - PCIe GPUs with NVLink sufficient")
+            elif analysis.get('sxm_required', False):
+                analysis['reasoning'].append("Multi-GPU setup recommended for large-scale training")
+        else:
+            analysis['optimal_quantity'] = 1
+        
         # CRITICAL FIX: Validate SXM requirements against selected GPUs
         analysis = self._validate_sxm_requirements(analysis)
 
@@ -1716,23 +1763,14 @@ class GPUAnalyzer:
         # 2. Upgrade to SXM GPUs (if workload truly needs it)
         
         if not min_supports_sxm and not optimal_supports_sxm:
-            # Check if this is likely a false positive by examining the reasoning
-            sxm_reasoning = ' '.join(analysis.get('sxm_reasoning', [])).lower()
+            # Use intelligent assessment to determine if SXM is truly needed
+            truly_needs_sxm = self._assess_sxm_necessity(analysis)
             
-            # If the detected pattern is vague or likely false positive, clear the requirement
-            false_positive_indicators = [
-                'model.*parallel',  # Our old broad pattern
-                'pipeline.*parallel',  # Might be just mentions
-                'tensor.*parallel'  # Might be just mentions
-            ]
-            
-            is_likely_false_positive = any(indicator in sxm_reasoning for indicator in false_positive_indicators)
-            
-            if is_likely_false_positive:
+            if not truly_needs_sxm:
                 # Clear false positive SXM requirement
                 analysis['sxm_required'] = False
-                analysis['sxm_reasoning'] = ["SXM requirement cleared - pattern detected was likely a false positive"]
-                analysis['reasoning'].append("Cleared false positive SXM requirement - workload appears to be single-GPU")
+                analysis['sxm_reasoning'] = ["SXM requirement cleared - workload can run efficiently on PCIe GPUs"]
+                analysis['reasoning'].append("Cleared SXM requirement - PCIe GPUs with NVLink sufficient for this workload")
             else:
                 # Real multi-GPU requirement - upgrade to SXM GPUs
                 vram_requirement = analysis.get('min_vram_gb', 24)
@@ -1756,10 +1794,85 @@ class GPUAnalyzer:
                     analysis['min_vram_gb'] = 141
                     analysis['optimal_vram_gb'] = 192
                 
-                analysis['reasoning'].append(f"Upgraded to SXM GPUs due to multi-GPU requirement: {analysis['min_gpu_type']} -> {analysis['optimal_gpu_type']}")
+                analysis['reasoning'].append(f"Upgraded to SXM GPUs due to large-scale training requirement: {analysis['min_gpu_type']} -> {analysis['optimal_gpu_type']}")
         
         return analysis
-
+    
+    def _assess_sxm_necessity(self, analysis: Dict) -> bool:
+        """
+        Intelligently assess if SXM form factor is truly necessary based on workload characteristics.
+        Returns True if SXM is needed, False if PCIe GPUs are sufficient.
+        """
+        # Factor 1: Scale assessment
+        scale_score = 0
+        optimal_quantity = analysis.get('optimal_quantity', 1)
+        vram_requirement = analysis.get('min_vram_gb', 8)
+        
+        # Large GPU count suggests SXM need
+        if optimal_quantity >= 8:
+            scale_score += 40
+        elif optimal_quantity >= 4:
+            scale_score += 20
+        elif optimal_quantity >= 2:
+            scale_score += 5  # 2 GPUs can easily be PCIe + NVLink
+        
+        # Factor 2: Model size and complexity
+        model_score = 0
+        workload_type = analysis.get('workload_type', 'inference')
+        workload_complexity = analysis.get('workload_complexity', 'moderate')
+        
+        # Very large models may benefit from SXM power/bandwidth
+        if vram_requirement >= 100:
+            model_score += 30
+        elif vram_requirement >= 80:
+            model_score += 15
+        elif vram_requirement >= 40:
+            model_score += 5
+        
+        # Training complexity
+        if workload_type == 'training' and workload_complexity in ['complex', 'extreme']:
+            model_score += 20
+        elif workload_type == 'training':
+            model_score += 10
+        
+        # Factor 3: Pattern analysis
+        pattern_score = 0
+        sxm_reasoning = analysis.get('sxm_reasoning', [])
+        reasoning_text = ' '.join(sxm_reasoning).lower()
+        
+        # High-confidence SXM patterns
+        high_confidence_patterns = [
+            'num_nodes', 'world_size', 'multi_node', 'dgx_system', 
+            'superpod', 'slurm', 'tensor_model_parallel_size'
+        ]
+        for pattern in high_confidence_patterns:
+            if pattern in reasoning_text:
+                pattern_score += 25
+                break
+        
+        # Medium-confidence patterns
+        medium_confidence_patterns = [
+            'zero_stage.*3', 'fully_sharded', 'pipeline_parallel'
+        ]
+        for pattern in medium_confidence_patterns:
+            if pattern in reasoning_text:
+                pattern_score += 15
+                break
+        
+        # Low-confidence patterns (likely false positives)
+        low_confidence_patterns = [
+            'device_count', 'dataparallel', 'multi.*gpu.*setup'
+        ]
+        for pattern in low_confidence_patterns:
+            if pattern in reasoning_text:
+                pattern_score -= 10  # Negative score for likely false positives
+        
+        # Calculate total score
+        total_score = scale_score + model_score + pattern_score
+        
+        # Decision threshold: SXM needed if score >= 50
+        return total_score >= 50
+    
     def _compare_versions(self, version1: str, version2: str) -> int:
         """
         Compare two version strings.
