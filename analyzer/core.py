@@ -387,41 +387,70 @@ Respond in JSON format with:
         if abs(updated_vram - original_vram) > 4:  # Significant VRAM change
             llm_reasoning.append(f"Re-evaluating GPU recommendations based on updated VRAM requirement: {updated_vram}GB")
             
-            # Apply the same GPU selection logic as static analysis, but use the updated VRAM values
-            if updated_vram <= 8:
-                # Entry-level workload
-                enhanced_analysis['min_gpu_type'] = 'RTX 4060'
-                enhanced_analysis['min_vram_gb'] = updated_vram
-                enhanced_analysis['optimal_gpu_type'] = 'RTX 4070'
-                enhanced_analysis['optimal_vram_gb'] = max(updated_vram, 12)
-                enhanced_analysis['min_runtime_estimate'] = '1-2 hours'
-                enhanced_analysis['optimal_runtime_estimate'] = '30-60 minutes'
-            elif updated_vram <= 16:
-                # Mid-tier workload  
-                enhanced_analysis['min_gpu_type'] = 'RTX 4070'
-                enhanced_analysis['min_vram_gb'] = max(updated_vram, 12)
-                enhanced_analysis['optimal_gpu_type'] = 'RTX 4080'
-                enhanced_analysis['optimal_vram_gb'] = max(updated_vram, 16)
-                enhanced_analysis['min_runtime_estimate'] = '2-4 hours'
-                enhanced_analysis['optimal_runtime_estimate'] = '1-2 hours'
-            elif updated_vram <= 24:
-                # High-end workload
-                enhanced_analysis['min_gpu_type'] = 'RTX 4090'
-                enhanced_analysis['min_vram_gb'] = max(updated_vram, 24)
-                enhanced_analysis['optimal_gpu_type'] = 'L4'
-                enhanced_analysis['optimal_vram_gb'] = max(updated_vram, 24)
-                enhanced_analysis['min_runtime_estimate'] = '3-6 hours'
-                enhanced_analysis['optimal_runtime_estimate'] = '1-2 hours'
-            else:
-                # Enterprise workload
-                enhanced_analysis['min_gpu_type'] = 'L4'
-                enhanced_analysis['min_vram_gb'] = max(updated_vram, 24)
-                enhanced_analysis['optimal_gpu_type'] = 'A100 SXM 80G'
-                enhanced_analysis['optimal_vram_gb'] = max(updated_vram, 80)
-                enhanced_analysis['min_runtime_estimate'] = '4-8 hours'
-                enhanced_analysis['optimal_runtime_estimate'] = '1-3 hours'
+            # Check if SXM is required - if so, only recommend SXM GPUs
+            sxm_required = enhanced_analysis.get('sxm_required', False)
             
-            llm_reasoning.append(f"Updated GPU recommendations: {enhanced_analysis['min_gpu_type']} (min) -> {enhanced_analysis['optimal_gpu_type']} (optimal)")
+            if sxm_required:
+                # Only recommend SXM GPUs when multi-GPU is required
+                if updated_vram <= 80:
+                    enhanced_analysis['min_gpu_type'] = 'A100 SXM 80G'
+                    enhanced_analysis['min_vram_gb'] = max(updated_vram, 80)
+                    enhanced_analysis['optimal_gpu_type'] = 'H100 SXM'
+                    enhanced_analysis['optimal_vram_gb'] = max(updated_vram, 80)
+                    enhanced_analysis['min_runtime_estimate'] = '3-6 hours'
+                    enhanced_analysis['optimal_runtime_estimate'] = '1-2 hours'
+                elif updated_vram <= 141:
+                    enhanced_analysis['min_gpu_type'] = 'H100 SXM'
+                    enhanced_analysis['min_vram_gb'] = max(updated_vram, 80)
+                    enhanced_analysis['optimal_gpu_type'] = 'H200 SXM'
+                    enhanced_analysis['optimal_vram_gb'] = max(updated_vram, 141)
+                    enhanced_analysis['min_runtime_estimate'] = '4-8 hours'
+                    enhanced_analysis['optimal_runtime_estimate'] = '1-3 hours'
+                else:
+                    enhanced_analysis['min_gpu_type'] = 'H200 SXM'
+                    enhanced_analysis['min_vram_gb'] = max(updated_vram, 141)
+                    enhanced_analysis['optimal_gpu_type'] = 'B200 SXM'
+                    enhanced_analysis['optimal_vram_gb'] = max(updated_vram, 192)
+                    enhanced_analysis['min_runtime_estimate'] = '6-12 hours'
+                    enhanced_analysis['optimal_runtime_estimate'] = '2-4 hours'
+                
+                llm_reasoning.append(f"SXM GPUs selected due to multi-GPU requirement: {enhanced_analysis['min_gpu_type']} -> {enhanced_analysis['optimal_gpu_type']}")
+            else:
+                # Apply standard GPU selection logic for single-GPU workloads
+                if updated_vram <= 8:
+                    # Entry-level workload
+                    enhanced_analysis['min_gpu_type'] = 'RTX 4060'
+                    enhanced_analysis['min_vram_gb'] = updated_vram
+                    enhanced_analysis['optimal_gpu_type'] = 'RTX 4070'
+                    enhanced_analysis['optimal_vram_gb'] = max(updated_vram, 12)
+                    enhanced_analysis['min_runtime_estimate'] = '1-2 hours'
+                    enhanced_analysis['optimal_runtime_estimate'] = '30-60 minutes'
+                elif updated_vram <= 16:
+                    # Mid-tier workload  
+                    enhanced_analysis['min_gpu_type'] = 'RTX 4070'
+                    enhanced_analysis['min_vram_gb'] = max(updated_vram, 12)
+                    enhanced_analysis['optimal_gpu_type'] = 'RTX 4080'
+                    enhanced_analysis['optimal_vram_gb'] = max(updated_vram, 16)
+                    enhanced_analysis['min_runtime_estimate'] = '2-4 hours'
+                    enhanced_analysis['optimal_runtime_estimate'] = '1-2 hours'
+                elif updated_vram <= 24:
+                    # High-end workload
+                    enhanced_analysis['min_gpu_type'] = 'RTX 4090'
+                    enhanced_analysis['min_vram_gb'] = max(updated_vram, 24)
+                    enhanced_analysis['optimal_gpu_type'] = 'L4'
+                    enhanced_analysis['optimal_vram_gb'] = max(updated_vram, 24)
+                    enhanced_analysis['min_runtime_estimate'] = '3-6 hours'
+                    enhanced_analysis['optimal_runtime_estimate'] = '1-2 hours'
+                else:
+                    # Enterprise workload - use PCIe GPUs for single-GPU high-VRAM needs
+                    enhanced_analysis['min_gpu_type'] = 'L40S'
+                    enhanced_analysis['min_vram_gb'] = max(updated_vram, 48)
+                    enhanced_analysis['optimal_gpu_type'] = 'A100 PCIe 80G'
+                    enhanced_analysis['optimal_vram_gb'] = max(updated_vram, 80)
+                    enhanced_analysis['min_runtime_estimate'] = '4-8 hours'
+                    enhanced_analysis['optimal_runtime_estimate'] = '1-3 hours'
+                
+                llm_reasoning.append(f"Updated GPU recommendations: {enhanced_analysis['min_gpu_type']} (min) -> {enhanced_analysis['optimal_gpu_type']} (optimal)")
         
         # Multi-GPU insights
         if 'multi_gpu_required' in llm_context and llm_context['multi_gpu_required']:
@@ -669,11 +698,28 @@ class GPUAnalyzer:
             'nvidia_frameworks': [r'nemo\.', r'import nemo', r'triton\.', r'import triton', r'tensorrt\.', r'import tensorrt']
         }
         
-        # SXM requirement patterns (enhanced)
+        # SXM requirement patterns (enhanced with more precise detection)
         self.sxm_patterns = [
-            r'nvlink', r'multi.*gpu.*=.*True', r'DataParallel', r'DistributedDataParallel',
-            r'horovod', r'distributed.*training', r'model.*parallel', r'pipeline.*parallel',
-            r'tensor.*parallel', r'all_reduce', r'all_gather', r'nccl'
+            # Real distributed training patterns
+            r'\btorch\.nn\.DataParallel\b', r'\btorch\.nn\.parallel\.DistributedDataParallel\b',
+            r'\bmodel\s*=\s*nn\.DataParallel\b', r'\bmodel\s*=\s*DDP\b',
+            r'\bhorovod\b', r'\bnccl\b', r'\ball_reduce\b', r'\ball_gather\b',
+            
+            # Actual multi-GPU training setup (not just mentions)
+            r'\btorch\.cuda\.device_count\(\)\s*>\s*1', r'\bworld_size\s*>\s*1',
+            r'\baccelerator\s*=\s*["\']ddp["\']', r'\bstrategy\s*=\s*["\']ddp["\']',
+            r'\bdist\.init_process_group\b', r'\bdist\.barrier\b',
+            
+            # Pipeline/tensor parallelism (actual usage, not comments)
+            r'\bPipelineParallel\b', r'\bTensorParallel\b',
+            r'\btensor_model_parallel_size\s*>\s*1',
+            r'\bpipeline_model_parallel_size\s*>\s*1',
+            
+            # DeepSpeed multi-GPU
+            r'\bdeepspeed\.initialize\b.*world_size', r'\bzero_stage\s*[>=]\s*2',
+            
+            # NVIDIA NeMo multi-GPU
+            r'\btrainer\.num_nodes\s*>\s*1', r'\btrainer\.devices\s*>\s*1'
         ]
         
         # ARM/Grace compatibility patterns - Enhanced for comprehensive analysis
@@ -1528,6 +1574,9 @@ class GPUAnalyzer:
             analysis['optimal_quantity'] = 2
             analysis['reasoning'].append("Multi-GPU setup recommended for optimal performance")
 
+        # CRITICAL FIX: Validate SXM requirements against selected GPUs
+        analysis = self._validate_sxm_requirements(analysis)
+
         # Enhanced ARM compatibility assessment
         arm_compatibility_score = 0
         arm_issues = []
@@ -1646,6 +1695,71 @@ class GPUAnalyzer:
         
         return analysis
     
+    def _validate_sxm_requirements(self, analysis: Dict) -> Dict:
+        """
+        Validate SXM requirements against selected GPUs and fix inconsistencies.
+        If SXM is required but selected GPUs don't support it, either clear the requirement
+        or upgrade to SXM-capable GPUs.
+        """
+        if not analysis.get('sxm_required', False):
+            return analysis
+        
+        # Check if selected GPUs support SXM
+        min_gpu = analysis.get('min_gpu_type', '')
+        optimal_gpu = analysis.get('optimal_gpu_type', '')
+        
+        min_supports_sxm = min_gpu in self.gpu_specs and self.gpu_specs[min_gpu].get('form_factor') == 'SXM'
+        optimal_supports_sxm = optimal_gpu in self.gpu_specs and self.gpu_specs[optimal_gpu].get('form_factor') == 'SXM'
+        
+        # If neither GPU supports SXM, we have two options:
+        # 1. Clear the SXM requirement (likely false positive)
+        # 2. Upgrade to SXM GPUs (if workload truly needs it)
+        
+        if not min_supports_sxm and not optimal_supports_sxm:
+            # Check if this is likely a false positive by examining the reasoning
+            sxm_reasoning = ' '.join(analysis.get('sxm_reasoning', [])).lower()
+            
+            # If the detected pattern is vague or likely false positive, clear the requirement
+            false_positive_indicators = [
+                'model.*parallel',  # Our old broad pattern
+                'pipeline.*parallel',  # Might be just mentions
+                'tensor.*parallel'  # Might be just mentions
+            ]
+            
+            is_likely_false_positive = any(indicator in sxm_reasoning for indicator in false_positive_indicators)
+            
+            if is_likely_false_positive:
+                # Clear false positive SXM requirement
+                analysis['sxm_required'] = False
+                analysis['sxm_reasoning'] = ["SXM requirement cleared - pattern detected was likely a false positive"]
+                analysis['reasoning'].append("Cleared false positive SXM requirement - workload appears to be single-GPU")
+            else:
+                # Real multi-GPU requirement - upgrade to SXM GPUs
+                vram_requirement = analysis.get('min_vram_gb', 24)
+                
+                if vram_requirement <= 80:
+                    # Use A100 SXM for moderate requirements
+                    analysis['min_gpu_type'] = 'A100 SXM 80G'
+                    analysis['optimal_gpu_type'] = 'H100 SXM'
+                    analysis['min_vram_gb'] = 80
+                    analysis['optimal_vram_gb'] = 80
+                elif vram_requirement <= 141:
+                    # Use H200 SXM for high requirements
+                    analysis['min_gpu_type'] = 'H100 SXM'
+                    analysis['optimal_gpu_type'] = 'H200 SXM'
+                    analysis['min_vram_gb'] = 80
+                    analysis['optimal_vram_gb'] = 141
+                else:
+                    # Use B200 SXM for extreme requirements
+                    analysis['min_gpu_type'] = 'H200 SXM'
+                    analysis['optimal_gpu_type'] = 'B200 SXM'
+                    analysis['min_vram_gb'] = 141
+                    analysis['optimal_vram_gb'] = 192
+                
+                analysis['reasoning'].append(f"Upgraded to SXM GPUs due to multi-GPU requirement: {analysis['min_gpu_type']} -> {analysis['optimal_gpu_type']}")
+        
+        return analysis
+
     def _compare_versions(self, version1: str, version2: str) -> int:
         """
         Compare two version strings.
