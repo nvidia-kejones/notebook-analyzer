@@ -299,14 +299,21 @@ class LLMAnalyzer:
             
             prompt = f"""Analyze this Jupyter notebook for GPU requirements. Focus on:
 
-1. **Workload Type**: Is this inference, fine-tuning, training from scratch, or other?
+1. **Workload Type**: Is this inference, fine-tuning, training from scratch, GPU computing, or other?
 2. **Model Details**: What models are being used? What are their memory requirements?
 3. **Batch Sizes**: What batch sizes are used and are they for experimentation or production?
 4. **Memory Optimization**: Are there techniques like gradient checkpointing, LoRA, quantization?
 5. **Multi-GPU Patterns**: Is distributed training or model parallelism used?
 6. **Dataset Scale**: How large is the dataset being processed?
-7. **Runtime Estimation**: Based on workload complexity, model size, optimizations, and typical convergence
-8. **Performance Considerations**: Consider GPU performance differences when recommending hardware
+7. **GPU Computing**: Look for CUDA kernels, Numba CUDA (@cuda.jit), PyCUDA, or other GPU acceleration
+8. **Runtime Estimation**: Based on workload complexity, model size, optimizations, and typical convergence
+9. **Performance Considerations**: Consider GPU performance differences when recommending hardware
+
+**IMPORTANT**: Pay special attention to:
+- Numba CUDA patterns (@cuda.jit, cuda.grid, cuda.device_array)
+- Direct CUDA programming (PyCUDA, CuPy)
+- GPU-accelerated computing (not just ML/AI)
+- Scientific computing that uses GPU acceleration
 
 GPU Performance Context:
 - Consumer GPUs: RTX 4060 (0.35×), RTX 4070 (0.50×), RTX 4080 (0.70×), RTX 4090 (1.0× baseline)
@@ -319,7 +326,7 @@ Notebook Content:
 
 Respond in JSON format with:
 {{
-    "workload_type": "inference|fine-tuning|training|other",
+    "workload_type": "inference|fine-tuning|training|gpu-computing|other",
     "complexity": "simple|moderate|complex|extreme",
     "models_detected": ["model1", "model2"],
     "estimated_vram_gb": number,
@@ -401,7 +408,13 @@ For runtime estimation:
         
         # Check if LLM detected no workload that requires GPU
         llm_complexity = llm_context.get('complexity', '').lower()
-        if llm_complexity in ['simple', 'none', 'basic']:
+        llm_workload_type = llm_context.get('workload_type', '').lower()
+        
+        # CRITICAL FIX: Don't override GPU workloads that are detected as GPU computing
+        if llm_workload_type in ['gpu-computing', 'gpu_computing']:
+            # This is a GPU computing workload (like Numba CUDA) - don't override
+            llm_reasoning.append("LLM detected GPU computing workload - maintaining GPU recommendation")
+        elif llm_complexity in ['simple', 'none', 'basic']:
             # Check if LLM reasoning indicates no GPU workload
             llm_reasoning_text = ' '.join(llm_context.get('reasoning', [])).lower()
             no_workload_indicators = [
@@ -410,7 +423,16 @@ For runtime estimation:
                 'no evidence of training', 'no evidence of inference'
             ]
             
-            if any(indicator in llm_reasoning_text for indicator in no_workload_indicators):
+            # ENHANCED CHECK: Also look for positive GPU indicators
+            gpu_computing_indicators = [
+                'numba cuda', 'cuda kernel', 'gpu acceleration', 'cuda programming',
+                'gpu computing', 'parallel processing', 'cuda.jit', 'cuda.grid'
+            ]
+            
+            has_no_workload = any(indicator in llm_reasoning_text for indicator in no_workload_indicators)
+            has_gpu_computing = any(indicator in llm_reasoning_text for indicator in gpu_computing_indicators)
+            
+            if has_no_workload and not has_gpu_computing:
                 # LLM detected no GPU workload - override with CPU-only
                 enhanced_analysis.update({
                     'min_gpu_type': 'CPU-only',
@@ -847,7 +869,7 @@ class GPUAnalyzer:
             'quantization': [r'quantiz', r'int8', r'int4', r'bnb', r'bitsandbytes'],
             'cudf': [r'cudf\.', r'import cudf', r'from cudf', r'backend=["\']cudf["\']', r'engine=["\']cudf["\']'],
             'rapids': [r'cupy\.', r'import cupy', r'from cupy', r'cuml\.', r'import cuml', r'from cuml', r'cugraph\.', r'import cugraph'],
-            'cuda_computing': [r'numba\.cuda', r'from numba import cuda', r'cuda\.', r'pycuda\.', r'import pycuda'],
+            'cuda_computing': [r'numba\.cuda', r'from numba import cuda', r'@cuda\.jit', r'cuda\.grid', r'cuda\.', r'pycuda\.', r'import pycuda'],
             'nvidia_frameworks': [r'nemo\.', r'import nemo', r'triton\.', r'import triton', r'tensorrt\.', r'import tensorrt']
         }
         
@@ -1689,8 +1711,17 @@ class GPUAnalyzer:
             # GPU-accelerated data processing (cuDF/RAPIDS)
             r'\b(?:cudf\.|cupy\.|cuml\.|cugraph\.)\w+',
             r'backend=["\']cudf["\']|engine=["\']cudf["\']',
-            # NVIDIA GPU computing
+            # NVIDIA GPU computing (enhanced for Numba CUDA)
             r'\b(?:numba\.cuda|pycuda\.|tensorrt\.)\w+',
+            # Numba CUDA specific patterns (CRITICAL FIX)
+            r'@cuda\.jit\b',
+            r'\bcuda\.grid\b',
+            r'\bcuda\.gridsize\b',
+            r'\bcuda\.blockIdx\b',
+            r'\bcuda\.threadIdx\b',
+            r'\bcuda\.to_device\b',
+            r'\bcuda\.device_array\b',
+            r'from numba import cuda\b',
             # GPU memory management
             r'\b(?:cuda_memory|gpu_memory|cuda\.mem)\b'
         ]
@@ -1747,11 +1778,19 @@ class GPUAnalyzer:
                 estimated_vram = max(estimated_vram, specs['base_vram'])
                 analysis['reasoning'].append(f"Detected {model} model requiring {specs['base_vram']}GB+ VRAM")
         
-        # Check for training vs inference patterns
+        # Check for specific workload types - PRIORITIZE GPU COMPUTING FIRST
+        # Check for GPU computing patterns (Numba CUDA, PyCUDA, etc.) - HIGHEST PRIORITY
+        gpu_computing_patterns = ['@cuda.jit', 'cuda.grid', 'numba.cuda', 'pycuda', 'cuda kernel']
+        is_gpu_computing = any(pattern in all_code.lower() for pattern in gpu_computing_patterns)
+        
+        # Check for training patterns
         training_patterns = ['train', 'fit', 'epoch', 'optimizer', 'loss', 'backward']
         is_training = any(pattern in all_code.lower() for pattern in training_patterns)
         
-        if is_training:
+        if is_gpu_computing:
+            analysis['workload_type'] = 'gpu-computing'
+            analysis['reasoning'].append("GPU computing workload detected (Numba CUDA, PyCUDA, etc.)")
+        elif is_training:
             estimated_vram = int(estimated_vram * 1.5)  # Training requires more memory
             analysis['reasoning'].append("Training workload detected - increased VRAM estimate")
             analysis['workload_type'] = 'training'

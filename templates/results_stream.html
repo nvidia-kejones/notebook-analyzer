@@ -213,7 +213,7 @@ function displayResults(data) {
 
                                 <!-- Enhancement Status -->
                                 ${analysis.llm_enhanced ?
-                                    '<span class="badge bg-nvidia"><i class="bi bi-robot me-1"></i>LLM Enhanced</span>' :
+                                    '<span class="badge bg-nvidia"><i class="bi bi-robot me-1"></i>AI Enhanced</span>' :
                                     '<span class="badge bg-secondary"><i class="bi bi-gear me-1"></i>Static Analysis</span>'
                                 }
                             </div>
@@ -233,19 +233,7 @@ function displayResults(data) {
                                 </h6>
                             </div>
                             <div class="card-body">
-                                ${analysis.reasoning ? analysis.reasoning.map(reason => 
-                                    `<div class="reasoning-item">${reason}</div>`
-                                ).join('') : ''}
-                                
-                                ${analysis.llm_reasoning && analysis.llm_reasoning.length > 0 ? `
-                                    <h6 class="mt-3 text-nvidia">
-                                        <i class="bi bi-robot me-1"></i>
-                                        LLM Insights
-                                    </h6>
-                                    ${analysis.llm_reasoning.map(reason => 
-                                        `<div class="reasoning-item">${reason}</div>`
-                                    ).join('')}
-                                ` : ''}
+                                ${getReasoningContent(analysis)}
                             </div>
                         </div>
                     </div>
@@ -511,18 +499,20 @@ ${sourceInfo}
 • Analysis Confidence: ${analysis.confidence}%
 • Enhancement: ${analysis.llm_enhanced ? 'LLM Enhanced' : 'Static Analysis'}`;
 
-    // Add key reasoning if available
-    if (analysis.reasoning && analysis.reasoning.length > 0) {
-        text += `\n\n**🔍 Key Analysis Points:**`;
-        analysis.reasoning.slice(0, 5).forEach(reason => {
+    // Add LLM insights first if available (Phase 1: Prioritize LLM)
+    if (analysis.llm_reasoning && analysis.llm_reasoning.length > 0) {
+                 text += `\n\n**🤖 AI Enhanced Analysis:**`;
+        analysis.llm_reasoning.slice(0, 3).forEach(reason => {
             text += `\n• ${reason}`;
         });
     }
 
-    // Add LLM insights if available
-    if (analysis.llm_reasoning && analysis.llm_reasoning.length > 0) {
-        text += `\n\n**🤖 AI Insights:**`;
-        analysis.llm_reasoning.slice(0, 3).forEach(reason => {
+    // Add static analysis points second
+    if (analysis.reasoning && analysis.reasoning.length > 0) {
+        const title = analysis.llm_reasoning && analysis.llm_reasoning.length > 0 ? 
+            'Static Analysis Details' : 'Key Analysis Points';
+        text += `\n\n**🔍 ${title}:**`;
+        analysis.reasoning.slice(0, 5).forEach(reason => {
             text += `\n• ${reason}`;
         });
     }
@@ -774,6 +764,112 @@ function extractAnalysisDataFromDOM() {
     };
 }
 
+function getReasoningContent(analysis) {
+    const hasLLM = analysis.llm_reasoning && analysis.llm_reasoning.length > 0;
+    const hasStatic = analysis.reasoning && analysis.reasoning.length > 0;
+    
+    if (!hasLLM && !hasStatic) {
+        return '<p class="text-muted">No reasoning information available.</p>';
+    }
+    
+    // Detect conflicts between static and LLM analysis
+    const hasConflict = detectAnalysisConflict(analysis);
+    
+    let content = '';
+    
+    // Show LLM analysis first when available (Phase 1: Prioritize LLM)
+    if (hasLLM) {
+        content += `
+            <div class="analysis-section primary-analysis">
+                <div class="d-flex align-items-center mb-2">
+                                         <h6 class="text-nvidia mb-0 me-2">
+                         <i class="bi bi-robot me-1"></i>
+                         AI Enhanced Analysis
+                     </h6>
+                    <span class="badge bg-nvidia">Primary</span>
+                    ${hasConflict ? '<i class="bi bi-exclamation-triangle text-warning ms-2" title="Conflicts detected with static analysis"></i>' : ''}
+                </div>
+                ${analysis.llm_reasoning.map(reason => 
+                    `<div class="reasoning-item llm-reasoning">${reason}</div>`
+                ).join('')}
+            </div>
+        `;
+    }
+    
+    // Show static analysis second, with appropriate styling
+    if (hasStatic) {
+        const staticTitle = hasLLM ? 'Static Analysis Details' : 'Analysis Details';
+        const staticBadge = hasLLM ? '<span class="badge bg-secondary ms-2">Fallback</span>' : '';
+        const conflictWarning = hasConflict ? `
+            <div class="alert alert-warning py-2 px-3 mb-2 small">
+                <i class="bi bi-info-circle me-1"></i>
+                Note: Some static analysis points may be less accurate than AI analysis above.
+            </div>
+        ` : '';
+        
+        content += `
+            <div class="analysis-section ${hasLLM ? 'secondary-analysis mt-3' : 'primary-analysis'}">
+                <div class="d-flex align-items-center mb-2">
+                    <h6 class="mb-0 me-2 ${hasLLM ? 'text-muted' : 'text-primary'}">
+                        <i class="bi bi-gear me-1"></i>
+                        ${staticTitle}
+                    </h6>
+                    ${staticBadge}
+                </div>
+                ${conflictWarning}
+                ${analysis.reasoning.map(reason => 
+                    `<div class="reasoning-item ${hasLLM ? 'static-reasoning' : ''}">${reason}</div>`
+                ).join('')}
+            </div>
+        `;
+    }
+    
+    return content;
+}
+
+function detectAnalysisConflict(analysis) {
+    const hasLLM = analysis.llm_reasoning && analysis.llm_reasoning.length > 0;
+    const hasStatic = analysis.reasoning && analysis.reasoning.length > 0;
+    
+    if (!hasLLM || !hasStatic) {
+        return false;
+    }
+    
+    // Check for common conflict patterns
+    const staticText = analysis.reasoning.join(' ').toLowerCase();
+    const llmText = analysis.llm_reasoning.join(' ').toLowerCase();
+    
+    // Detect CPU vs GPU conflicts
+    const staticSaysCPU = staticText.includes('cpu-only') || staticText.includes('no gpu');
+    const staticSaysGPU = staticText.includes('gpu') && !staticText.includes('no gpu');
+    const llmSaysCPU = llmText.includes('cpu-only') || llmText.includes('no gpu');
+    const llmSaysGPU = llmText.includes('gpu') && !llmText.includes('no gpu');
+    
+    // Conflict if one says CPU and other says GPU
+    if ((staticSaysCPU && llmSaysGPU) || (staticSaysGPU && llmSaysCPU)) {
+        return true;
+    }
+    
+    // Check for contradictory VRAM estimates (basic heuristic)
+    const staticVRAM = extractVRAMFromText(staticText);
+    const llmVRAM = extractVRAMFromText(llmText);
+    
+    if (staticVRAM > 0 && llmVRAM > 0) {
+        // Conflict if estimates differ by more than 50%
+        const ratio = Math.max(staticVRAM, llmVRAM) / Math.min(staticVRAM, llmVRAM);
+        if (ratio > 1.5) {
+            return true;
+        }
+    }
+    
+    return false;
+}
+
+function extractVRAMFromText(text) {
+    const vramMatch = text.match(/(\d+)\s*gb/i);
+    return vramMatch ? parseInt(vramMatch[1]) : 0;
+}
+
 function getConsumerOptimalColumn(analysis) {
     if (analysis.consumer_viable && analysis.consumer_gpu) {
         return `
@@ -937,6 +1033,37 @@ function showFriendlyMessage() {
     border-left: 3px solid #76b900;
     border-radius: 0 0.25rem 0.25rem 0;
     font-size: 0.875rem;
+}
+
+/* Enhanced styling for Phase 1 improvements */
+.analysis-section.primary-analysis .reasoning-item {
+    border-left-color: #76b900;
+    background: #f8fdf8;
+}
+
+.analysis-section.secondary-analysis .reasoning-item {
+    border-left-color: #6c757d;
+    background: #f8f9fa;
+    opacity: 0.9;
+}
+
+.llm-reasoning {
+    border-left-width: 4px !important;
+    font-weight: 500;
+}
+
+.static-reasoning {
+    border-left-width: 2px !important;
+    font-size: 0.8rem;
+}
+
+.analysis-section {
+    margin-bottom: 1rem;
+}
+
+.analysis-section h6 {
+    font-size: 0.95rem;
+    font-weight: 600;
 }
 </style>
 {% endblock %} 
