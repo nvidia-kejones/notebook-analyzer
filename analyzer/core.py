@@ -348,32 +348,81 @@ class LLMAnalyzer:
             if progress_callback:
                 progress_callback("🤖 Starting AI analysis...")
             
-            # Optimized content extraction - focus on most relevant code
+            # Phase 1: Content Extraction and Filtering
             relevant_code = []
             relevant_markdown = []
             
             if progress_callback:
-                progress_callback("🔍 Scanning for ML models and frameworks...")
+                progress_callback("🔍 Phase 1: Scanning notebook for ML/GPU patterns...")
             
             # Extract only GPU-relevant code cells (more efficient)
             gpu_keywords = ['cuda', 'gpu', 'torch', 'tensorflow', 'train', 'model', 'batch', 'device']
+            frameworks_found = set()
+            models_mentioned = set()
+            
             for cell in code_cells[:15]:  # Check more cells but filter
                 if any(keyword in cell.lower() for keyword in gpu_keywords):
                     relevant_code.append(cell)
+                    
+                    # Detect specific frameworks and models during scanning
+                    if 'torch' in cell.lower() or 'pytorch' in cell.lower():
+                        frameworks_found.add('PyTorch')
+                    if 'tensorflow' in cell.lower() or 'keras' in cell.lower():
+                        frameworks_found.add('TensorFlow')
+                    if 'transformers' in cell.lower():
+                        frameworks_found.add('Hugging Face')
+                    if 'cuda' in cell.lower() or '@cuda.jit' in cell.lower():
+                        frameworks_found.add('CUDA')
+                    if 'numba' in cell.lower():
+                        frameworks_found.add('Numba')
+                    
+                    # Look for specific model mentions
+                    model_patterns = ['bert', 'gpt', 'llama', 'mistral', 'claude', 'resnet', 'vgg', 'yolo']
+                    for pattern in model_patterns:
+                        if pattern in cell.lower():
+                            models_mentioned.add(pattern.upper())
+                    
                 if len(relevant_code) >= 8:  # Limit to most relevant
                     break
+            
+            # Report findings from Phase 1
+            if progress_callback:
+                if frameworks_found:
+                    progress_callback(f"🔍 Found frameworks: {', '.join(frameworks_found)}")
+                if models_mentioned:
+                    progress_callback(f"🤖 Detected models: {', '.join(list(models_mentioned)[:3])}")
+                if not frameworks_found and not models_mentioned:
+                    progress_callback("🔍 No obvious ML/GPU patterns found in code scan")
             
             # If no GPU-relevant code found, take first few cells
             if not relevant_code:
                 relevant_code = code_cells[:5]
+                if progress_callback:
+                    progress_callback("📄 No GPU-specific code found, analyzing general content...")
+            
+            # Phase 2: Markdown Analysis
+            if progress_callback:
+                progress_callback("📝 Phase 2: Analyzing documentation and requirements...")
             
             # Extract key markdown (titles, requirements, etc.)
+            markdown_insights = []
             for cell in markdown_cells[:3]:
                 if any(keyword in cell.lower() for keyword in ['requirement', 'gpu', 'hardware', 'setup']):
                     relevant_markdown.append(cell)
+                    # Look for specific requirements mentioned
+                    if 'gpu' in cell.lower():
+                        markdown_insights.append("GPU requirements mentioned")
+                    if 'cuda' in cell.lower():
+                        markdown_insights.append("CUDA requirements noted")
+                    if 'memory' in cell.lower() or 'ram' in cell.lower():
+                        markdown_insights.append("Memory requirements discussed")
             
+            if progress_callback and markdown_insights:
+                progress_callback(f"📝 Documentation insights: {', '.join(markdown_insights)}")
+            
+            # Phase 3: Content Preparation
             if progress_callback:
-                progress_callback("📊 Analyzing notebook content structure...")
+                progress_callback("📊 Phase 3: Preparing content for AI analysis...")
             
             # Combine with smart truncation
             notebook_content = "\n".join([
@@ -384,11 +433,18 @@ class LLMAnalyzer:
             ])
             
             # More aggressive but smarter truncation
+            original_length = len(notebook_content)
             if len(notebook_content) > 12000:
                 notebook_content = notebook_content[:12000] + "\n... [content truncated for efficiency]"
+                if progress_callback:
+                    progress_callback(f"📊 Content prepared: {len(notebook_content)} chars (truncated from {original_length})")
+            else:
+                if progress_callback:
+                    progress_callback(f"📊 Content prepared: {len(notebook_content)} characters")
             
+            # Phase 4: AI Request Preparation
             if progress_callback:
-                progress_callback("🧠 Sending analysis request to AI model...")
+                progress_callback("🧠 Phase 4: Formulating analysis request...")
             
             prompt = f"""Analyze this Jupyter notebook for GPU requirements. Focus on:
 
@@ -443,6 +499,10 @@ For runtime estimation:
 - performance_considerations: Notes about GPU performance trade-offs and recommendations
 - Consider: model parameters, dataset size, epochs, optimizations like LoRA/quantization, and GPU performance factors"""
 
+            # Phase 5: AI Analysis Request
+            if progress_callback:
+                progress_callback("🚀 Phase 5: Sending analysis to AI model...")
+            
             # Use connection pooling for better performance
             session = get_http_session()
             response = session.post(
@@ -460,15 +520,16 @@ For runtime estimation:
                 timeout=30
             )
             
+            # Phase 6: Response Processing
             if progress_callback:
-                progress_callback("📏 Processing AI analysis results...")
+                progress_callback("📥 Phase 6: Processing AI response...")
             
             if response.status_code == 200:
                 result = response.json()
                 content = result['choices'][0]['message']['content']
                 
                 if progress_callback:
-                    progress_callback("⚡ Parsing workload complexity and optimizations...")
+                    progress_callback("🔍 Phase 7: Parsing analysis results...")
                 
                 # Try to extract JSON from the response
                 try:
@@ -479,33 +540,70 @@ For runtime estimation:
                         json_str = content[json_start:json_end]
                         analysis_result = json.loads(json_str)
                         
+                        # Phase 8: Results Analysis and Insights
                         if progress_callback:
-                            # Show some insights from the analysis
+                            progress_callback("🎯 Phase 8: Extracting key insights...")
+                            
+                            # Show detailed insights from the analysis
                             workload_type = analysis_result.get('workload_type', 'unknown')
                             complexity = analysis_result.get('complexity', 'unknown')
                             models = analysis_result.get('models_detected', [])
                             vram = analysis_result.get('estimated_vram_gb', 0)
-                            
-                            progress_callback(f"🎯 Workload classified: {workload_type} ({complexity} complexity)")
-                            if models:
-                                progress_callback(f"📊 Models detected: {', '.join(models[:3])}")
-                            if vram > 0:
-                                progress_callback(f"💾 Estimated VRAM requirement: {vram}GB")
-                            
+                            multi_gpu = analysis_result.get('multi_gpu_required', False)
                             optimizations = analysis_result.get('memory_optimizations', [])
-                            if optimizations:
-                                progress_callback(f"⚡ Optimizations found: {', '.join(optimizations[:2])}")
-                            
                             confidence = analysis_result.get('confidence', 0)
-                            progress_callback(f"✅ AI analysis complete - confidence: {confidence*100:.0f}%")
+                            
+                            # Detailed workload classification
+                            progress_callback(f"🎯 Workload classified: {workload_type}")
+                            progress_callback(f"⚡ Complexity level: {complexity}")
+                            
+                            # Model detection results
+                            if models:
+                                progress_callback(f"🤖 Models identified: {', '.join(models[:3])}")
+                            else:
+                                progress_callback("🤖 No specific models detected")
+                            
+                            # VRAM analysis
+                            if vram > 0:
+                                progress_callback(f"💾 VRAM requirement: {vram}GB")
+                                if multi_gpu:
+                                    progress_callback("🔗 Multi-GPU setup recommended")
+                                else:
+                                    progress_callback("🖥️ Single GPU sufficient")
+                            
+                            # Optimization insights
+                            if optimizations:
+                                progress_callback(f"⚡ Optimizations detected: {', '.join(optimizations[:2])}")
+                                if len(optimizations) > 2:
+                                    progress_callback(f"⚡ Plus {len(optimizations)-2} more optimizations")
+                            else:
+                                progress_callback("⚡ No memory optimizations detected")
+                            
+                            # Confidence assessment
+                            confidence_pct = confidence * 100
+                            if confidence_pct >= 80:
+                                progress_callback(f"✅ High confidence analysis: {confidence_pct:.0f}%")
+                            elif confidence_pct >= 60:
+                                progress_callback(f"🟡 Moderate confidence: {confidence_pct:.0f}%")
+                            else:
+                                progress_callback(f"🟠 Lower confidence: {confidence_pct:.0f}% (limited evidence)")
+                            
+                            # Reasoning insights
+                            reasoning = analysis_result.get('reasoning', [])
+                            if reasoning:
+                                # Show the most important reasoning point
+                                key_reason = reasoning[0] if reasoning else "Analysis completed"
+                                progress_callback(f"💡 Key insight: {key_reason}")
                         
                         return analysis_result
                 except Exception as parse_error:
                     if progress_callback:
-                        progress_callback("⚠️ AI response parsing failed, using fallback analysis")
+                        progress_callback("⚠️ JSON parsing failed, using fallback analysis")
                     pass
                 
                 # Fallback: return basic analysis if JSON parsing fails
+                if progress_callback:
+                    progress_callback("🔄 Applying fallback analysis...")
                 return {
                     "workload_type": "unknown",
                     "complexity": "moderate",
@@ -736,12 +834,15 @@ For runtime estimation:
         
         return enhanced_analysis, llm_reasoning
     
-    def self_review_analysis(self, code_cells: List[str], preliminary_analysis: Dict, static_reasoning: List[str], llm_reasoning: List[str]) -> Optional[Dict]:
+    def self_review_analysis(self, code_cells: List[str], preliminary_analysis: Dict, static_reasoning: List[str], llm_reasoning: List[str], progress_callback=None) -> Optional[Dict]:
         """
         Phase 2.5: LLM self-review - the 'teacher grading' approach.
         Reviews the complete analysis for consistency, accuracy, and logical coherence.
         """
         try:
+            if progress_callback:
+                progress_callback("🎓 Phase 1: Preparing analysis for self-review...")
+            
             # Combine first few code cells for context
             notebook_sample = "\n".join([
                 "=== NOTEBOOK SAMPLE ===",
@@ -750,6 +851,9 @@ For runtime estimation:
             
             if len(notebook_sample) > 8000:
                 notebook_sample = notebook_sample[:8000] + "\n... [truncated]"
+            
+            if progress_callback:
+                progress_callback("🔍 Phase 2: Analyzing current recommendations for consistency...")
             
             # Create comprehensive analysis summary for review
             analysis_summary = f"""
@@ -818,6 +922,9 @@ Respond in JSON format:
 
 Focus on accuracy, consistency, and providing clear, unified recommendations that make logical sense."""
 
+            if progress_callback:
+                progress_callback("🧠 Phase 3: Sending self-review request to AI...")
+            
             response = requests.post(
                 f"{self.base_url}/v1/chat/completions",
                 headers=self.headers,
@@ -833,9 +940,15 @@ Focus on accuracy, consistency, and providing clear, unified recommendations tha
                 timeout=30
             )
             
+            if progress_callback:
+                progress_callback("📥 Phase 4: Processing self-review response...")
+            
             if response.status_code == 200:
                 result = response.json()
                 content = result['choices'][0]['message']['content']
+                
+                if progress_callback:
+                    progress_callback("🔍 Phase 5: Parsing self-review results...")
                 
                 try:
                     # Extract JSON from response
@@ -843,8 +956,48 @@ Focus on accuracy, consistency, and providing clear, unified recommendations tha
                     json_end = content.rfind('}') + 1
                     if json_start != -1 and json_end > json_start:
                         json_str = content[json_start:json_end]
-                        return json.loads(json_str)
-                except:
+                        review_result = json.loads(json_str)
+                        
+                        if progress_callback:
+                            progress_callback("🎯 Phase 6: Analyzing self-review findings...")
+                            
+                            # Show what the review found
+                            review_passed = review_result.get('review_passed', True)
+                            consistency_issues = review_result.get('consistency_issues', [])
+                            corrections = review_result.get('recommended_corrections', {})
+                            
+                            if review_passed:
+                                progress_callback("✅ Self-review passed - analysis is consistent")
+                            else:
+                                progress_callback("🔧 Self-review found issues requiring correction")
+                                
+                            # Show specific issues found
+                            if consistency_issues:
+                                for issue in consistency_issues[:2]:  # Show first 2 issues
+                                    progress_callback(f"⚠️ Issue identified: {issue}")
+                                if len(consistency_issues) > 2:
+                                    progress_callback(f"⚠️ Plus {len(consistency_issues)-2} more issues")
+                            
+                            # Show corrections being applied
+                            if corrections:
+                                if 'workload_type' in corrections:
+                                    progress_callback(f"🔧 Correcting workload type: {corrections['workload_type']}")
+                                if 'confidence' in corrections:
+                                    progress_callback(f"🔧 Adjusting confidence: {corrections['confidence']}%")
+                                if 'min_gpu_type' in corrections:
+                                    progress_callback(f"🔧 Updating GPU recommendation: {corrections['min_gpu_type']}")
+                                if corrections.get('reasoning_updates'):
+                                    progress_callback(f"🔧 Updating reasoning with {len(corrections['reasoning_updates'])} points")
+                            
+                            # Show overall assessment
+                            overall_assessment = review_result.get('overall_assessment', '')
+                            if overall_assessment:
+                                progress_callback(f"📊 Assessment: {overall_assessment}")
+                        
+                        return review_result
+                except Exception as parse_error:
+                    if progress_callback:
+                        progress_callback("⚠️ Self-review parsing failed")
                     pass
                 
                 # Fallback if JSON parsing fails
@@ -3402,7 +3555,7 @@ class GPUAnalyzer:
                     print("🎓 Performing self-review for accuracy and consistency...")
                 
                 self_review = self.llm_analyzer.self_review_analysis(
-                    code_cells, static_analysis, static_analysis.get('reasoning', []), llm_reasoning
+                    code_cells, static_analysis, static_analysis.get('reasoning', []), llm_reasoning, progress_callback
                 )
                 
                 if self_review:

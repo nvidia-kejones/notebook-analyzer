@@ -628,20 +628,53 @@ document.addEventListener('DOMContentLoaded', function() {
             // Update current status
             currentStatus.textContent = data.message;
             
-            // Check if this is an LLM-related message
+            // Check if this is an LLM-related message (enhanced for Phase 2)
             const isLlmMessage = data.message.includes('🤖') || 
-                                data.message.includes('🔍 Scanning for ML models') ||
-                                data.message.includes('📊 Analyzing notebook content') ||
-                                data.message.includes('🧠 Sending analysis request') ||
-                                data.message.includes('📏 Processing AI analysis') ||
-                                data.message.includes('⚡ Parsing workload complexity') ||
+                                data.message.includes('🔍 Phase 1: Scanning notebook') ||
+                                data.message.includes('🔍 Found frameworks') ||
+                                data.message.includes('🤖 Detected models') ||
+                                data.message.includes('🔍 No obvious ML/GPU patterns') ||
+                                data.message.includes('📄 No GPU-specific code') ||
+                                data.message.includes('📝 Phase 2: Analyzing documentation') ||
+                                data.message.includes('📝 Documentation insights') ||
+                                data.message.includes('📊 Phase 3: Preparing content') ||
+                                data.message.includes('📊 Content prepared') ||
+                                data.message.includes('🧠 Phase 4: Formulating analysis') ||
+                                data.message.includes('🚀 Phase 5: Sending analysis') ||
+                                data.message.includes('📥 Phase 6: Processing AI response') ||
+                                data.message.includes('🔍 Phase 7: Parsing analysis') ||
+                                data.message.includes('🎯 Phase 8: Extracting key insights') ||
                                 data.message.includes('🎯 Workload classified') ||
-                                data.message.includes('📊 Models detected') ||
-                                data.message.includes('💾 Estimated VRAM') ||
-                                data.message.includes('⚡ Optimizations found') ||
-                                data.message.includes('✅ AI analysis complete') ||
-                                data.message.includes('🎓 Performing self-review') ||
-                                data.message.includes('🔧 Applying self-review') ||
+                                data.message.includes('⚡ Complexity level') ||
+                                data.message.includes('🤖 Models identified') ||
+                                data.message.includes('🤖 No specific models detected') ||
+                                data.message.includes('💾 VRAM requirement') ||
+                                data.message.includes('🔗 Multi-GPU setup') ||
+                                data.message.includes('🖥️ Single GPU sufficient') ||
+                                data.message.includes('⚡ Optimizations detected') ||
+                                data.message.includes('⚡ Plus') ||
+                                data.message.includes('⚡ No memory optimizations') ||
+                                data.message.includes('✅ High confidence analysis') ||
+                                data.message.includes('🟡 Moderate confidence') ||
+                                data.message.includes('🟠 Lower confidence') ||
+                                data.message.includes('💡 Key insight') ||
+                                data.message.includes('🔄 Applying fallback') ||
+                                data.message.includes('🎓 Phase 1: Preparing analysis') ||
+                                data.message.includes('🔍 Phase 2: Analyzing current recommendations') ||
+                                data.message.includes('🧠 Phase 3: Sending self-review') ||
+                                data.message.includes('📥 Phase 4: Processing self-review') ||
+                                data.message.includes('🔍 Phase 5: Parsing self-review') ||
+                                data.message.includes('🎯 Phase 6: Analyzing self-review') ||
+                                data.message.includes('✅ Self-review passed') ||
+                                data.message.includes('🔧 Self-review found issues') ||
+                                data.message.includes('⚠️ Issue identified') ||
+                                data.message.includes('⚠️ Plus') ||
+                                data.message.includes('🔧 Correcting workload') ||
+                                data.message.includes('🔧 Adjusting confidence') ||
+                                data.message.includes('🔧 Updating GPU recommendation') ||
+                                data.message.includes('🔧 Updating reasoning') ||
+                                data.message.includes('📊 Assessment') ||
+                                data.message.includes('⚠️ Self-review parsing') ||
                                 data.message.includes('⚡ Enhancing GPU recommendations') ||
                                 data.message.includes('Evaluating workload complexity');
             
