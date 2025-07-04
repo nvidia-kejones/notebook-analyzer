@@ -15,8 +15,14 @@ services:
       # Repository access tokens (optional - leave empty for public repos only)
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
       - GITLAB_TOKEN=${GITLAB_TOKEN:-}
+      # Development environment flag (enables full transparency features)
+      - NODE_ENV=development
     volumes:
       - /tmp:/tmp:rw
+      # Mount source code for development (optional - comment out for production)
+      - ./analyzer:/app/analyzer:ro
+      - ./templates:/app/templates:ro
+      - ./examples:/app/examples:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
@@ -24,6 +30,15 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
+    # Resource limits for Docker
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
 
   # Optional: Add nginx for production deployment
   # nginx:

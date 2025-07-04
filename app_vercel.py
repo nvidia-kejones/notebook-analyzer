@@ -592,8 +592,42 @@ def analyze_stream():
             analysis_result: list[Optional[Any]] = [None]  # Use list to make it mutable
             analysis_error: list[Optional[Exception]] = [None]
             
-            def progress_callback(message: str) -> None:
-                progress_queue.put(message)
+            # Import environment detection for progress batching
+            import time
+            from analyzer.core import get_environment_config
+            env_config = get_environment_config()
+            
+            # Progress batching for production
+            if env_config['progress_batching']:
+                batch_buffer = []
+                batch_size = 3  # Send messages in batches of 3
+                last_send_time = time.time()
+                batch_timeout = 2.0  # Send batch after 2 seconds
+                
+                def progress_callback(message: str) -> None:
+                    nonlocal last_send_time
+                    batch_buffer.append(message)
+                    current_time = time.time()
+                    # Send batch if full or timeout reached
+                    if len(batch_buffer) >= batch_size or (current_time - last_send_time) >= batch_timeout:
+                        for msg in batch_buffer:
+                            progress_queue.put(msg)
+                        batch_buffer.clear()
+                        last_send_time = current_time
+                
+                def flush_batch():
+                    """Flush any remaining messages in batch."""
+                    if batch_buffer:
+                        for msg in batch_buffer:
+                            progress_queue.put(msg)
+                        batch_buffer.clear()
+            else:
+                def progress_callback(message: str) -> None:
+                    progress_queue.put(message)
+                
+                def flush_batch():
+                    """No-op for non-batching mode."""
+                    pass
             
             def run_analysis() -> None:
                 try:
@@ -603,8 +637,13 @@ def analyze_stream():
                     else:
                         result = analyzer.analyze_notebook_with_progress(analysis_input['url'], progress_callback)
                     
+                    # Flush any remaining batched messages
+                    flush_batch()
+                    
                     analysis_result[0] = result
                 except Exception as e:
+                    # Flush any remaining batched messages before error
+                    flush_batch()
                     analysis_error[0] = e
                 finally:
                     analysis_complete.set()

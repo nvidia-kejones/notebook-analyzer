@@ -289,6 +289,10 @@ class LLMAnalyzer:
         
         # Store GPU specs for validation
         self.gpu_specs = gpu_specs or {}
+        
+        # Get environment-specific configuration
+        self.env_config = get_environment_config()
+        print(f"LLM Analyzer initialized for {'production' if is_production_environment() else 'development'} environment")
     
     def _parse_runtime_range(self, runtime_str: str) -> tuple:
         """Parse runtime string like '1.5-2.5' into (min, max) float tuple."""
@@ -346,13 +350,16 @@ class LLMAnalyzer:
         """Send notebook to LLM for contextual analysis."""
         try:
             if progress_callback:
-                progress_callback("🤖 Starting AI analysis...")
+                if self.env_config['detailed_phases']:
+                    progress_callback("🤖 Starting AI analysis...")
+                else:
+                    progress_callback("🤖 Analyzing workload with AI...")
             
             # Phase 1: Content Extraction and Filtering
             relevant_code = []
             relevant_markdown = []
             
-            if progress_callback:
+            if progress_callback and self.env_config['detailed_phases']:
                 progress_callback("🔍 Phase 1: Scanning notebook for ML/GPU patterns...")
             
             # Extract only GPU-relevant code cells (more efficient)
@@ -385,8 +392,8 @@ class LLMAnalyzer:
                 if len(relevant_code) >= 8:  # Limit to most relevant
                     break
             
-            # Report findings from Phase 1
-            if progress_callback:
+            # Report findings from Phase 1 (only in detailed mode)
+            if progress_callback and self.env_config['detailed_phases']:
                 if frameworks_found:
                     progress_callback(f"🔍 Found frameworks: {', '.join(frameworks_found)}")
                 if models_mentioned:
@@ -397,11 +404,11 @@ class LLMAnalyzer:
             # If no GPU-relevant code found, take first few cells
             if not relevant_code:
                 relevant_code = code_cells[:5]
-                if progress_callback:
+                if progress_callback and self.env_config['detailed_phases']:
                     progress_callback("📄 No GPU-specific code found, analyzing general content...")
             
-            # Phase 2: Markdown Analysis
-            if progress_callback:
+            # Phase 2: Markdown Analysis (simplified in production)
+            if progress_callback and self.env_config['detailed_phases']:
                 progress_callback("📝 Phase 2: Analyzing documentation and requirements...")
             
             # Extract key markdown (titles, requirements, etc.)
@@ -409,19 +416,20 @@ class LLMAnalyzer:
             for cell in markdown_cells[:3]:
                 if any(keyword in cell.lower() for keyword in ['requirement', 'gpu', 'hardware', 'setup']):
                     relevant_markdown.append(cell)
-                    # Look for specific requirements mentioned
-                    if 'gpu' in cell.lower():
-                        markdown_insights.append("GPU requirements mentioned")
-                    if 'cuda' in cell.lower():
-                        markdown_insights.append("CUDA requirements noted")
-                    if 'memory' in cell.lower() or 'ram' in cell.lower():
-                        markdown_insights.append("Memory requirements discussed")
+                    # Look for specific requirements mentioned (only track in detailed mode)
+                    if self.env_config['detailed_phases']:
+                        if 'gpu' in cell.lower():
+                            markdown_insights.append("GPU requirements mentioned")
+                        if 'cuda' in cell.lower():
+                            markdown_insights.append("CUDA requirements noted")
+                        if 'memory' in cell.lower() or 'ram' in cell.lower():
+                            markdown_insights.append("Memory requirements discussed")
             
-            if progress_callback and markdown_insights:
+            if progress_callback and self.env_config['detailed_phases'] and markdown_insights:
                 progress_callback(f"📝 Documentation insights: {', '.join(markdown_insights)}")
             
-            # Phase 3: Content Preparation
-            if progress_callback:
+            # Phase 3: Content Preparation (simplified in production)
+            if progress_callback and self.env_config['detailed_phases']:
                 progress_callback("📊 Phase 3: Preparing content for AI analysis...")
             
             # Combine with smart truncation
@@ -432,19 +440,22 @@ class LLMAnalyzer:
                 *relevant_markdown
             ])
             
-            # More aggressive but smarter truncation
+            # Environment-specific content limits
+            max_content = self.env_config['max_content_length']
             original_length = len(notebook_content)
-            if len(notebook_content) > 12000:
-                notebook_content = notebook_content[:12000] + "\n... [content truncated for efficiency]"
-                if progress_callback:
+            if len(notebook_content) > max_content:
+                notebook_content = notebook_content[:max_content] + "\n... [content truncated for efficiency]"
+                if progress_callback and self.env_config['detailed_phases']:
                     progress_callback(f"📊 Content prepared: {len(notebook_content)} chars (truncated from {original_length})")
             else:
-                if progress_callback:
+                if progress_callback and self.env_config['detailed_phases']:
                     progress_callback(f"📊 Content prepared: {len(notebook_content)} characters")
             
-            # Phase 4: AI Request Preparation
-            if progress_callback:
+            # Phase 4: AI Request Preparation (simplified in production)
+            if progress_callback and self.env_config['detailed_phases']:
                 progress_callback("🧠 Phase 4: Formulating analysis request...")
+            elif progress_callback:
+                progress_callback("🧠 Preparing AI analysis request...")
             
             prompt = f"""Analyze this Jupyter notebook for GPU requirements. Focus on:
 
@@ -499,9 +510,11 @@ For runtime estimation:
 - performance_considerations: Notes about GPU performance trade-offs and recommendations
 - Consider: model parameters, dataset size, epochs, optimizations like LoRA/quantization, and GPU performance factors"""
 
-            # Phase 5: AI Analysis Request
-            if progress_callback:
+            # Phase 5: AI Analysis Request (simplified in production)
+            if progress_callback and self.env_config['detailed_phases']:
                 progress_callback("🚀 Phase 5: Sending analysis to AI model...")
+            elif progress_callback:
+                progress_callback("🚀 Sending analysis to AI...")
             
             # Use connection pooling for better performance
             session = get_http_session()
@@ -517,19 +530,23 @@ For runtime estimation:
                     "temperature": 0.1,
                     "max_tokens": 1000
                 },
-                timeout=30
+                timeout=self.env_config['llm_timeout']  # Environment-specific timeout
             )
             
-            # Phase 6: Response Processing
-            if progress_callback:
+            # Phase 6: Response Processing (simplified in production)
+            if progress_callback and self.env_config['detailed_phases']:
                 progress_callback("📥 Phase 6: Processing AI response...")
+            elif progress_callback:
+                progress_callback("📥 Processing AI response...")
             
             if response.status_code == 200:
                 result = response.json()
                 content = result['choices'][0]['message']['content']
                 
-                if progress_callback:
+                if progress_callback and self.env_config['detailed_phases']:
                     progress_callback("🔍 Phase 7: Parsing analysis results...")
+                elif progress_callback:
+                    progress_callback("🔍 Parsing analysis results...")
                 
                 # Try to extract JSON from the response
                 try:
@@ -540,60 +557,69 @@ For runtime estimation:
                         json_str = content[json_start:json_end]
                         analysis_result = json.loads(json_str)
                         
-                        # Phase 8: Results Analysis and Insights
+                        # Phase 8: Results Analysis and Insights (detailed only in development)
                         if progress_callback:
-                            progress_callback("🎯 Phase 8: Extracting key insights...")
-                            
-                            # Show detailed insights from the analysis
-                            workload_type = analysis_result.get('workload_type', 'unknown')
-                            complexity = analysis_result.get('complexity', 'unknown')
-                            models = analysis_result.get('models_detected', [])
-                            vram = analysis_result.get('estimated_vram_gb', 0)
-                            multi_gpu = analysis_result.get('multi_gpu_required', False)
-                            optimizations = analysis_result.get('memory_optimizations', [])
-                            confidence = analysis_result.get('confidence', 0)
-                            
-                            # Detailed workload classification
-                            progress_callback(f"🎯 Workload classified: {workload_type}")
-                            progress_callback(f"⚡ Complexity level: {complexity}")
-                            
-                            # Model detection results
-                            if models:
-                                progress_callback(f"🤖 Models identified: {', '.join(models[:3])}")
-                            else:
-                                progress_callback("🤖 No specific models detected")
-                            
-                            # VRAM analysis
-                            if vram > 0:
-                                progress_callback(f"💾 VRAM requirement: {vram}GB")
-                                if multi_gpu:
-                                    progress_callback("🔗 Multi-GPU setup recommended")
+                            if self.env_config['detailed_phases']:
+                                progress_callback("🎯 Phase 8: Extracting key insights...")
+                                
+                                # Show detailed insights from the analysis
+                                workload_type = analysis_result.get('workload_type', 'unknown')
+                                complexity = analysis_result.get('complexity', 'unknown')
+                                models = analysis_result.get('models_detected', [])
+                                vram = analysis_result.get('estimated_vram_gb', 0)
+                                multi_gpu = analysis_result.get('multi_gpu_required', False)
+                                optimizations = analysis_result.get('memory_optimizations', [])
+                                confidence = analysis_result.get('confidence', 0)
+                                
+                                # Detailed workload classification
+                                progress_callback(f"🎯 Workload classified: {workload_type}")
+                                progress_callback(f"⚡ Complexity level: {complexity}")
+                                
+                                # Model detection results
+                                if models:
+                                    progress_callback(f"🤖 Models identified: {', '.join(models[:3])}")
                                 else:
-                                    progress_callback("🖥️ Single GPU sufficient")
-                            
-                            # Optimization insights
-                            if optimizations:
-                                progress_callback(f"⚡ Optimizations detected: {', '.join(optimizations[:2])}")
-                                if len(optimizations) > 2:
-                                    progress_callback(f"⚡ Plus {len(optimizations)-2} more optimizations")
+                                    progress_callback("🤖 No specific models detected")
+                                
+                                # VRAM analysis
+                                if vram > 0:
+                                    progress_callback(f"💾 VRAM requirement: {vram}GB")
+                                    if multi_gpu:
+                                        progress_callback("🔗 Multi-GPU setup recommended")
+                                    else:
+                                        progress_callback("🖥️ Single GPU sufficient")
+                                
+                                # Optimization insights
+                                if optimizations:
+                                    progress_callback(f"⚡ Optimizations detected: {', '.join(optimizations[:2])}")
+                                    if len(optimizations) > 2:
+                                        progress_callback(f"⚡ Plus {len(optimizations)-2} more optimizations")
+                                else:
+                                    progress_callback("⚡ No memory optimizations detected")
+                                
+                                # Confidence assessment
+                                confidence_pct = confidence * 100
+                                if confidence_pct >= 80:
+                                    progress_callback(f"✅ High confidence analysis: {confidence_pct:.0f}%")
+                                elif confidence_pct >= 60:
+                                    progress_callback(f"🟡 Moderate confidence: {confidence_pct:.0f}%")
+                                else:
+                                    progress_callback(f"🟠 Lower confidence: {confidence_pct:.0f}% (limited evidence)")
+                                
+                                # Reasoning insights
+                                reasoning = analysis_result.get('reasoning', [])
+                                if reasoning:
+                                    # Show the most important reasoning point
+                                    key_reason = reasoning[0] if reasoning else "Analysis completed"
+                                    progress_callback(f"💡 Key insight: {key_reason}")
                             else:
-                                progress_callback("⚡ No memory optimizations detected")
-                            
-                            # Confidence assessment
-                            confidence_pct = confidence * 100
-                            if confidence_pct >= 80:
-                                progress_callback(f"✅ High confidence analysis: {confidence_pct:.0f}%")
-                            elif confidence_pct >= 60:
-                                progress_callback(f"🟡 Moderate confidence: {confidence_pct:.0f}%")
-                            else:
-                                progress_callback(f"🟠 Lower confidence: {confidence_pct:.0f}% (limited evidence)")
-                            
-                            # Reasoning insights
-                            reasoning = analysis_result.get('reasoning', [])
-                            if reasoning:
-                                # Show the most important reasoning point
-                                key_reason = reasoning[0] if reasoning else "Analysis completed"
-                                progress_callback(f"💡 Key insight: {key_reason}")
+                                # Simplified production feedback
+                                workload_type = analysis_result.get('workload_type', 'unknown')
+                                confidence = analysis_result.get('confidence', 0)
+                                vram = analysis_result.get('estimated_vram_gb', 0)
+                                progress_callback(f"🎯 Workload: {workload_type} ({confidence*100:.0f}% confidence)")
+                                if vram > 0:
+                                    progress_callback(f"💾 VRAM needed: {vram}GB")
                         
                         return analysis_result
                 except Exception as parse_error:
@@ -3545,18 +3571,23 @@ class GPUAnalyzer:
                 enhanced_confidence = self._calculate_dynamic_confidence(static_analysis, llm_context)
                 static_analysis['confidence'] = enhanced_confidence
                 
-                if progress_callback:
-                    progress_callback("🎓 Performing self-review for accuracy...")
-                elif not self.quiet_mode:
-                    print(f"✅ LLM analysis complete (confidence: {enhanced_confidence*100:.0f}%)")
-                
-                # PHASE 2.5: Self-review analysis for consistency and accuracy
-                if not self.quiet_mode and not progress_callback:
-                    print("🎓 Performing self-review for accuracy and consistency...")
-                
-                self_review = self.llm_analyzer.self_review_analysis(
-                    code_cells, static_analysis, static_analysis.get('reasoning', []), llm_reasoning, progress_callback
-                )
+                # PHASE 2.5: Self-review analysis (only in development environment)
+                if self.llm_analyzer.env_config['self_review_enabled']:
+                    if progress_callback:
+                        progress_callback("🎓 Performing self-review for accuracy...")
+                    elif not self.quiet_mode:
+                        print("🎓 Performing self-review for accuracy and consistency...")
+                    
+                    self_review = self.llm_analyzer.self_review_analysis(
+                        code_cells, static_analysis, static_analysis.get('reasoning', []), llm_reasoning, progress_callback
+                    )
+                else:
+                    # Skip self-review in production for performance
+                    if progress_callback:
+                        progress_callback("✅ AI analysis complete")
+                    elif not self.quiet_mode:
+                        print(f"✅ LLM analysis complete (confidence: {enhanced_confidence*100:.0f}%)")
+                    self_review = None
                 
                 if self_review:
                     if progress_callback:
@@ -3643,3 +3674,36 @@ class GPUAnalyzer:
             technical_recommendations=technical_recommendations,
             confidence_factors=static_analysis.get('confidence_factors', [])
         )
+
+# Environment detection for optimization
+def is_production_environment():
+    """Detect if running in production environment (Vercel, etc.)"""
+    return (
+        os.getenv('VERCEL') == '1' or
+        os.getenv('VERCEL_ENV') is not None or
+        os.getenv('RAILWAY_ENVIRONMENT') is not None or
+        os.getenv('RENDER') is not None or
+        'vercel' in os.getenv('VERCEL_URL', '').lower() or
+        os.getenv('NODE_ENV') == 'production'
+    )
+
+def get_environment_config():
+    """Get configuration based on environment"""
+    if is_production_environment():
+        return {
+            'llm_timeout': 15,  # Shorter timeout for production
+            'progress_batching': True,  # Batch progress messages
+            'detailed_phases': False,  # Simplified progress for production
+            'self_review_enabled': False,  # Disable self-review in production for speed
+            'max_content_length': 8000,  # Smaller content limit
+            'connection_timeout': 10
+        }
+    else:
+        return {
+            'llm_timeout': 30,  # Full timeout for local development
+            'progress_batching': False,  # Real-time progress locally
+            'detailed_phases': True,  # Full transparency locally
+            'self_review_enabled': True,  # Full self-review locally
+            'max_content_length': 12000,  # Full content locally
+            'connection_timeout': 30
+        }
