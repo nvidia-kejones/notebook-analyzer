@@ -294,8 +294,20 @@ class LLMAnalyzer:
         self.env_config = get_environment_config()
         env_type = self.env_config.get('environment_type', 'unknown')
         print(f"LLM Analyzer initialized for {env_type} environment")
+        
+        # Debug environment detection
+        if is_production_environment():
+            vercel_env = os.getenv('VERCEL_ENV', 'not_set')
+            vercel_plan = os.getenv('VERCEL_PLAN', 'not_set')
+            vercel_pro_features = os.getenv('VERCEL_PRO_FEATURES', 'not_set')
+            enable_self_review = os.getenv('ENABLE_SELF_REVIEW', 'not_set')
+            print(f"🔍 Environment debug: VERCEL_ENV={vercel_env}, VERCEL_PLAN={vercel_plan}, VERCEL_PRO_FEATURES={vercel_pro_features}, ENABLE_SELF_REVIEW={enable_self_review}")
+        
         if env_type == 'vercel_pro':
             print("🚀 Vercel Pro features enabled: Full transparency + Smart self-review")
+            print(f"🎓 Self-review enabled: {self.env_config.get('self_review_enabled', False)}")
+        else:
+            print(f"⚡ Self-review enabled: {self.env_config.get('self_review_enabled', False)}")
     
     def _parse_runtime_range(self, runtime_str: str) -> tuple:
         """Parse runtime string like '1.5-2.5' into (min, max) float tuple."""
@@ -3720,10 +3732,20 @@ def get_environment_config():
     """Get configuration based on environment"""
     if is_production_environment():
         # Check if we're on Vercel Pro (has more resources)
+        # Vercel doesn't always set VERCEL_PLAN, so we use multiple detection methods
         is_vercel_pro = (
-            os.getenv('VERCEL_ENV') == 'production' and 
-            (os.getenv('VERCEL_PLAN') == 'pro' or os.getenv('VERCEL_PLAN') == 'enterprise')
-        ) or os.getenv('VERCEL_PRO_FEATURES') == 'true'
+            # Explicit Pro features flag
+            os.getenv('VERCEL_PRO_FEATURES') == 'true' or
+            # Self-review enablement flag
+            os.getenv('ENABLE_SELF_REVIEW') == 'true' or
+            # Official Vercel plan detection
+            os.getenv('VERCEL_PLAN') == 'pro' or 
+            os.getenv('VERCEL_PLAN') == 'enterprise' or
+            # Detect Pro by checking if we're in production with enhanced features enabled
+            (os.getenv('VERCEL_ENV') == 'production' and 
+             (os.getenv('ENHANCED_FEATURES') == 'true' or 
+              os.getenv('FULL_TRANSPARENCY') == 'true'))
+        )
         
         if is_vercel_pro:
             return {
