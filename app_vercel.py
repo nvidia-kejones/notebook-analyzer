@@ -15,6 +15,59 @@ from flask import Flask, render_template, request, jsonify, flash, redirect, url
 from werkzeug.utils import secure_filename
 import sys
 import time
+import requests
+from functools import lru_cache
+from datetime import datetime, timedelta
+import gzip
+import io
+
+# Performance optimization: Response compression
+def compress_response(response: Response) -> Response:
+    """Compress response data if it's large enough to benefit."""
+    if (response.status_code == 200 and 
+        response.content_type and 
+        'json' in response.content_type and
+        len(response.get_data()) > 1000):  # Only compress if > 1KB
+        
+        # Check if client accepts gzip
+        accept_encoding = request.headers.get('Accept-Encoding', '')
+        if 'gzip' in accept_encoding:
+            # Compress the response
+            buffer = io.BytesIO()
+            with gzip.GzipFile(fileobj=buffer, mode='wb') as f:
+                f.write(response.get_data())
+            
+            response.set_data(buffer.getvalue())
+            response.headers['Content-Encoding'] = 'gzip'
+            response.headers['Content-Length'] = len(response.get_data())
+    
+    return response
+
+# Performance optimization: Global model cache
+MODEL_CACHE = {
+    'data': None,
+    'timestamp': None,
+    'ttl_minutes': 30  # Cache for 30 minutes
+}
+
+def is_cache_valid():
+    """Check if model cache is still valid."""
+    if MODEL_CACHE['data'] is None or MODEL_CACHE['timestamp'] is None:
+        return False
+    
+    cache_age = datetime.now() - MODEL_CACHE['timestamp']
+    return cache_age < timedelta(minutes=MODEL_CACHE['ttl_minutes'])
+
+def get_cached_models():
+    """Get models from cache if valid, otherwise return None."""
+    if is_cache_valid():
+        return MODEL_CACHE['data']
+    return None
+
+def cache_models(models_data):
+    """Cache models data with timestamp."""
+    MODEL_CACHE['data'] = models_data
+    MODEL_CACHE['timestamp'] = datetime.now()
 
 # Security utility functions - P1 Security Fix
 def sanitize_error_message(error: Exception, debug_mode: bool = False) -> str:
@@ -136,6 +189,7 @@ def format_analysis_for_web(analysis) -> dict:
         'reasoning': analysis.reasoning,
         'llm_enhanced': analysis.llm_enhanced,
         'llm_reasoning': analysis.llm_reasoning or [],
+        'llm_model_used': analysis.llm_model_used,
         'nvidia_compliance_score': round(analysis.nvidia_compliance_score, 1),
         'structure_assessment': analysis.structure_assessment or {},
         'content_quality_issues': analysis.content_quality_issues or [],
@@ -171,9 +225,10 @@ def format_analysis_for_web(analysis) -> dict:
 @app.route('/')
 def index():
     """Main page with analysis form."""
-    # Detect if running on analyze.brev.nvidia.com
-    is_brev_nvidia = request.host == 'analyze.brev.nvidia.com'
-    return render_template('index.html', is_brev_nvidia=is_brev_nvidia)
+    # Check if LLM is available
+    llm_available = bool(os.getenv('OPENAI_API_KEY') and os.getenv('OPENAI_BASE_URL'))
+    
+    return render_template('index.html', llm_available=llm_available)
 
 @app.route('/health')
 def health():
@@ -194,7 +249,15 @@ def analyze():
         return redirect(url_for('index'))
     
     try:
+        # Get selected model from form (but don't modify global environment)
+        selected_model = request.form.get('model')
+        
+        # Create analyzer with thread-safe model selection
         analyzer = GPUAnalyzer(quiet_mode=True)
+        
+        # If a model is selected and LLM is available, update the analyzer's model
+        if selected_model and analyzer.llm_analyzer:
+            analyzer.llm_analyzer.model = selected_model
         
         # Check for both inputs provided (improved UX)
         has_file = 'file' in request.files and request.files['file'].filename
@@ -208,8 +271,8 @@ def analyze():
         if has_file:
             # File upload analysis with sanitization
             file = request.files['file']
-            if file and allowed_file(file.filename):
-                filename = secure_filename(file.filename)
+            if file and file.filename and allowed_file(file.filename):
+                filename = secure_filename(str(file.filename))
                 
                 try:
                     # Read file content for sanitization
@@ -338,7 +401,20 @@ def api_analyze():
         return jsonify({'error': 'Analysis service not available'}), 503
     
     try:
+        # Get selected model from request (if provided)
+        selected_model = None
+        if request.is_json:
+            data = request.get_json()
+            selected_model = data.get('model')
+        else:
+            selected_model = request.form.get('model')
+        
+        # Create analyzer with thread-safe model selection
         analyzer = GPUAnalyzer(quiet_mode=True)
+        
+        # If a model is selected and LLM is available, update the analyzer's model
+        if selected_model and analyzer.llm_analyzer:
+            analyzer.llm_analyzer.model = selected_model
         
         if request.is_json:
             data = request.get_json()
@@ -349,14 +425,19 @@ def api_analyze():
             result = analyzer.analyze_notebook(url)
             if result:
                 analysis_data = format_analysis_for_web(result)
-                return jsonify({'success': True, 'analysis': analysis_data})
+                return jsonify({
+                    'success': True, 
+                    'source_type': 'url',
+                    'source_name': url,
+                    'analysis': analysis_data
+                })
             else:
                 return jsonify({'error': 'Failed to analyze notebook'}), 400
                 
         elif 'file' in request.files:
             file = request.files['file']
-            if file and allowed_file(file.filename):
-                filename = secure_filename(file.filename)
+            if file and file.filename and allowed_file(file.filename):
+                filename = secure_filename(str(file.filename))
                 
                 try:
                     # Read and sanitize file content
@@ -387,7 +468,12 @@ def api_analyze():
                         result = analyzer.analyze_notebook(temp_path)
                         if result:
                             analysis_data = format_analysis_for_web(result)
-                            return jsonify({'success': True, 'analysis': analysis_data})
+                            return jsonify({
+                                'success': True, 
+                                'source_type': 'file',
+                                'source_name': filename,
+                                'analysis': analysis_data
+                            })
                         else:
                             return jsonify({'error': 'Failed to analyze notebook'}), 400
                     finally:
@@ -422,6 +508,7 @@ def analyze_stream():
     file_path = None
     source_name = None
     analysis_input = None
+    selected_model = request.form.get('model')  # Extract selected model
     
     # Check for both inputs provided (improved UX)
     has_file = 'file' in request.files and request.files['file'].filename
@@ -435,8 +522,8 @@ def analyze_stream():
     if has_file:
         # File upload analysis with sanitization
         file = request.files['file']
-        if file and allowed_file(file.filename):
-            filename = secure_filename(file.filename)
+        if file and file.filename and allowed_file(file.filename):
+            filename = secure_filename(str(file.filename))
             
             try:
                 # Read and sanitize file content
@@ -490,7 +577,12 @@ def analyze_stream():
         try:
             yield f"data: {json.dumps({'type': 'progress', 'message': 'Starting analysis...'})}\n\n"
             
+            # Create analyzer with thread-safe model selection
             analyzer = GPUAnalyzer(quiet_mode=True)
+            
+            # If a model is selected and LLM is available, update the analyzer's model
+            if selected_model and analyzer.llm_analyzer:
+                analyzer.llm_analyzer.model = selected_model
             
             if analysis_input['type'] == 'file':
                 filename = analysis_input['name']
@@ -554,6 +646,298 @@ def analyze_stream():
         'Connection': 'keep-alive',
         'Access-Control-Allow-Origin': '*'
     })
+
+@app.route('/api/default-model')
+def get_default_model():
+    """Get the default model from environment variables."""
+    default_model = os.getenv('OPENAI_MODEL', 'nvidia/llama-3.3-nemotron-super-49b-v1')
+    return jsonify({'default_model': default_model})
+
+@app.route('/api/available-models')
+def get_available_models():
+    """Get filtered list of available models from NVIDIA API with caching."""
+    try:
+        # Check cache first
+        cached_models = get_cached_models()
+        if cached_models:
+            return jsonify({
+                'models': cached_models,
+                'source': 'cache'
+            })
+        
+        # Check if we have NVIDIA API access
+        openai_base_url = os.getenv('OPENAI_BASE_URL', '')
+        openai_api_key = os.getenv('OPENAI_API_KEY', '')
+        
+        if not openai_api_key or 'nvidia.com' not in openai_base_url.lower():
+            # Fallback to static list if not using NVIDIA API
+            fallback_models = get_fallback_models()
+            cache_models(fallback_models)  # Cache static models too
+            return jsonify({
+                'models': fallback_models,
+                'source': 'static'
+            })
+        
+        # Fetch models from NVIDIA API
+        # Remove /v1 suffix if present and add it properly
+        base_url = openai_base_url.rstrip('/').rstrip('/v1')
+        models_url = f"{base_url}/v1/models"
+        
+        headers = {
+            'Authorization': f'Bearer {openai_api_key}',
+            'Content-Type': 'application/json'
+        }
+        
+        response = requests.get(models_url, headers=headers, timeout=10)
+        
+        if response.status_code == 200:
+            models_data = response.json()
+            filtered_models = filter_and_organize_models(models_data.get('data', []))
+            cache_models(filtered_models)  # Cache the results
+            return jsonify({
+                'models': filtered_models,
+                'source': 'nvidia_api'
+            })
+        else:
+            # Fallback to static list if API call fails
+            fallback_models = get_fallback_models()
+            cache_models(fallback_models)
+            return jsonify({
+                'models': fallback_models,
+                'source': 'static_fallback'
+            })
+            
+    except Exception as e:
+        print(f"Error fetching models: {e}")
+        # Fallback to static list on any error
+        fallback_models = get_fallback_models()
+        cache_models(fallback_models)
+        return jsonify({
+            'models': fallback_models,
+            'source': 'static_error'
+        })
+
+def filter_and_organize_models(models_list):
+    """Filter and organize models based on preferences."""
+    
+    # Define specific model priorities
+    top_priority_nemotron = [
+        'nvidia/llama-3.3-nemotron-super-49b-v1',  # Super - highest priority
+        'nvidia/llama-3.1-nemotron-ultra-253b-v1',  # Ultra - highest priority
+        'nvidia/llama-3.1-nemotron-nano-4b-v1.1',   # Nano
+        'nvidia/llama-3.1-nemotron-nano-8b-v1',     # Nano
+        'nvidia/llama-3.1-nemotron-51b-instruct',
+        'nvidia/llama-3.1-nemotron-70b-instruct',
+        'nvidia/nemotron-4-340b-instruct',
+        'nvidia/nemotron-mini-4b-instruct'
+    ]
+    
+    preferred_models = {
+        'meta': [
+            'meta/llama-3.3-70b-instruct',
+            'meta/llama-3.1-405b-instruct',
+            'meta/llama-3.1-70b-instruct',
+            'meta/llama-3.1-8b-instruct',
+            'meta/codellama-70b'
+        ],
+        'mistralai': [
+            'mistralai/mistral-large-2-instruct',
+            'mistralai/mistral-medium-3-instruct',
+            'mistralai/mistral-small-3.1-24b-instruct-2503',
+            'mistralai/codestral-22b-instruct-v0.1'
+            # Removed mathstral - not suitable for general notebook analysis
+        ],
+        'deepseek-ai': [
+            'deepseek-ai/deepseek-r1',
+            'deepseek-ai/deepseek-coder-6.7b-instruct'
+        ],
+        'google': [
+            'google/gemma-3-27b-it',
+            'google/gemma-2-27b-it',
+            'google/codegemma-1.1-7b'
+        ],
+        'microsoft': [
+            'microsoft/phi-4-mini-instruct',
+            'microsoft/phi-3.5-moe-instruct'
+        ],
+        'qwen': [
+            'qwen/qwen2.5-coder-32b-instruct',
+            'qwen/qwen2.5-7b-instruct'
+        ]
+    }
+    
+    # Models to exclude (language-specific, older versions, esoteric creators, etc.)
+    exclude_keywords = [
+        'swallow', 'bielik', 'taiwan', 'hindi', 'sahabatai', 'italia', 'sea-lion',
+        'embed', 'reward', 'guard', 'safety', 'retriever', 'clip', 'vision',
+        'medical', 'med-', 'fin-', 'financial', 'nemoguard', 'shieldgemma',
+        'mathstral'  # Math-specific, not ideal for general notebook analysis
+    ]
+    
+    # Esoteric/less useful creators to exclude
+    exclude_creators = [
+        'abacusai', 'baichuan-inc', 'marin', 'mediatek', 'aisingapore', 
+        'gotocompany', 'institute-of-science-tokyo', 'tokyotech-llm', 
+        'yentinglin', 'speakleash', 'rakuten', 'utter-project'
+    ]
+    
+    # Get all available model IDs
+    available_models = {model.get('id', '') for model in models_list}
+    
+    # Create a function to get the base model name for version comparison
+    def get_base_model_name(model_id):
+        # Remove version suffixes like -v0.1, -v1, -2503, etc.
+        base = model_id
+        # Remove common version patterns
+        import re
+        base = re.sub(r'-v\d+(\.\d+)?$', '', base)
+        base = re.sub(r'-\d{4}$', '', base)  # Remove year suffixes like -2503
+        base = re.sub(r'-instruct-v\d+(\.\d+)?$', '-instruct', base)
+        return base
+    
+    # Group models by base name to find latest versions
+    model_groups = {}
+    for model in models_list:
+        model_id = model.get('id', '')
+        creator = model_id.split('/')[0] if '/' in model_id else ''
+        
+        # Skip excluded creators
+        if creator in exclude_creators:
+            continue
+            
+        # Skip models with excluded keywords
+        if any(keyword in model_id.lower() for keyword in exclude_keywords):
+            continue
+            
+        base_name = get_base_model_name(model_id)
+        if base_name not in model_groups:
+            model_groups[base_name] = []
+        model_groups[base_name].append(model_id)
+    
+    # Select the latest/best version from each group
+    def select_best_version(model_list):
+        if len(model_list) == 1:
+            return model_list[0]
+        
+        # Prefer models with higher version numbers or more recent patterns
+        def version_score(model_id):
+            score = 0
+            # Prefer v3 over v2 over v1
+            if '-v3' in model_id or '-3.' in model_id:
+                score += 30
+            elif '-v2' in model_id or '-2.' in model_id:
+                score += 20
+            elif '-v1' in model_id or '-1.' in model_id:
+                score += 10
+            
+            # Prefer recent year suffixes
+            if '-2503' in model_id or '-25' in model_id:
+                score += 15
+            elif '-2024' in model_id or '-24' in model_id:
+                score += 10
+            
+            # Prefer instruct versions
+            if 'instruct' in model_id:
+                score += 5
+                
+            return score
+        
+        # Return the model with the highest version score
+        return max(model_list, key=version_score)
+    
+    # Organize models
+    organized_models = {
+        'nemotron': [],
+        'preferred': [],
+        'others': []
+    }
+    
+    # Add top priority Nemotron models (in order)
+    for model_id in top_priority_nemotron:
+        if model_id in available_models:
+            organized_models['nemotron'].append(model_id)
+    
+    # Add other Nemotron models not in the top priority list
+    for base_name, model_list in model_groups.items():
+        best_model = select_best_version(model_list)
+        if (best_model not in top_priority_nemotron and 
+            'nvidia/' in best_model and 
+            ('nemotron' in best_model.lower() or 'nemo' in best_model.lower()) and
+            'instruct' in best_model.lower()):
+            organized_models['nemotron'].append(best_model)
+    
+    # Add preferred creator models (in priority order)
+    for creator, model_list in preferred_models.items():
+        for model_id in model_list:
+            if model_id in available_models:
+                organized_models['preferred'].append(model_id)
+    
+    # Add other useful models from preferred creators not in the specific list
+    preferred_creators = list(preferred_models.keys())
+    for base_name, model_list in model_groups.items():
+        best_model = select_best_version(model_list)
+        creator = best_model.split('/')[0] if '/' in best_model else ''
+        
+        if (creator in preferred_creators and 
+            best_model not in organized_models['preferred'] and
+            best_model not in organized_models['nemotron'] and
+            ('instruct' in best_model.lower() or 'chat' in best_model.lower() or 'code' in best_model.lower())):
+            
+            # Skip very small models (less useful for analysis)
+            if not any(size in best_model.lower() for size in ['1b', '2b', '3b']):
+                organized_models['preferred'].append(best_model)
+    
+    # Add other high-quality models from any creator (very selective)
+    for base_name, model_list in model_groups.items():
+        best_model = select_best_version(model_list)
+        creator = best_model.split('/')[0] if '/' in best_model else ''
+        
+        # Only include well-known creators for "others" category
+        known_good_creators = ['upstage', 'tiiuae', 'ibm', 'writer']
+        
+        if (creator in known_good_creators and
+            best_model not in organized_models['nemotron'] and
+            best_model not in organized_models['preferred'] and
+            ('instruct' in best_model.lower() or 'chat' in best_model.lower()) and
+            # Only include larger models from other creators
+            any(size in best_model.lower() for size in ['70b', '32b', '27b', '22b'])):
+            organized_models['others'].append(best_model)
+    
+    # Limit each group to reasonable sizes
+    organized_models['nemotron'] = organized_models['nemotron'][:10]
+    organized_models['preferred'] = organized_models['preferred'][:12]
+    organized_models['others'] = organized_models['others'][:5]  # Reduced from 8
+    
+    return organized_models
+
+def get_fallback_models():
+    """Fallback static model list when API is not available."""
+    return {
+        'nemotron': [
+            'nvidia/llama-3.3-nemotron-super-49b-v1',
+            'nvidia/llama-3.1-nemotron-ultra-253b-v1',
+            'nvidia/llama-3.1-nemotron-70b-instruct',
+            'nvidia/llama-3.1-nemotron-51b-instruct',
+            'nvidia/nemotron-4-340b-instruct',
+            'nvidia/nemotron-mini-4b-instruct'
+        ],
+        'preferred': [
+            'meta/llama-3.3-70b-instruct',
+            'meta/llama-3.1-405b-instruct',
+            'meta/llama-3.1-70b-instruct',
+            'meta/codellama-70b',
+            'mistralai/mistral-large-2-instruct',
+            'mistralai/codestral-22b-instruct-v0.1',
+            'deepseek-ai/deepseek-r1',
+            'deepseek-ai/deepseek-coder-6.7b-instruct',
+            'google/gemma-3-27b-it',
+            'qwen/qwen2.5-coder-32b-instruct'
+        ],
+        'others': [
+            'microsoft/phi-4-mini-instruct',
+            'google/codegemma-1.1-7b'
+        ]
+    }
 
 @app.route('/results')
 def results():
@@ -944,8 +1328,8 @@ def mcp_endpoint():
 
 # Security headers middleware
 @app.after_request
-def add_security_headers(response):
-    """Add essential security headers to all responses (Phase 1)."""
+def add_security_headers_and_compression(response):
+    """Add essential security headers and compression to all responses."""
     
     # Content Security Policy - prevents XSS attacks
     # Allow Bootstrap CSS/JS from CDN, inline styles for UI components
@@ -966,6 +1350,9 @@ def add_security_headers(response):
     
     # Prevent MIME type confusion attacks
     response.headers['X-Content-Type-Options'] = 'nosniff'
+    
+    # Apply response compression for performance
+    response = compress_response(response)
     
     return response
 

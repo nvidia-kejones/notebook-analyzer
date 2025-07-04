@@ -212,10 +212,20 @@ function displayResults(data) {
                                 </div>
 
                                 <!-- Enhancement Status -->
-                                ${analysis.llm_enhanced ?
-                                    '<span class="badge bg-nvidia"><i class="bi bi-robot me-1"></i>AI Enhanced</span>' :
-                                    '<span class="badge bg-secondary"><i class="bi bi-gear me-1"></i>Static Analysis</span>'
-                                }
+                                <div class="d-flex flex-column gap-1">
+                                    ${analysis.llm_enhanced ?
+                                        '<span class="badge bg-nvidia"><i class="bi bi-robot me-1"></i>AI Enhanced</span>' :
+                                        '<span class="badge bg-secondary"><i class="bi bi-gear me-1"></i>Static Analysis</span>'
+                                    }
+                                    ${analysis.self_reviewed ?
+                                        '<span class="badge bg-success"><i class="bi bi-check2-circle me-1"></i>Self-Reviewed</span>' :
+                                        ''
+                                    }
+                                    ${analysis.llm_model_used ?
+                                        `<span class="badge bg-info text-dark"><i class="bi bi-cpu me-1"></i>${analysis.llm_model_used}</span>` :
+                                        ''
+                                    }
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -244,12 +254,13 @@ function displayResults(data) {
                                             Analysis Methodology
                                         </h6>
                                         <p class="mb-2">
-                                            <strong>Two-Stage Analysis:</strong> Our analyzer uses a two-stage approach combining static pattern detection with AI enhanced analysis.
+                                            <strong>Three-Stage Analysis:</strong> Our analyzer uses a comprehensive approach combining static pattern detection, AI enhancement, and self-review validation.
                                         </p>
                                         <hr class="my-2">
                                         <ul class="mb-2 small">
                                             <li><strong>Static Analysis:</strong> Scans code for GPU frameworks, model patterns, and workload indicators</li>
                                             <li><strong>AI Enhancement:</strong> Uses LLM to understand context, model complexity, and optimization techniques</li>
+                                            <li><strong>Self-Review:</strong> AI acts as a "teacher grading its work" to identify inconsistencies and ensure recommendations are logical and bounded</li>
                                             <li><strong>Confidence Scoring:</strong> Combines pattern certainty with LLM agreement for overall confidence</li>
                                         </ul>
                                         <div class="small text-muted">
@@ -389,6 +400,7 @@ function generateApiResponse(data) {
             sxm_required: analysis.sxm_required,
             arm_compatibility: analysis.arm_compatibility,
             llm_enhanced: analysis.llm_enhanced,
+            llm_model_used: analysis.llm_model_used,
             reasoning: analysis.reasoning ? analysis.reasoning.slice(0, 3) : [], // First 3 items
             llm_reasoning: analysis.llm_reasoning ? analysis.llm_reasoning.slice(0, 2) : [], // First 2 items
             structure_assessment: analysis.structure_assessment,
@@ -530,7 +542,7 @@ ${sourceInfo}
 • ARM Compatibility: ${analysis.arm_compatibility}
 • NVIDIA Compliance: ${analysis.nvidia_compliance_score}/100
 • Analysis Confidence: ${analysis.confidence}%
-• Enhancement: ${analysis.llm_enhanced ? 'LLM Enhanced' : 'Static Analysis'}`;
+• Enhancement: ${analysis.llm_enhanced ? 'LLM Enhanced' : 'Static Analysis'}${analysis.llm_model_used ? `\n• AI Model: ${analysis.llm_model_used}` : ''}`;
 
     // Add LLM insights first if available (Phase 1: Prioritize LLM)
     if (analysis.llm_reasoning && analysis.llm_reasoning.length > 0) {

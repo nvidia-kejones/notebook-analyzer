@@ -108,6 +108,38 @@
                         </div>
                     </div>
 
+                    <!-- Model Selector (only show if LLM is available) -->
+                    {% if llm_available %}
+                    <div class="mb-4">
+                        <label for="model" class="form-label fw-bold">
+                            <i class="bi bi-cpu text-nvidia"></i>
+                            AI Model Selection
+                        </label>
+                        <select class="form-select" id="model" name="model">
+                            <option value="">Loading available models...</option>
+                        </select>
+                        <div class="form-text">
+                            <i class="bi bi-info-circle me-1"></i>
+                            Choose an AI model for enhanced analysis. Different models offer varying levels of capability and speed.
+                            <br/>
+                            <span id="modelEnvDefault" class="text-success d-none">
+                                <i class="bi bi-check-circle me-1"></i>
+                                Default model: <strong id="envModelName"></strong>
+                            </span>
+                        </div>
+                    </div>
+                    {% else %}
+                    <!-- LLM Not Available Notice -->
+                    <div class="mb-4">
+                        <div class="alert alert-info">
+                            <i class="bi bi-info-circle me-2"></i>
+                            <strong>Static Analysis Mode:</strong> AI enhancement is not available. Analysis will use pattern detection only.
+                            <br>
+                            <small class="text-muted">To enable AI enhancement, configure <code>OPENAI_API_KEY</code> and <code>OPENAI_BASE_URL</code> environment variables.</small>
+                        </div>
+                    </div>
+                    {% endif %}
+
                     <!-- Submit Button -->
                     <div class="d-grid">
                         <button type="submit" class="btn btn-nvidia btn-lg" id="submitBtn">
@@ -534,6 +566,175 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Initialize UI state
     updateUIState();
+    
+    // Initialize model selector with environment default (only if model selector exists)
+    const modelSelect = document.getElementById('model');
+    if (modelSelect) {
+        // Use requestIdleCallback for non-critical initialization
+        if (window.requestIdleCallback) {
+            requestIdleCallback(() => initializeModelSelector());
+        } else {
+            // Fallback for browsers without requestIdleCallback
+            setTimeout(() => initializeModelSelector(), 100);
+        }
+    }
 });
+
+function initializeModelSelector() {
+    const modelSelect = document.getElementById('model');
+    const modelEnvDefault = document.getElementById('modelEnvDefault');
+    const envModelName = document.getElementById('envModelName');
+    
+    // Load available models with caching and parallel requests
+    const modelsPromise = fetch('/api/available-models', {
+        headers: {
+            'Accept-Encoding': 'gzip, deflate',
+            'Cache-Control': 'max-age=300'  // Cache for 5 minutes
+        }
+    }).then(response => response.json());
+    
+    const defaultModelPromise = fetch('/api/default-model', {
+        headers: {
+            'Accept-Encoding': 'gzip, deflate',
+            'Cache-Control': 'max-age=300'
+        }
+    }).then(response => response.json());
+    
+    // Process models data
+    modelsPromise.then(data => {
+            // Clear loading message
+            modelSelect.innerHTML = '';
+            
+            const models = data.models;
+            
+            // Add Nemotron models (highest priority)
+            if (models.nemotron && models.nemotron.length > 0) {
+                const nemotronGroup = document.createElement('optgroup');
+                nemotronGroup.label = '⭐ NVIDIA Nemotron (Recommended)';
+                models.nemotron.forEach(modelId => {
+                    const option = document.createElement('option');
+                    option.value = modelId;
+                    option.textContent = formatModelName(modelId);
+                    nemotronGroup.appendChild(option);
+                });
+                modelSelect.appendChild(nemotronGroup);
+            }
+            
+            // Add preferred creator models
+            if (models.preferred && models.preferred.length > 0) {
+                const preferredGroup = document.createElement('optgroup');
+                preferredGroup.label = 'Major Model Creators';
+                models.preferred.forEach(modelId => {
+                    const option = document.createElement('option');
+                    option.value = modelId;
+                    option.textContent = formatModelName(modelId);
+                    preferredGroup.appendChild(option);
+                });
+                modelSelect.appendChild(preferredGroup);
+            }
+            
+            // Add other useful models
+            if (models.others && models.others.length > 0) {
+                const othersGroup = document.createElement('optgroup');
+                othersGroup.label = 'Other Models';
+                models.others.forEach(modelId => {
+                    const option = document.createElement('option');
+                    option.value = modelId;
+                    option.textContent = formatModelName(modelId);
+                    othersGroup.appendChild(option);
+                });
+                modelSelect.appendChild(othersGroup);
+            }
+            
+            // Now get and set the default model using the parallel request
+            return defaultModelPromise;
+        })
+        .then(data => {
+            if (data.default_model) {
+                // Set the default model as selected
+                const option = modelSelect.querySelector(`option[value="${data.default_model}"]`);
+                if (option) {
+                    option.selected = true;
+                    // Show the environment default message
+                    envModelName.textContent = data.default_model;
+                    modelEnvDefault.classList.remove('d-none');
+                } else {
+                    // Model not in our list, add it as a custom option
+                    const customOption = document.createElement('option');
+                    customOption.value = data.default_model;
+                    customOption.textContent = `${formatModelName(data.default_model)}`;
+                    customOption.selected = true;
+                    modelSelect.insertBefore(customOption, modelSelect.firstChild);
+                    
+                    envModelName.textContent = data.default_model;
+                    modelEnvDefault.classList.remove('d-none');
+                }
+            } else if (modelSelect.options.length > 0) {
+                // Select first option if no environment default
+                modelSelect.selectedIndex = 0;
+            }
+        })
+        .catch(error => {
+            console.log('Could not load models:', error);
+            // Fallback to basic options on error
+            modelSelect.innerHTML = `
+                <option value="nvidia/llama-3.1-nemotron-70b-instruct">NVIDIA Nemotron 70B</option>
+                <option value="meta/llama-3.3-70b-instruct">Meta Llama 3.3 70B</option>
+                <option value="mistralai/mixtral-8x7b-instruct-v0.1">Mistral Mixtral 8x7B</option>
+            `;
+            if (modelSelect.options.length > 0) {
+                modelSelect.selectedIndex = 0;
+            }
+        });
+}
+
+function formatModelName(modelId) {
+    // Remove subjective descriptions and format model names cleanly
+    const parts = modelId.split('/');
+    const creator = parts[0];
+    const model = parts[1] || modelId;
+    
+    // Capitalize creator names
+    const creatorMap = {
+        'nvidia': 'NVIDIA',
+        'meta': 'Meta',
+        'mistralai': 'Mistral AI',
+        'deepseek-ai': 'DeepSeek',
+        'qwen': 'Qwen',
+        'google': 'Google',
+        'microsoft': 'Microsoft'
+    };
+    
+    const formattedCreator = creatorMap[creator] || creator.charAt(0).toUpperCase() + creator.slice(1);
+    
+    // Clean up model name
+    let formattedModel = model
+        .replace(/-/g, ' ')
+        .replace(/\b\w/g, l => l.toUpperCase())
+        .replace(/\bV\d+/g, match => match.toUpperCase())
+        .replace(/\bB\b/g, 'B') // Keep 'B' for billion
+        .replace(/Instruct/g, 'Instruct')
+        .replace(/\bIt\b/g, 'IT');
+    
+    // Add special labels for code specialists
+    const codeSpecialists = ['codellama', 'codestral', 'codegemma', 'coder', 'mathstral'];
+    let prefix = '';
+    if (codeSpecialists.some(specialist => modelId.toLowerCase().includes(specialist))) {
+        prefix = '🔧 ';
+    }
+    
+    // Model size removed as requested - it's distracting and most names include it anyway
+    
+    // Special handling for specific models
+    if (modelId.includes('nemotron-super')) {
+        formattedModel = formattedModel.replace('Nemotron Super', 'Nemotron Super');
+    } else if (modelId.includes('nemotron-ultra')) {
+        formattedModel = formattedModel.replace('Nemotron Ultra', 'Nemotron Ultra');
+    } else if (modelId.includes('nemotron-nano')) {
+        formattedModel = formattedModel.replace('Nemotron Nano', 'Nemotron Nano');
+    }
+    
+    return `${prefix}${formattedCreator} ${formattedModel}`;
+}
 </script>
 {% endblock %} 

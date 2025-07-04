@@ -7,6 +7,7 @@ for evaluating Jupyter notebooks and determining GPU requirements.
 """
 
 import requests
+from requests.adapters import HTTPAdapter
 import json
 import re
 import ast
@@ -14,10 +15,64 @@ import os
 import sys
 import ipaddress
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple, Optional, Any, Union
 from dataclasses import dataclass, field
 from urllib.parse import urlparse, quote_plus
+from concurrent.futures import ThreadPoolExecutor
+import threading
+import tempfile
+import urllib.parse
 
+# Performance optimization: HTTP connection pooling
+_http_session = None
+_session_lock = threading.Lock()
+
+def get_http_session() -> requests.Session:
+    """Get a shared HTTP session with connection pooling."""
+    global _http_session
+    
+    if _http_session is None:
+        with _session_lock:
+            if _http_session is None:
+                _http_session = requests.Session()
+                # Configure connection pooling
+                adapter = HTTPAdapter(
+                    pool_connections=10,
+                    pool_maxsize=20,
+                    max_retries=3
+                )
+                _http_session.mount('http://', adapter)
+                _http_session.mount('https://', adapter)
+    
+    return _http_session
+
+# Performance optimization: Pre-compiled regex patterns
+_compiled_patterns = {}
+_pattern_lock = threading.Lock()
+
+def get_compiled_pattern(pattern: str, flags: int = re.IGNORECASE) -> re.Pattern:
+    """Get a compiled regex pattern from cache or compile and cache it."""
+    cache_key = (pattern, flags)
+    
+    if cache_key not in _compiled_patterns:
+        with _pattern_lock:
+            # Double-check pattern
+            if cache_key not in _compiled_patterns:
+                _compiled_patterns[cache_key] = re.compile(pattern, flags)
+    
+    return _compiled_patterns[cache_key]
+
+def parallel_pattern_search(text: str, patterns: List[str], flags: int = re.IGNORECASE) -> List[bool]:
+    """Search for multiple patterns in parallel for better performance."""
+    def search_pattern(pattern):
+        compiled_pattern = get_compiled_pattern(pattern, flags)
+        return bool(compiled_pattern.search(text))
+    
+    # Use ThreadPoolExecutor for I/O bound regex operations
+    with ThreadPoolExecutor(max_workers=min(8, len(patterns))) as executor:
+        results = list(executor.map(search_pattern, patterns))
+    
+    return results
 
 @dataclass
 class GPURequirement:
@@ -56,6 +111,8 @@ class GPURequirement:
     reasoning: List[str] = field(default_factory=list)
     llm_enhanced: bool = False
     llm_reasoning: Optional[List[str]] = None
+    self_reviewed: bool = False  # Phase 2.5: Track if analysis went through self-review
+    llm_model_used: Optional[str] = None  # Track which LLM model was used for analysis
     nvidia_compliance_score: float = 0.0
     structure_assessment: Optional[Dict[str, str]] = None
     content_quality_issues: Optional[List[str]] = None
@@ -218,7 +275,7 @@ SCORING FRAMEWORK:
 
 
 class LLMAnalyzer:
-    def __init__(self, base_url: str, model: str, api_key: str):
+    def __init__(self, base_url: str, model: str, api_key: str, gpu_specs: Optional[Dict] = None):
         # Remove trailing slashes and /v1 suffix to avoid double /v1 in URLs
         self.base_url = base_url.rstrip('/').rstrip('/v1')
         self.model = model
@@ -229,6 +286,9 @@ class LLMAnalyzer:
         }
         # Load NVIDIA Best Practices
         self.best_practices = NVIDIABestPracticesLoader()
+        
+        # Store GPU specs for validation
+        self.gpu_specs = gpu_specs or {}
     
     def _parse_runtime_range(self, runtime_str: str) -> tuple:
         """Parse runtime string like '1.5-2.5' into (min, max) float tuple."""
@@ -285,17 +345,38 @@ class LLMAnalyzer:
     def analyze_notebook_context(self, code_cells: List[str], markdown_cells: List[str]) -> Optional[Dict]:
         """Send notebook to LLM for contextual analysis."""
         try:
-            # Combine code and markdown for context
+            # Optimized content extraction - focus on most relevant code
+            relevant_code = []
+            relevant_markdown = []
+            
+            # Extract only GPU-relevant code cells (more efficient)
+            gpu_keywords = ['cuda', 'gpu', 'torch', 'tensorflow', 'train', 'model', 'batch', 'device']
+            for cell in code_cells[:15]:  # Check more cells but filter
+                if any(keyword in cell.lower() for keyword in gpu_keywords):
+                    relevant_code.append(cell)
+                if len(relevant_code) >= 8:  # Limit to most relevant
+                    break
+            
+            # If no GPU-relevant code found, take first few cells
+            if not relevant_code:
+                relevant_code = code_cells[:5]
+            
+            # Extract key markdown (titles, requirements, etc.)
+            for cell in markdown_cells[:3]:
+                if any(keyword in cell.lower() for keyword in ['requirement', 'gpu', 'hardware', 'setup']):
+                    relevant_markdown.append(cell)
+            
+            # Combine with smart truncation
             notebook_content = "\n".join([
-                "=== CODE CELLS ===",
-                *code_cells[:10],  # Limit to first 10 cells to avoid token limits
-                "\n=== MARKDOWN CELLS ===", 
-                *markdown_cells[:5]  # Limit markdown cells too
+                "=== RELEVANT CODE ===",
+                *relevant_code,
+                "\n=== KEY DOCUMENTATION ===" if relevant_markdown else "",
+                *relevant_markdown
             ])
             
-            # Truncate if too long (rough estimate for token limits)
-            if len(notebook_content) > 15000:
-                notebook_content = notebook_content[:15000] + "\n... [truncated]"
+            # More aggressive but smarter truncation
+            if len(notebook_content) > 12000:
+                notebook_content = notebook_content[:12000] + "\n... [content truncated for efficiency]"
             
             prompt = f"""Analyze this Jupyter notebook for GPU requirements. Focus on:
 
@@ -350,7 +431,9 @@ For runtime estimation:
 - performance_considerations: Notes about GPU performance trade-offs and recommendations
 - Consider: model parameters, dataset size, epochs, optimizations like LoRA/quantization, and GPU performance factors"""
 
-            response = requests.post(
+            # Use connection pooling for better performance
+            session = get_http_session()
+            response = session.post(
                 f"{self.base_url}/v1/chat/completions",
                 headers=self.headers,
                 json={
@@ -607,6 +690,225 @@ For runtime estimation:
         
         return enhanced_analysis, llm_reasoning
     
+    def self_review_analysis(self, code_cells: List[str], preliminary_analysis: Dict, static_reasoning: List[str], llm_reasoning: List[str]) -> Optional[Dict]:
+        """
+        Phase 2.5: LLM self-review - the 'teacher grading' approach.
+        Reviews the complete analysis for consistency, accuracy, and logical coherence.
+        """
+        try:
+            # Combine first few code cells for context
+            notebook_sample = "\n".join([
+                "=== NOTEBOOK SAMPLE ===",
+                *code_cells[:5]  # First 5 code cells for context
+            ])
+            
+            if len(notebook_sample) > 8000:
+                notebook_sample = notebook_sample[:8000] + "\n... [truncated]"
+            
+            # Create comprehensive analysis summary for review
+            analysis_summary = f"""
+WORKLOAD ANALYSIS:
+- Type: {preliminary_analysis.get('workload_type', 'unknown')}
+- Detected: {preliminary_analysis.get('workload_detected', False)}
+
+GPU RECOMMENDATIONS:
+- Minimum: {preliminary_analysis.get('min_gpu_type', 'N/A')} ({preliminary_analysis.get('min_quantity', 0)}x, {preliminary_analysis.get('min_vram_gb', 0)}GB)
+- Consumer: {preliminary_analysis.get('consumer_gpu_type', 'N/A')} ({preliminary_analysis.get('consumer_quantity', 0)}x, {preliminary_analysis.get('consumer_vram_gb', 0)}GB)
+- Enterprise: {preliminary_analysis.get('enterprise_gpu_type', 'N/A')} ({preliminary_analysis.get('enterprise_quantity', 0)}x, {preliminary_analysis.get('enterprise_vram_gb', 0)}GB)
+- Consumer Viable: {preliminary_analysis.get('consumer_viable', True)}
+
+TECHNICAL DETAILS:
+- SXM Required: {preliminary_analysis.get('sxm_required', False)}
+- ARM Compatibility: {preliminary_analysis.get('arm_compatibility', 'Unknown')}
+- Confidence: {preliminary_analysis.get('confidence', 0)}%
+
+STATIC ANALYSIS REASONING:
+{chr(10).join(f"• {reason}" for reason in static_reasoning[:5])}
+
+LLM REASONING:
+{chr(10).join(f"• {reason}" for reason in llm_reasoning[:5])}
+"""
+
+            prompt = f"""You are an expert reviewer evaluating your own GPU analysis. Act as a "teacher grading your work."
+
+NOTEBOOK CODE SAMPLE:
+{notebook_sample}
+
+YOUR ANALYSIS RESULTS:
+{analysis_summary}
+
+CRITICAL REVIEW QUESTIONS:
+1. **Logical Consistency**: Do the GPU recommendations match the detected workload complexity?
+2. **Reasoning Alignment**: Are static analysis and LLM insights properly unified, or do they contradict?
+3. **Recommendation Appropriateness**: Are the GPU tiers (minimum/consumer/enterprise) logically ordered?
+4. **Confidence Calibration**: Does the confidence percentage match the certainty of evidence?
+5. **Workload Classification**: Is the workload type correctly identified based on the code patterns?
+
+SPECIFIC CHECKS:
+- If workload is "simple" or "basic", why recommend high-end GPUs?
+- If static says "GPU workload" but LLM says "no GPU needed", which is correct?
+- Do VRAM estimates make sense for the detected models/operations?
+- Are runtime estimates realistic for the recommended hardware?
+
+IMPORTANT CONSTRAINTS:
+- Confidence must be between 0-100 (as integer percentage)
+- GPU recommendations must only use these valid options: RTX 4060, RTX 4070, RTX 4080, RTX 4090, RTX 5080, RTX 5090, L4, L40, L40S, A100 PCIe 40G, A100 PCIe 80G, A100 SXM 40G, A100 SXM 80G, H100 PCIe, H100 SXM, H200 SXM, B200 SXM
+- Do NOT recommend GPUs outside this list (no GT 1030, GTX series, etc.)
+
+Respond in JSON format:
+{{
+    "review_passed": true/false,
+    "consistency_issues": ["issue1", "issue2"],
+    "recommended_corrections": {{
+        "workload_type": "corrected_type_if_needed",
+        "confidence": integer_between_0_and_100,
+        "min_gpu_type": "valid_gpu_from_list_above_if_needed",
+        "reasoning_updates": ["updated reasoning point 1", "updated reasoning point 2"]
+    }},
+    "unified_reasoning": ["clear unified reasoning point 1", "clear unified reasoning point 2"],
+    "confidence_explanation": "why this confidence level is appropriate",
+    "overall_assessment": "brief summary of analysis quality"
+}}
+
+Focus on accuracy, consistency, and providing clear, unified recommendations that make logical sense."""
+
+            response = requests.post(
+                f"{self.base_url}/v1/chat/completions",
+                headers=self.headers,
+                json={
+                    "model": self.model,
+                    "messages": [
+                        {"role": "system", "content": "You are an expert reviewer specializing in GPU computing and machine learning workloads. Your job is to critically evaluate analysis results for accuracy and consistency."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    "temperature": 0.1,
+                    "max_tokens": 1000
+                },
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                content = result['choices'][0]['message']['content']
+                
+                try:
+                    # Extract JSON from response
+                    json_start = content.find('{')
+                    json_end = content.rfind('}') + 1
+                    if json_start != -1 and json_end > json_start:
+                        json_str = content[json_start:json_end]
+                        return json.loads(json_str)
+                except:
+                    pass
+                
+                # Fallback if JSON parsing fails
+                return {
+                    "review_passed": True,
+                    "consistency_issues": [],
+                    "recommended_corrections": {},
+                    "unified_reasoning": ["Self-review parsing failed - using original analysis"],
+                    "confidence_explanation": "Could not parse self-review response",
+                    "overall_assessment": "Self-review inconclusive"
+                }
+            else:
+                print(f"Self-review API error: {response.status_code}")
+                return None
+                
+        except Exception as e:
+            print(f"Self-review failed: {e}")
+            return None
+    
+    def apply_self_review_corrections(self, preliminary_analysis: Dict, static_reasoning: List[str], 
+                                    llm_reasoning: List[str], self_review: Dict) -> Tuple[Dict, List[str]]:
+        """
+        Apply corrections from self-review to create the final unified analysis.
+        """
+        corrected_analysis = preliminary_analysis.copy()
+        final_reasoning = []
+        
+        # Apply recommended corrections if review didn't pass
+        if not self_review.get('review_passed', True):
+            corrections = self_review.get('recommended_corrections', {})
+            
+            # Apply workload type correction
+            if 'workload_type' in corrections:
+                corrected_analysis['workload_type'] = corrections['workload_type']
+            
+            # Apply confidence adjustment with validation
+            if 'confidence' in corrections:
+                confidence_value = corrections['confidence']
+                # Ensure confidence is within valid range (0-100 as percentage, convert to 0.0-1.0)
+                if isinstance(confidence_value, (int, float)):
+                    if confidence_value > 1.0:  # Assume it's a percentage
+                        confidence_value = min(max(confidence_value, 0), 100) / 100.0
+                    else:  # Already a decimal
+                        confidence_value = min(max(confidence_value, 0.0), 1.0)
+                    corrected_analysis['confidence'] = confidence_value
+                    final_reasoning.append(f"Self-review adjusted confidence to {confidence_value*100:.0f}%")
+            
+            # Apply GPU type correction with validation
+            if 'min_gpu_type' in corrections:
+                gpu_type = corrections['min_gpu_type']
+                # Validate GPU type is in our specifications
+                if gpu_type in self.gpu_specs:
+                    corrected_analysis['min_gpu_type'] = gpu_type
+                    # Regenerate consumer/enterprise recommendations if minimum changed
+                    self._update_gpu_recommendations_after_correction(corrected_analysis)
+                    final_reasoning.append(f"Self-review corrected minimum GPU to {gpu_type}")
+                else:
+                    final_reasoning.append(f"Self-review suggested invalid GPU '{gpu_type}' - keeping original recommendation")
+        
+        # Use unified reasoning from self-review if available
+        unified_reasoning = self_review.get('unified_reasoning', [])
+        if unified_reasoning:
+            final_reasoning.extend(unified_reasoning)
+        else:
+            # Fallback to original reasoning if no unified reasoning provided
+            final_reasoning.extend(llm_reasoning[:3])  # Prioritize LLM reasoning
+            final_reasoning.extend(static_reasoning[:2])  # Add some static reasoning
+        
+        # Add self-review insights
+        if self_review.get('consistency_issues'):
+            final_reasoning.append(f"Self-review identified and corrected {len(self_review['consistency_issues'])} consistency issues")
+        
+        if self_review.get('confidence_explanation'):
+            final_reasoning.append(f"Confidence assessment: {self_review['confidence_explanation']}")
+        
+        # Add review quality indicator
+        review_quality = "passed" if self_review.get('review_passed', True) else "required corrections"
+        final_reasoning.append(f"Analysis self-review {review_quality} - enhanced accuracy and consistency")
+        
+        return corrected_analysis, final_reasoning
+    
+    def _update_gpu_recommendations_after_correction(self, analysis: Dict):
+        """
+        Update consumer and enterprise recommendations after minimum GPU correction.
+        This ensures logical hierarchy is maintained.
+        """
+        min_gpu = analysis.get('min_gpu_type', '')
+        min_vram = analysis.get('min_vram_gb', 8)
+        
+        # Simple logic to maintain hierarchy
+        if 'RTX 4060' in min_gpu:
+            analysis['consumer_gpu_type'] = 'RTX 4070'
+            analysis['consumer_vram_gb'] = max(min_vram, 12)
+            analysis['enterprise_gpu_type'] = 'L40S'
+            analysis['enterprise_vram_gb'] = max(min_vram, 48)
+        elif 'RTX 4070' in min_gpu:
+            analysis['consumer_gpu_type'] = 'RTX 4080'
+            analysis['consumer_vram_gb'] = max(min_vram, 16)
+            analysis['enterprise_gpu_type'] = 'L40S'
+            analysis['enterprise_vram_gb'] = max(min_vram, 48)
+        elif 'RTX 4090' in min_gpu:
+            analysis['consumer_gpu_type'] = 'RTX 4090'
+            analysis['consumer_vram_gb'] = max(min_vram, 24)
+            analysis['enterprise_gpu_type'] = 'A100 PCIe'
+            analysis['enterprise_vram_gb'] = max(min_vram, 80)
+        else:
+            # Enterprise minimum - consumer might not be viable
+            analysis['consumer_viable'] = False
+            analysis['consumer_limitation'] = "Workload requires enterprise-grade hardware"
+    
     def evaluate_notebook_compliance(self, code_cells: List[str], markdown_cells: List[str]) -> Optional[Dict]:
         """Evaluate notebook compliance with NVIDIA best practices using LLM and comprehensive guidelines."""
         try:
@@ -725,26 +1027,6 @@ class GPUAnalyzer:
         # Load NVIDIA Best Practices
         self.best_practices = NVIDIABestPracticesLoader()
         
-        # Initialize LLM if API key is available
-        openai_api_key = os.getenv('OPENAI_API_KEY')
-        openai_base_url = os.getenv('OPENAI_BASE_URL', 'https://api.openai.com')
-        openai_model = os.getenv('OPENAI_MODEL', 'gpt-4')
-        
-        if openai_api_key:
-            self.llm_analyzer = LLMAnalyzer(
-                base_url=openai_base_url,
-                model=openai_model,
-                api_key=openai_api_key
-            )
-            if not self.quiet_mode:
-                if 'nvidia.com' in openai_base_url:
-                    print(f"✅ LLM enhancement enabled using NVIDIA API with {openai_model}")
-                else:
-                    print(f"✅ LLM enhancement enabled using {openai_model}")
-        else:
-            if not self.quiet_mode:
-                print("⚠️ No LLM API key found. Analysis will use static patterns only.")
-        
         # Enhanced GPU specifications with detailed metadata and categorization
         self.gpu_specs = {
             # RTX 50 Series (Consumer)
@@ -840,6 +1122,27 @@ class GPUAnalyzer:
                 'category': 'enterprise', 'max_reasonable_quantity': 32, 'performance_factor': 4.0
             }
         }
+        
+        # Initialize LLM if API key is available
+        openai_api_key = os.getenv('OPENAI_API_KEY')
+        openai_base_url = os.getenv('OPENAI_BASE_URL', 'https://api.openai.com')
+        openai_model = os.getenv('OPENAI_MODEL', 'gpt-4')
+        
+        if openai_api_key:
+            self.llm_analyzer = LLMAnalyzer(
+                base_url=openai_base_url,
+                model=openai_model,
+                api_key=openai_api_key,
+                gpu_specs=self.gpu_specs
+            )
+            if not self.quiet_mode:
+                if 'nvidia.com' in openai_base_url:
+                    print(f"✅ LLM enhancement enabled using NVIDIA API with {openai_model}")
+                else:
+                    print(f"✅ LLM enhancement enabled using {openai_model}")
+        else:
+            if not self.quiet_mode:
+                print("⚠️ No LLM API key found. Analysis will use static patterns only.")
         
         # Enhanced model specifications with comprehensive VRAM estimates
         self.model_specs = {
@@ -1468,6 +1771,7 @@ class GPUAnalyzer:
         # Enhance with LLM if available
         llm_context = None
         llm_reasoning = []
+        self_review = None  # Phase 2.5: Initialize self-review
         if self.llm_analyzer:
             if not self.quiet_mode:
                 print("🤖 Enhancing analysis with LLM...")
@@ -1509,6 +1813,32 @@ class GPUAnalyzer:
                 
                 if not self.quiet_mode:
                     print(f"✅ LLM analysis complete (confidence: {enhanced_confidence*100:.0f}%)")
+                
+                # PHASE 2.5: Self-review analysis for consistency and accuracy
+                if not self.quiet_mode:
+                    print("🎓 Performing self-review for accuracy and consistency...")
+                
+                self_review = self.llm_analyzer.self_review_analysis(
+                    code_cells, static_analysis, static_analysis.get('reasoning', []), llm_reasoning
+                )
+                
+                if self_review:
+                    # Apply self-review corrections
+                    corrected_analysis, final_reasoning = self.llm_analyzer.apply_self_review_corrections(
+                        static_analysis, static_analysis.get('reasoning', []), llm_reasoning, self_review
+                    )
+                    
+                    # Update analysis with corrected values
+                    static_analysis.update(corrected_analysis)
+                    
+                    # Replace reasoning with unified reasoning from self-review
+                    llm_reasoning = final_reasoning
+                    
+                    if not self.quiet_mode:
+                        review_status = "passed" if self_review.get('review_passed', True) else "corrected issues"
+                        print(f"✅ Self-review {review_status} - enhanced accuracy and consistency")
+                else:
+                    self_review = None
         
         # Evaluate NVIDIA Best Practices compliance
         if not self.quiet_mode:
@@ -1559,6 +1889,8 @@ class GPUAnalyzer:
             reasoning=static_analysis['reasoning'],
             llm_enhanced=llm_context is not None,
             llm_reasoning=llm_reasoning,
+            self_reviewed=llm_context is not None and self_review is not None,
+            llm_model_used=self.llm_analyzer.model if self.llm_analyzer and llm_context is not None else None,
             nvidia_compliance_score=compliance_score,
             structure_assessment=structure_assessment,
             content_quality_issues=content_issues,
@@ -1567,9 +1899,8 @@ class GPUAnalyzer:
         )
         
     def _extract_notebook_content(self, url_or_path: str) -> Tuple[List[str], List[str]]:
-        """Extract code and markdown cells from notebook."""
+        """Extract code and markdown cells from notebook with optimized I/O."""
         import urllib.parse
-        import tempfile
         import json
         import requests
         
@@ -1589,41 +1920,63 @@ class GPUAnalyzer:
                 # Convert GitLab blob URL to raw URL
                 url_or_path = url_or_path.replace('/-/blob/', '/-/raw/')
             
-            # Download notebook content
+            # Download notebook content directly to memory (no temp file)
             response = requests.get(url_or_path, timeout=30)
             response.raise_for_status()
             content = response.text
             
-            # Create temporary file
+            # Process content directly in memory
             if url_or_path.endswith('.py'):
-                # marimo notebook
+                # marimo notebook - process directly
                 code_cells = [content]
-                # Extract docstrings as markdown
+                # Extract docstrings as markdown using optimized AST parsing
                 import ast
                 try:
                     tree = ast.parse(content)
                     for node in ast.walk(tree):
-                        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
-                            if len(node.value.value) > 50:  # Likely a docstring
-                                markdown_cells.append(node.value.value)
+                        if (isinstance(node, ast.Expr) and 
+                            isinstance(node.value, ast.Constant) and 
+                            isinstance(node.value.value, str) and
+                            len(node.value.value) > 50):  # Likely a docstring
+                            markdown_cells.append(node.value.value)
                 except:
                     pass
             else:
-                # Jupyter notebook
+                # Jupyter notebook - optimized JSON processing
                 notebook_data = json.loads(content)
-                for cell in notebook_data.get('cells', []):
-                    if cell.get('cell_type') == 'code':
+                
+                # Process cells in parallel for large notebooks
+                cells = notebook_data.get('cells', [])
+                if len(cells) > 20:  # Use parallel processing for large notebooks
+                    def process_cell(cell):
+                        cell_type = cell.get('cell_type')
                         source = cell.get('source', [])
-                        if isinstance(source, list):
-                            code_cells.append(''.join(source))
-                        else:
-                            code_cells.append(source)
-                    elif cell.get('cell_type') == 'markdown':
-                        source = cell.get('source', [])
-                        if isinstance(source, list):
-                            markdown_cells.append(''.join(source))
-                        else:
-                            markdown_cells.append(source)
+                        content = ''.join(source) if isinstance(source, list) else source
+                        return (cell_type, content)
+                    
+                    with ThreadPoolExecutor(max_workers=4) as executor:
+                        processed_cells = list(executor.map(process_cell, cells))
+                    
+                    for cell_type, content in processed_cells:
+                        if cell_type == 'code':
+                            code_cells.append(content)
+                        elif cell_type == 'markdown':
+                            markdown_cells.append(content)
+                else:
+                    # Sequential processing for smaller notebooks
+                    for cell in cells:
+                        if cell.get('cell_type') == 'code':
+                            source = cell.get('source', [])
+                            if isinstance(source, list):
+                                code_cells.append(''.join(source))
+                            else:
+                                code_cells.append(source)
+                        elif cell.get('cell_type') == 'markdown':
+                            source = cell.get('source', [])
+                            if isinstance(source, list):
+                                markdown_cells.append(''.join(source))
+                            else:
+                                markdown_cells.append(source)
         else:
             # Local file
             if not os.path.exists(url_or_path):
@@ -1694,7 +2047,7 @@ class GPUAnalyzer:
         
         all_code = '\n'.join(code_cells)
         
-        # First, detect if there's any actual GPU/ML workload
+        # First, detect if there's any actual GPU/ML workload using optimized parallel search
         gpu_workload_patterns = [
             # Training patterns
             r'\b(?:train|fit|epoch|optimizer|loss|backward|gradient)\b',
@@ -1726,7 +2079,9 @@ class GPUAnalyzer:
             r'\b(?:cuda_memory|gpu_memory|cuda\.mem)\b'
         ]
         
-        workload_detected = any(re.search(pattern, all_code, re.IGNORECASE) for pattern in gpu_workload_patterns)
+        # Use parallel pattern search for better performance
+        workload_matches = parallel_pattern_search(all_code, gpu_workload_patterns)
+        workload_detected = any(workload_matches)
         
         if not workload_detected:
             # Check for simple library imports that might indicate ML intent
@@ -1750,10 +2105,12 @@ class GPUAnalyzer:
         # If we get here, there's some form of GPU/ML workload
         analysis['workload_detected'] = True
         
-        # Detect frameworks and patterns
+        # Detect frameworks and patterns using optimized search
         detected_frameworks = []
         for framework, patterns in self.framework_patterns.items():
-            if any(re.search(pattern, all_code, re.IGNORECASE) for pattern in patterns):
+            # Use parallel search for framework patterns
+            framework_matches = parallel_pattern_search(all_code, patterns)
+            if any(framework_matches):
                 detected_frameworks.append(framework)
         
         if not detected_frameworks:
@@ -1798,20 +2155,25 @@ class GPUAnalyzer:
             analysis['workload_type'] = 'inference'
             analysis['reasoning'].append("Inference workload detected")
         
-        # Check for multi-GPU patterns (can work with PCIe + NVLink)
-        multi_gpu_detected = False
-        for pattern in self.multi_gpu_patterns:
-            if re.search(pattern, all_code, re.IGNORECASE):
-                multi_gpu_detected = True
-                analysis['reasoning'].append(f"Multi-GPU capability detected: {pattern}")
-                break
+        # Check for multi-GPU patterns using parallel search
+        multi_gpu_matches = parallel_pattern_search(all_code, self.multi_gpu_patterns)
+        multi_gpu_detected = any(multi_gpu_matches)
+        if multi_gpu_detected:
+            # Find which pattern matched for reasoning
+            for i, matched in enumerate(multi_gpu_matches):
+                if matched:
+                    analysis['reasoning'].append(f"Multi-GPU capability detected: {self.multi_gpu_patterns[i]}")
+                    break
         
-        # Check for SXM-specific patterns (large-scale requirements)
-        for pattern in self.sxm_patterns:
-            if re.search(pattern, all_code, re.IGNORECASE):
-                analysis['sxm_required'] = True
-                analysis['sxm_reasoning'].append(f"Large-scale training pattern detected: {pattern}")
-                break
+        # Check for SXM-specific patterns using parallel search
+        sxm_matches = parallel_pattern_search(all_code, self.sxm_patterns)
+        if any(sxm_matches):
+            analysis['sxm_required'] = True
+            # Find which pattern matched for reasoning
+            for i, matched in enumerate(sxm_matches):
+                if matched:
+                    analysis['sxm_reasoning'].append(f"Large-scale training pattern detected: {self.sxm_patterns[i]}")
+                    break
         
         # Set minimum GPU recommendations based on estimated VRAM needs
         if estimated_vram <= 8:

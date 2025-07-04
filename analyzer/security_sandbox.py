@@ -11,8 +11,10 @@ import tempfile
 import json
 import ast
 import sys
+import re
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional, Any
+from functools import lru_cache
 import shutil
 import resource
 import signal
@@ -38,6 +40,11 @@ class SecuritySandbox:
             'dir', 'getattr', 'setattr', 'hasattr', 'delattr'
         }
         
+    @lru_cache(maxsize=128)
+    def _get_compiled_pattern(self, pattern: str) -> re.Pattern:
+        """Cache compiled regex patterns for better performance."""
+        return re.compile(pattern, re.IGNORECASE)
+    
     def validate_notebook_structure(self, content: str) -> Tuple[bool, str, Optional[Dict]]:
         """
         Validate notebook structure without executing any code.
