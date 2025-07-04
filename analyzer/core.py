@@ -292,7 +292,10 @@ class LLMAnalyzer:
         
         # Get environment-specific configuration
         self.env_config = get_environment_config()
-        print(f"LLM Analyzer initialized for {'production' if is_production_environment() else 'development'} environment")
+        env_type = self.env_config.get('environment_type', 'unknown')
+        print(f"LLM Analyzer initialized for {env_type} environment")
+        if env_type == 'vercel_pro':
+            print("🚀 Vercel Pro features enabled: Full transparency + Smart self-review")
     
     def _parse_runtime_range(self, runtime_str: str) -> tuple:
         """Parse runtime string like '1.5-2.5' into (min, max) float tuple."""
@@ -864,19 +867,43 @@ For runtime estimation:
         """
         Phase 2.5: LLM self-review - the 'teacher grading' approach.
         Reviews the complete analysis for consistency, accuracy, and logical coherence.
+        Optimized for Vercel Pro with smart complexity detection.
         """
         try:
-            if progress_callback:
-                progress_callback("🎓 Phase 1: Preparing analysis for self-review...")
+            # Smart self-review: Skip if analysis is already high-confidence and simple
+            if self.env_config.get('smart_self_review', False):
+                confidence = preliminary_analysis.get('confidence', 0)
+                complexity = preliminary_analysis.get('complexity', 'unknown')
+                
+                # Skip self-review for high-confidence, simple analyses to save time
+                if confidence >= 0.85 and complexity in ['simple', 'basic']:
+                    if progress_callback:
+                        progress_callback("🎓 Self-review skipped: High confidence simple analysis")
+                    return {
+                        "review_passed": True,
+                        "consistency_issues": [],
+                        "recommended_corrections": {},
+                        "unified_reasoning": ["Self-review skipped due to high confidence and simple complexity"],
+                        "confidence_explanation": f"Analysis confidence {confidence*100:.0f}% deemed sufficient",
+                        "overall_assessment": "Self-review bypassed for efficiency"
+                    }
             
-            # Combine first few code cells for context
+            if progress_callback:
+                if self.env_config['detailed_phases']:
+                    progress_callback("🎓 Phase 1: Preparing analysis for self-review...")
+                else:
+                    progress_callback("🎓 Performing accuracy self-review...")
+            
+            # Combine first few code cells for context (optimized for Vercel Pro)
+            max_cells = 7 if self.env_config.get('environment_type') == 'vercel_pro' else 5
             notebook_sample = "\n".join([
                 "=== NOTEBOOK SAMPLE ===",
-                *code_cells[:5]  # First 5 code cells for context
+                *code_cells[:max_cells]  # More cells for Pro plan
             ])
             
-            if len(notebook_sample) > 8000:
-                notebook_sample = notebook_sample[:8000] + "\n... [truncated]"
+            max_sample_length = self.env_config.get('max_content_length', 8000)
+            if len(notebook_sample) > max_sample_length:
+                notebook_sample = notebook_sample[:max_sample_length] + "\n... [truncated]"
             
             if progress_callback:
                 progress_callback("🔍 Phase 2: Analyzing current recommendations for consistency...")
@@ -951,7 +978,9 @@ Focus on accuracy, consistency, and providing clear, unified recommendations tha
             if progress_callback:
                 progress_callback("🧠 Phase 3: Sending self-review request to AI...")
             
-            response = requests.post(
+            # Use connection pooling for better performance
+            session = get_http_session()
+            response = session.post(
                 f"{self.base_url}/v1/chat/completions",
                 headers=self.headers,
                 json={
@@ -961,9 +990,9 @@ Focus on accuracy, consistency, and providing clear, unified recommendations tha
                         {"role": "user", "content": prompt}
                     ],
                     "temperature": 0.1,
-                    "max_tokens": 1000
+                    "max_tokens": 800 if self.env_config.get('smart_self_review', False) else 1000
                 },
-                timeout=30
+                timeout=self.env_config['llm_timeout']
             )
             
             if progress_callback:
@@ -3690,14 +3719,34 @@ def is_production_environment():
 def get_environment_config():
     """Get configuration based on environment"""
     if is_production_environment():
-        return {
-            'llm_timeout': 15,  # Shorter timeout for production
-            'progress_batching': True,  # Batch progress messages
-            'detailed_phases': False,  # Simplified progress for production
-            'self_review_enabled': False,  # Disable self-review in production for speed
-            'max_content_length': 8000,  # Smaller content limit
-            'connection_timeout': 10
-        }
+        # Check if we're on Vercel Pro (has more resources)
+        is_vercel_pro = (
+            os.getenv('VERCEL_ENV') == 'production' and 
+            (os.getenv('VERCEL_PLAN') == 'pro' or os.getenv('VERCEL_PLAN') == 'enterprise')
+        ) or os.getenv('VERCEL_PRO_FEATURES') == 'true'
+        
+        if is_vercel_pro:
+            return {
+                'llm_timeout': 25,  # Longer timeout for Pro plan
+                'progress_batching': False,  # Real-time progress on Pro
+                'detailed_phases': True,  # Full transparency on Pro
+                'self_review_enabled': True,  # Enable self-review on Pro
+                'max_content_length': 10000,  # More content on Pro
+                'connection_timeout': 20,
+                'smart_self_review': True,  # Intelligent self-review
+                'environment_type': 'vercel_pro'
+            }
+        else:
+            return {
+                'llm_timeout': 15,  # Shorter timeout for free plan
+                'progress_batching': True,  # Batch progress messages
+                'detailed_phases': False,  # Simplified progress for free plan
+                'self_review_enabled': False,  # Disable self-review on free plan
+                'max_content_length': 8000,  # Smaller content limit
+                'connection_timeout': 10,
+                'smart_self_review': False,
+                'environment_type': 'vercel_free'
+            }
     else:
         return {
             'llm_timeout': 30,  # Full timeout for local development
@@ -3705,5 +3754,7 @@ def get_environment_config():
             'detailed_phases': True,  # Full transparency locally
             'self_review_enabled': True,  # Full self-review locally
             'max_content_length': 12000,  # Full content locally
-            'connection_timeout': 30
+            'connection_timeout': 30,
+            'smart_self_review': False,  # Standard self-review locally
+            'environment_type': 'local_development'
         }
