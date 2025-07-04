@@ -1,6 +1,6 @@
 # Notebook Analyzer
 
-A comprehensive tool for analyzing Jupyter notebooks (.ipynb) and marimo notebooks (.py) to determine NVIDIA GPU requirements, runtime estimates, and compliance with NVIDIA notebook best practices.
+A comprehensive tool for analyzing Jupyter notebooks (.ipynb) and marimo notebooks (.py) to determine NVIDIA GPU requirements, runtime estimates, and compliance with NVIDIA notebook best practices. Let it rip!
 
 **Available as both CLI tool and web application with MCP (Model Context Protocol) support for AI assistant integration.**
 
