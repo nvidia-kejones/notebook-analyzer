@@ -227,10 +227,40 @@ function displayResults(data) {
                     <div class="col-lg-6 mb-4">
                         <div class="card">
                             <div class="card-header">
-                                <h6 class="mb-0">
-                                    <i class="bi bi-lightbulb me-2"></i>
-                                    Analysis Reasoning
-                                </h6>
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <h6 class="mb-0">
+                                        <i class="bi bi-lightbulb me-2"></i>
+                                        Analysis Reasoning
+                                    </h6>
+                                    <button class="btn btn-sm btn-outline-info" type="button" data-bs-toggle="collapse" data-bs-target="#methodologyCollapse" aria-expanded="false" aria-controls="methodologyCollapse">
+                                        <i class="bi bi-info-circle me-1"></i>
+                                        How it works
+                                    </button>
+                                </div>
+                                <div class="collapse mt-3" id="methodologyCollapse">
+                                    <div class="alert alert-info">
+                                        <h6 class="alert-heading">
+                                            <i class="bi bi-gear me-1"></i>
+                                            Analysis Methodology
+                                        </h6>
+                                        <p class="mb-2">
+                                            <strong>Two-Stage Analysis:</strong> Our analyzer uses a two-stage approach combining static pattern detection with AI enhanced analysis.
+                                        </p>
+                                        <hr class="my-2">
+                                        <ul class="mb-2 small">
+                                            <li><strong>Static Analysis:</strong> Scans code for GPU frameworks, model patterns, and workload indicators</li>
+                                            <li><strong>AI Enhancement:</strong> Uses LLM to understand context, model complexity, and optimization techniques</li>
+                                            <li><strong>Confidence Scoring:</strong> Combines pattern certainty with LLM agreement for overall confidence</li>
+                                        </ul>
+                                        <div class="small text-muted">
+                                            <i class="bi bi-check-circle-fill text-success me-1"></i> High confidence: Clear patterns detected
+                                            <br>
+                                            <i class="bi bi-check-circle text-warning me-1"></i> Medium confidence: Partial indicators found
+                                            <br>
+                                            <i class="bi bi-question-circle text-muted me-1"></i> Low confidence: Estimated or uncertain
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                             <div class="card-body">
                                 ${getReasoningContent(analysis)}
@@ -306,6 +336,9 @@ function displayResults(data) {
     `;
     
     container.classList.remove('d-none');
+    
+    // Initialize collapsible sections
+    setTimeout(initializeCollapsibleSections, 100);
     
     // Populate the API response after results are displayed
     if (globalAnalysisData) {
@@ -790,7 +823,7 @@ function getReasoningContent(analysis) {
                     ${hasConflict ? '<i class="bi bi-exclamation-triangle text-warning ms-2" title="Conflicts detected with static analysis"></i>' : ''}
                 </div>
                 ${analysis.llm_reasoning.map(reason => 
-                    `<div class="reasoning-item llm-reasoning">${reason}</div>`
+                    `<div class="reasoning-item llm-reasoning">${addConfidenceIndicator(reason, 'high')}</div>`
                 ).join('')}
             </div>
         `;
@@ -807,6 +840,9 @@ function getReasoningContent(analysis) {
             </div>
         ` : '';
         
+        const isCollapsible = hasLLM; // Make static analysis collapsible when LLM is available
+        const collapseId = 'staticAnalysisCollapse';
+        
         content += `
             <div class="analysis-section ${hasLLM ? 'secondary-analysis mt-3' : 'primary-analysis'}">
                 <div class="d-flex align-items-center mb-2">
@@ -815,11 +851,19 @@ function getReasoningContent(analysis) {
                         ${staticTitle}
                     </h6>
                     ${staticBadge}
+                    ${isCollapsible ? `
+                        <button class="btn btn-sm btn-outline-secondary ms-auto" type="button" data-bs-toggle="collapse" data-bs-target="#${collapseId}" aria-expanded="false" aria-controls="${collapseId}">
+                            <i class="bi bi-chevron-down"></i>
+                            <span class="collapse-text">Show Details</span>
+                        </button>
+                    ` : ''}
                 </div>
                 ${conflictWarning}
-                ${analysis.reasoning.map(reason => 
-                    `<div class="reasoning-item ${hasLLM ? 'static-reasoning' : ''}">${reason}</div>`
-                ).join('')}
+                <div class="${isCollapsible ? 'collapse' : ''}" id="${isCollapsible ? collapseId : ''}">
+                    ${analysis.reasoning.map(reason => 
+                        `<div class="reasoning-item ${hasLLM ? 'static-reasoning' : ''}">${addConfidenceIndicator(reason, hasLLM ? 'medium' : 'high')}</div>`
+                    ).join('')}
+                </div>
             </div>
         `;
     }
@@ -964,6 +1008,62 @@ function renderComplianceDetails(analysis) {
     return html || '<p class="text-muted">No detailed compliance information available.</p>';
 }
 
+function addConfidenceIndicator(reasonText, defaultConfidence) {
+    const indicators = {
+        'high': '<i class="bi bi-check-circle-fill text-success me-2 confidence-indicator" title="High confidence"></i>',
+        'medium': '<i class="bi bi-check-circle text-warning me-2 confidence-indicator" title="Medium confidence"></i>',
+        'low': '<i class="bi bi-question-circle text-muted me-2 confidence-indicator" title="Low confidence"></i>'
+    };
+    
+    // Determine confidence based on content
+    const actualConfidence = determineReasoningConfidence(reasonText, defaultConfidence);
+    return indicators[actualConfidence] + reasonText;
+}
+
+function determineReasoningConfidence(reasonText, defaultConfidence) {
+    const text = reasonText.toLowerCase();
+    
+    // High confidence indicators
+    if (text.includes('detected') || text.includes('identified') || text.includes('confirmed') || 
+        text.includes('workload') || text.includes('model') || text.includes('framework') ||
+        text.includes('found') || text.includes('uses') || text.includes('contains')) {
+        return 'high';
+    }
+    
+    // Low confidence indicators
+    if (text.includes('estimated') || text.includes('assumed') || text.includes('might') || 
+        text.includes('could') || text.includes('may') || text.includes('unclear') ||
+        text.includes('possibly') || text.includes('likely') || text.includes('suggests')) {
+        return 'low';
+    }
+    
+    // Return default confidence if no specific indicators found
+    return defaultConfidence || 'medium';
+}
+
+function initializeCollapsibleSections() {
+    // Add event listeners for collapsible sections
+    const collapseElements = document.querySelectorAll('[data-bs-toggle="collapse"]');
+    collapseElements.forEach(button => {
+        const target = document.querySelector(button.getAttribute('data-bs-target'));
+        if (target) {
+            target.addEventListener('show.bs.collapse', function () {
+                const icon = button.querySelector('i');
+                const text = button.querySelector('.collapse-text');
+                if (icon) icon.className = 'bi bi-chevron-up';
+                if (text) text.textContent = 'Hide Details';
+            });
+            
+            target.addEventListener('hide.bs.collapse', function () {
+                const icon = button.querySelector('i');
+                const text = button.querySelector('.collapse-text');
+                if (icon) icon.className = 'bi bi-chevron-down';
+                if (text) text.textContent = 'Show Details';
+            });
+        }
+    });
+}
+
 function showError(message) {
     document.getElementById('errorMessage').textContent = message;
     document.getElementById('streamingError').classList.remove('d-none');
@@ -1059,6 +1159,76 @@ function showFriendlyMessage() {
 
 .analysis-section {
     margin-bottom: 1rem;
+}
+
+/* Phase 2: Enhanced UX styling */
+.confidence-indicator {
+    font-size: 0.875rem;
+    opacity: 0.8;
+    transition: opacity 0.2s ease;
+}
+
+.reasoning-item:hover .confidence-indicator {
+    opacity: 1;
+}
+
+.reasoning-item {
+    transition: all 0.2s ease;
+    position: relative;
+}
+
+.reasoning-item:hover {
+    transform: translateX(2px);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+/* Collapsible section styling */
+.btn[data-bs-toggle="collapse"] {
+    transition: all 0.2s ease;
+}
+
+.btn[data-bs-toggle="collapse"]:hover {
+    transform: translateY(-1px);
+}
+
+.btn[data-bs-toggle="collapse"] i {
+    transition: transform 0.2s ease;
+}
+
+/* Methodology explanation styling */
+.alert-info {
+    border-left: 4px solid #0dcaf0;
+    background: linear-gradient(135deg, #f8fdff 0%, #e3f2fd 100%);
+}
+
+.alert-info .alert-heading {
+    color: #0c63e4;
+}
+
+/* Enhanced confidence styling */
+.confidence-indicator.text-success {
+    color: #198754 !important;
+}
+
+.confidence-indicator.text-warning {
+    color: #ffc107 !important;
+}
+
+.confidence-indicator.text-muted {
+    color: #6c757d !important;
+}
+
+/* Smooth animations */
+.collapse {
+    transition: height 0.3s ease;
+}
+
+.card {
+    transition: box-shadow 0.2s ease;
+}
+
+.card:hover {
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
 }
 
 .analysis-section h6 {
