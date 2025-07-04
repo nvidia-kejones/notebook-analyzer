@@ -6,7 +6,7 @@ set -e  # Exit on any error unless explicitly handled
 
 # Default configuration
 DEFAULT_BASE_URL="http://localhost:8080"
-TIMEOUT=30
+TIMEOUT=90
 QUICK_MODE=false
 TEMP_DIR="/tmp/notebook_test_$$"
 RESULTS_FILE="$TEMP_DIR/results.txt"
@@ -335,7 +335,7 @@ EOF
 }
 EOF
     
-          http_code=$(curl -s -m 30 -o "$response_file" -w "%{http_code}" \
+          http_code=$(curl -s -m 90 -o "$response_file" -w "%{http_code}" \
           -F "file=@$TEMP_DIR/legitimate.ipynb" \
           "$BASE_URL/api/analyze" 2>/dev/null)
     
@@ -565,14 +565,51 @@ test_marimo_analysis() {
         return 1
     fi
     
-    local notebook_content=$(cat "examples/marimo_example.py" | jq -Rs .)
-    local payload="{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"analyze_notebook\",\"arguments\":{\"notebook_content\":$notebook_content,\"source_info\":\"marimo_example.py\"}}}"
+    echo "🐍 Testing marimo analysis (this may take up to 90 seconds due to self-review)..."
+    
+    # Use Python to properly handle Unicode and JSON encoding
     local response_file="$TEMP_DIR/marimo_response"
     
-    if curl -s -m "$TIMEOUT" -o "$response_file" -w "%{http_code}" \
-        -H "Content-Type: application/json" \
-        -d "$payload" \
-        "$BASE_URL/mcp" > "$TEMP_DIR/marimo_code" 2>/dev/null; then
+    # Create a temporary Python script to handle the request properly
+    cat > "$TEMP_DIR/marimo_test.py" << 'EOF'
+import json
+import requests
+import sys
+
+try:
+    # Read the marimo file content
+    marimo_path = sys.argv[3] if len(sys.argv) > 3 else 'examples/marimo_example.py'
+    with open(marimo_path, 'r', encoding='utf-8') as f:
+        content = f.read()
+    
+    # Create the proper JSON payload
+    payload = {
+        'jsonrpc': '2.0',
+        'id': 4,
+        'method': 'tools/call',
+        'params': {
+            'name': 'analyze_notebook',
+            'arguments': {
+                'notebook_content': content,
+                'source_info': 'marimo_example.py'
+            }
+        }
+    }
+    
+         # Send the request with longer timeout for complex marimo files and self-review
+     response = requests.post(sys.argv[1], json=payload, timeout=90)
+    print(response.status_code)
+    
+    # Write response to file
+    with open(sys.argv[2], 'w', encoding='utf-8') as f:
+        f.write(response.text)
+        
+except Exception as e:
+    print(f"Error: {e}")
+    sys.exit(1)
+EOF
+    
+    if python3 "$TEMP_DIR/marimo_test.py" "$BASE_URL/mcp" "$response_file" "examples/marimo_example.py" > "$TEMP_DIR/marimo_code" 2>/dev/null; then
         
         local http_code=$(cat "$TEMP_DIR/marimo_code")
         if [ "$http_code" = "200" ]; then
@@ -606,7 +643,7 @@ test_streaming_endpoint() {
     fi
     
     local response_file="$TEMP_DIR/streaming_response"
-    local timeout_for_streaming=30  # Reasonable timeout - streaming might be slow
+    local timeout_for_streaming=90  # Increased timeout for self-review feature
     
     # Test streaming endpoint - handle both success and timeout cases
     local curl_exit_code=0

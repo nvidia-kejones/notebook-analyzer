@@ -575,8 +575,6 @@ def analyze_stream():
     def generate_progress(analysis_input, source_name):
         """Generator function for Server-Sent Events."""
         try:
-            yield f"data: {json.dumps({'type': 'progress', 'message': 'Starting analysis...'})}\n\n"
-            
             # Create analyzer with thread-safe model selection
             analyzer = GPUAnalyzer(quiet_mode=True)
             
@@ -584,39 +582,61 @@ def analyze_stream():
             if selected_model and analyzer.llm_analyzer:
                 analyzer.llm_analyzer.model = selected_model
             
-            if analysis_input['type'] == 'file':
-                filename = analysis_input['name']
-                yield f"data: {json.dumps({'type': 'progress', 'message': f'Uploaded file: {filename}'})}\n\n"
-            elif analysis_input['type'] == 'url':
-                yield f"data: {json.dumps({'type': 'progress', 'message': 'Fetching notebook from URL...'})}\n\n"
+            # Create a queue for real-time progress streaming
+            import queue
+            import threading
+            from typing import Any, Optional
             
-            # Progress updates during analysis
-            yield f"data: {json.dumps({'type': 'progress', 'message': 'Loading notebook content...'})}\n\n"
-            time.sleep(0.5)  # Brief pause for UI feedback
+            progress_queue: queue.Queue = queue.Queue()
+            analysis_complete = threading.Event()
+            analysis_result: list[Optional[Any]] = [None]  # Use list to make it mutable
+            analysis_error: list[Optional[Exception]] = [None]
             
-            yield f"data: {json.dumps({'type': 'progress', 'message': 'Extracting code and markdown cells...'})}\n\n"
-            time.sleep(0.3)
+            def progress_callback(message: str) -> None:
+                progress_queue.put(message)
             
-            yield f"data: {json.dumps({'type': 'progress', 'message': 'Analyzing GPU requirements...'})}\n\n"
-            time.sleep(0.5)
+            def run_analysis() -> None:
+                try:
+                    # Perform the actual analysis with progress tracking
+                    if analysis_input['type'] == 'file':
+                        result = analyzer.analyze_notebook_with_progress(analysis_input['path'], progress_callback)
+                    else:
+                        result = analyzer.analyze_notebook_with_progress(analysis_input['url'], progress_callback)
+                    
+                    analysis_result[0] = result
+                except Exception as e:
+                    analysis_error[0] = e
+                finally:
+                    analysis_complete.set()
             
-            yield f"data: {json.dumps({'type': 'progress', 'message': 'Evaluating workload complexity...'})}\n\n"
-            time.sleep(0.3)
+            # Start analysis in a separate thread
+            analysis_thread = threading.Thread(target=run_analysis)
+            analysis_thread.start()
             
-            # Perform the actual analysis
-            if analysis_input['type'] == 'file':
-                result = analyzer.analyze_notebook(analysis_input['path'])
-            else:
-                result = analyzer.analyze_notebook(analysis_input['url'])
+            # Stream progress messages as they arrive
+            while not analysis_complete.is_set() or not progress_queue.empty():
+                try:
+                    # Get progress message with timeout
+                    message = progress_queue.get(timeout=0.1)
+                    yield f"data: {json.dumps({'type': 'progress', 'message': message})}\n\n"
+                except queue.Empty:
+                    # Continue checking if analysis is complete
+                    continue
             
+            # Wait for analysis thread to complete
+            analysis_thread.join()
+            
+            # Check for errors
+            if analysis_error[0]:
+                raise analysis_error[0]
+            
+            # Send completion message
+            yield f"data: {json.dumps({'type': 'progress', 'message': 'Analysis complete!'})}\n\n"
+            
+            # Send results
+            result = analysis_result[0]
             if result:
-                yield f"data: {json.dumps({'type': 'progress', 'message': 'Generating recommendations...'})}\n\n"
-                time.sleep(0.3)
-                
                 analysis_data = format_analysis_for_web(result)
-                
-                yield f"data: {json.dumps({'type': 'progress', 'message': 'Analysis complete!'})}\n\n"
-                time.sleep(0.2)
                 
                 # Send the complete results
                 source_type = 'file' if analysis_input['type'] == 'file' else 'url'

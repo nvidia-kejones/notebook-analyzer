@@ -342,12 +342,18 @@ class LLMAnalyzer:
             # If parsing fails, return the original string
             return runtime_str
     
-    def analyze_notebook_context(self, code_cells: List[str], markdown_cells: List[str]) -> Optional[Dict]:
+    def analyze_notebook_context(self, code_cells: List[str], markdown_cells: List[str], progress_callback=None) -> Optional[Dict]:
         """Send notebook to LLM for contextual analysis."""
         try:
+            if progress_callback:
+                progress_callback("🤖 Starting AI analysis...")
+            
             # Optimized content extraction - focus on most relevant code
             relevant_code = []
             relevant_markdown = []
+            
+            if progress_callback:
+                progress_callback("🔍 Scanning for ML models and frameworks...")
             
             # Extract only GPU-relevant code cells (more efficient)
             gpu_keywords = ['cuda', 'gpu', 'torch', 'tensorflow', 'train', 'model', 'batch', 'device']
@@ -366,6 +372,9 @@ class LLMAnalyzer:
                 if any(keyword in cell.lower() for keyword in ['requirement', 'gpu', 'hardware', 'setup']):
                     relevant_markdown.append(cell)
             
+            if progress_callback:
+                progress_callback("📊 Analyzing notebook content structure...")
+            
             # Combine with smart truncation
             notebook_content = "\n".join([
                 "=== RELEVANT CODE ===",
@@ -377,6 +386,9 @@ class LLMAnalyzer:
             # More aggressive but smarter truncation
             if len(notebook_content) > 12000:
                 notebook_content = notebook_content[:12000] + "\n... [content truncated for efficiency]"
+            
+            if progress_callback:
+                progress_callback("🧠 Sending analysis request to AI model...")
             
             prompt = f"""Analyze this Jupyter notebook for GPU requirements. Focus on:
 
@@ -448,9 +460,15 @@ For runtime estimation:
                 timeout=30
             )
             
+            if progress_callback:
+                progress_callback("📏 Processing AI analysis results...")
+            
             if response.status_code == 200:
                 result = response.json()
                 content = result['choices'][0]['message']['content']
+                
+                if progress_callback:
+                    progress_callback("⚡ Parsing workload complexity and optimizations...")
                 
                 # Try to extract JSON from the response
                 try:
@@ -459,8 +477,32 @@ For runtime estimation:
                     json_end = content.rfind('}') + 1
                     if json_start != -1 and json_end > json_start:
                         json_str = content[json_start:json_end]
-                        return json.loads(json_str)
-                except:
+                        analysis_result = json.loads(json_str)
+                        
+                        if progress_callback:
+                            # Show some insights from the analysis
+                            workload_type = analysis_result.get('workload_type', 'unknown')
+                            complexity = analysis_result.get('complexity', 'unknown')
+                            models = analysis_result.get('models_detected', [])
+                            vram = analysis_result.get('estimated_vram_gb', 0)
+                            
+                            progress_callback(f"🎯 Workload classified: {workload_type} ({complexity} complexity)")
+                            if models:
+                                progress_callback(f"📊 Models detected: {', '.join(models[:3])}")
+                            if vram > 0:
+                                progress_callback(f"💾 Estimated VRAM requirement: {vram}GB")
+                            
+                            optimizations = analysis_result.get('memory_optimizations', [])
+                            if optimizations:
+                                progress_callback(f"⚡ Optimizations found: {', '.join(optimizations[:2])}")
+                            
+                            confidence = analysis_result.get('confidence', 0)
+                            progress_callback(f"✅ AI analysis complete - confidence: {confidence*100:.0f}%")
+                        
+                        return analysis_result
+                except Exception as parse_error:
+                    if progress_callback:
+                        progress_callback("⚠️ AI response parsing failed, using fallback analysis")
                     pass
                 
                 # Fallback: return basic analysis if JSON parsing fails
@@ -477,10 +519,14 @@ For runtime estimation:
                     "reasoning": ["LLM response parsing failed"]
                 }
             else:
+                if progress_callback:
+                    progress_callback(f"❌ AI analysis failed (HTTP {response.status_code})")
                 print(f"LLM API error: {response.status_code}")
                 return None
                 
         except Exception as e:
+            if progress_callback:
+                progress_callback(f"❌ AI analysis error: {str(e)[:50]}...")
             print(f"LLM analysis failed: {e}")
             return None
     
@@ -3261,3 +3307,186 @@ class GPUAnalyzer:
         analysis['confidence_factors'] = confidence_factors
         
         return final_confidence
+
+    def analyze_notebook_with_progress(self, url_or_path: str, progress_callback=None) -> GPURequirement:
+        """
+        Main entry point for notebook analysis with progress streaming support.
+        Coordinates all analysis components and returns comprehensive results.
+        """
+        if progress_callback:
+            progress_callback("📁 Starting notebook analysis...")
+        elif not self.quiet_mode:
+            print(f"📁 Analyzing notebook: {url_or_path}")
+        
+        # Extract and parse notebook content
+        if progress_callback:
+            progress_callback("📂 Loading notebook content...")
+        
+        try:
+            code_cells, markdown_cells = self._extract_notebook_content(url_or_path)
+        except Exception as e:
+            if progress_callback:
+                progress_callback(f"❌ Failed to load notebook: {str(e)[:50]}...")
+            elif not self.quiet_mode:
+                print(f"❌ Failed to load notebook: {e}")
+            raise
+        
+        if progress_callback:
+            progress_callback(f"✅ Loaded {len(code_cells)} code cells, {len(markdown_cells)} markdown cells")
+        elif not self.quiet_mode:
+            print(f"✅ Successfully loaded notebook ({len(code_cells)} code cells, {len(markdown_cells)} markdown cells)")
+        
+        # Perform static analysis
+        if progress_callback:
+            progress_callback("🔍 Analyzing GPU requirements...")
+        
+        static_analysis = self._perform_static_analysis(code_cells, markdown_cells)
+        
+        # Enhance with LLM if available
+        llm_context = None
+        llm_reasoning = []
+        self_review = None
+        if self.llm_analyzer:
+            if progress_callback:
+                progress_callback("🤖 Evaluating workload complexity...")
+            elif not self.quiet_mode:
+                print("🤖 Enhancing analysis with LLM...")
+            
+            # Pass progress callback to LLM analyzer
+            llm_context = self.llm_analyzer.analyze_notebook_context(code_cells, markdown_cells, progress_callback)
+            if llm_context:
+                if progress_callback:
+                    progress_callback("⚡ Enhancing GPU recommendations...")
+                
+                enhanced_analysis, llm_reasoning = self.llm_analyzer.enhance_gpu_recommendation(static_analysis, llm_context)
+                static_analysis.update(enhanced_analysis)
+                
+                # CRITICAL FIX: Regenerate comprehensive recommendations after LLM enhancement
+                # The LLM may have significantly changed VRAM requirements, so we need to update
+                # the consumer/enterprise recommendations based on the new estimates
+                self._generate_comprehensive_recommendations(static_analysis)
+                
+                # CONSISTENCY FIX: Ensure minimum VRAM shows total available VRAM when quantity > 1
+                # This must happen AFTER LLM enhancement to get the correct final VRAM value
+                if static_analysis.get('min_quantity', 1) > 1:
+                    # Convert per-GPU VRAM to total VRAM for multi-GPU minimum setups
+                    min_gpu_type = static_analysis.get('min_gpu_type', '')
+                    if min_gpu_type in self.gpu_specs:
+                        per_gpu_vram = self.gpu_specs[min_gpu_type]['vram']
+                        min_quantity = static_analysis.get('min_quantity', 1)
+                        static_analysis['min_vram_gb'] = per_gpu_vram * min_quantity
+                
+                # RUNTIME CONSISTENCY FIX: Update minimum runtime to match consumer/enterprise when same hardware
+                # If consumer recommendation exists and uses same GPU, use consumer runtime for consistency
+                consumer_gpu_type = static_analysis.get('consumer_gpu_type')
+                consumer_quantity = static_analysis.get('consumer_quantity')
+                min_gpu_type = static_analysis.get('min_gpu_type', '')
+                min_quantity = static_analysis.get('min_quantity', 1)
+                
+                if (consumer_gpu_type == min_gpu_type and consumer_quantity == min_quantity and
+                    static_analysis.get('consumer_runtime_estimate')):
+                    # Same hardware - use consumer runtime for consistency
+                    static_analysis['min_runtime_estimate'] = static_analysis['consumer_runtime_estimate']
+                
+                # Recalculate confidence with LLM context
+                enhanced_confidence = self._calculate_dynamic_confidence(static_analysis, llm_context)
+                static_analysis['confidence'] = enhanced_confidence
+                
+                if progress_callback:
+                    progress_callback("🎓 Performing self-review for accuracy...")
+                elif not self.quiet_mode:
+                    print(f"✅ LLM analysis complete (confidence: {enhanced_confidence*100:.0f}%)")
+                
+                # PHASE 2.5: Self-review analysis for consistency and accuracy
+                if not self.quiet_mode and not progress_callback:
+                    print("🎓 Performing self-review for accuracy and consistency...")
+                
+                self_review = self.llm_analyzer.self_review_analysis(
+                    code_cells, static_analysis, static_analysis.get('reasoning', []), llm_reasoning
+                )
+                
+                if self_review:
+                    if progress_callback:
+                        progress_callback("🔧 Applying self-review corrections...")
+                    
+                    # Apply self-review corrections
+                    corrected_analysis, final_reasoning = self.llm_analyzer.apply_self_review_corrections(
+                        static_analysis, static_analysis.get('reasoning', []), llm_reasoning, self_review
+                    )
+                    
+                    # Update analysis with corrected values
+                    static_analysis.update(corrected_analysis)
+                    
+                    # Replace reasoning with unified reasoning from self-review
+                    llm_reasoning = final_reasoning
+                    
+                    if progress_callback:
+                        review_status = "passed" if self_review.get('review_passed', True) else "corrected issues"
+                        progress_callback(f"✅ Self-review {review_status}")
+                    elif not self.quiet_mode:
+                        review_status = "passed" if self_review.get('review_passed', True) else "corrected issues"
+                        print(f"✅ Self-review {review_status} - enhanced accuracy and consistency")
+                else:
+                    self_review = None
+        
+        # Evaluate NVIDIA Best Practices compliance
+        if progress_callback:
+            progress_callback("📋 Evaluating NVIDIA compliance...")
+        elif not self.quiet_mode:
+            print("📋 Evaluating NVIDIA compliance...")
+        
+        structure_assessment = self.evaluate_notebook_structure(code_cells, markdown_cells)
+        content_issues = self.assess_content_quality(code_cells, markdown_cells)
+        technical_recommendations = self.check_technical_standards(code_cells)
+        
+        # Get LLM compliance evaluation if available
+        llm_compliance = None
+        if self.llm_analyzer:
+            llm_compliance = self.llm_analyzer.evaluate_notebook_compliance(code_cells, markdown_cells)
+        
+        # Calculate comprehensive compliance score
+        compliance_score = self.calculate_nvidia_compliance_score(
+            structure_assessment, content_issues, technical_recommendations, llm_compliance
+        )
+        
+        if progress_callback:
+            progress_callback("🏁 Generating final recommendations...")
+        elif not self.quiet_mode:
+            print(f"✅ Compliance evaluation complete (score: {compliance_score:.0f}/100)")
+        
+        # Build final result
+        return GPURequirement(
+            min_gpu_type=static_analysis['min_gpu_type'],
+            min_quantity=static_analysis['min_quantity'],
+            min_vram_gb=static_analysis['min_vram_gb'],
+            min_runtime_estimate=static_analysis['min_runtime_estimate'],
+            consumer_gpu_type=static_analysis.get('consumer_gpu_type'),
+            consumer_quantity=static_analysis.get('consumer_quantity'),
+            consumer_vram_gb=static_analysis.get('consumer_vram_gb'),
+            consumer_runtime_estimate=static_analysis.get('consumer_runtime_estimate'),
+            consumer_viable=static_analysis.get('consumer_viable', True),
+            consumer_limitation=static_analysis.get('consumer_limitation'),
+            enterprise_gpu_type=static_analysis.get('enterprise_gpu_type', ""),
+            enterprise_quantity=static_analysis.get('enterprise_quantity', 1),
+            enterprise_vram_gb=static_analysis.get('enterprise_vram_gb', 0),
+            enterprise_runtime_estimate=static_analysis.get('enterprise_runtime_estimate', ""),
+            optimal_gpu_type=static_analysis.get('optimal_gpu_type', ""),
+            optimal_quantity=static_analysis.get('optimal_quantity', 1),
+            optimal_vram_gb=static_analysis.get('optimal_vram_gb', 0),
+            optimal_runtime_estimate=static_analysis.get('optimal_runtime_estimate', ""),
+            sxm_required=static_analysis['sxm_required'],
+            sxm_reasoning=static_analysis['sxm_reasoning'],
+            arm_compatibility=static_analysis['arm_compatibility'],
+            arm_reasoning=static_analysis['arm_reasoning'],
+            confidence=static_analysis['confidence'],
+            reasoning=static_analysis['reasoning'],
+            llm_enhanced=llm_context is not None,
+            llm_reasoning=llm_reasoning,
+            self_reviewed=llm_context is not None and self_review is not None,
+            llm_model_used=self.llm_analyzer.model if self.llm_analyzer and llm_context is not None else None,
+            nvidia_compliance_score=compliance_score,
+            structure_assessment=structure_assessment,
+            content_quality_issues=content_issues,
+            technical_recommendations=technical_recommendations,
+            confidence_factors=static_analysis.get('confidence_factors', [])
+        )
