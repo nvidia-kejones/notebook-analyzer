@@ -958,12 +958,16 @@ CRITICAL REVIEW QUESTIONS:
 3. **Recommendation Appropriateness**: Are the GPU tiers (minimum/consumer/enterprise) logically ordered?
 4. **Confidence Calibration**: Does the confidence percentage match the certainty of evidence?
 5. **Workload Classification**: Is the workload type correctly identified based on the code patterns?
+6. **Consumer Viability Logic**: If consumer GPUs are marked as not viable, is the minimum recommendation still a consumer card?
 
 SPECIFIC CHECKS:
 - If workload is "simple" or "basic", why recommend high-end GPUs?
 - If static says "GPU workload" but LLM says "no GPU needed", which is correct?
 - Do VRAM estimates make sense for the detected models/operations?
 - Are runtime estimates realistic for the recommended hardware?
+- **CRITICAL**: If consumer_viable=false, then min_gpu_type should NOT be RTX 4060/4070/4080/4090/5080/5090
+- **CRITICAL**: If consumer GPUs can't handle the workload, minimum should start with enterprise cards (L4, L40, A100, etc.)
+- **CRITICAL**: Check GPU tier logic: minimum ≤ consumer ≤ enterprise in terms of capability
 
 IMPORTANT CONSTRAINTS:
 - Confidence must be between 0-100 (as integer percentage)
@@ -978,6 +982,8 @@ Respond in JSON format:
         "workload_type": "corrected_type_if_needed",
         "confidence": integer_between_0_and_100,
         "min_gpu_type": "valid_gpu_from_list_above_if_needed",
+        "consumer_viable": true_or_false_if_correction_needed,
+        "consumer_limitation": "reason_if_consumer_not_viable",
         "reasoning_updates": ["updated reasoning point 1", "updated reasoning point 2"]
     }},
     "unified_reasoning": ["clear unified reasoning point 1", "clear unified reasoning point 2"],
@@ -1053,6 +1059,11 @@ Focus on accuracy, consistency, and providing clear, unified recommendations tha
                                     progress_callback(f"🔧 Adjusting confidence: {corrections['confidence']}%")
                                 if 'min_gpu_type' in corrections:
                                     progress_callback(f"🔧 Updating GPU recommendation: {corrections['min_gpu_type']}")
+                                if 'consumer_viable' in corrections:
+                                    viable_status = "viable" if corrections['consumer_viable'] else "not viable"
+                                    progress_callback(f"🔧 Correcting consumer GPU viability: {viable_status}")
+                                if 'consumer_limitation' in corrections:
+                                    progress_callback(f"🔧 Consumer limitation: {corrections['consumer_limitation']}")
                                 if corrections.get('reasoning_updates'):
                                     progress_callback(f"🔧 Updating reasoning with {len(corrections['reasoning_updates'])} points")
                             
@@ -1099,6 +1110,33 @@ Focus on accuracy, consistency, and providing clear, unified recommendations tha
             # Apply workload type correction
             if 'workload_type' in corrections:
                 corrected_analysis['workload_type'] = corrections['workload_type']
+            
+            # Apply consumer viability corrections
+            if 'consumer_viable' in corrections:
+                corrected_analysis['consumer_viable'] = corrections['consumer_viable']
+                
+                # If consumer is now not viable, ensure minimum isn't a consumer card
+                if not corrections['consumer_viable']:
+                    current_min_gpu = corrected_analysis.get('min_gpu_type', '')
+                    consumer_cards = ['RTX 4060', 'RTX 4070', 'RTX 4080', 'RTX 4090', 'RTX 5080', 'RTX 5090']
+                    
+                    if current_min_gpu in consumer_cards:
+                        # Upgrade minimum to enterprise card
+                        vram_needed = corrected_analysis.get('min_vram_gb', 16)
+                        if vram_needed <= 24:
+                            corrected_analysis['min_gpu_type'] = 'L4'
+                            corrected_analysis['min_vram_gb'] = 24
+                        elif vram_needed <= 48:
+                            corrected_analysis['min_gpu_type'] = 'L40S'
+                            corrected_analysis['min_vram_gb'] = 48
+                        else:
+                            corrected_analysis['min_gpu_type'] = 'A100 PCIe 80G'
+                            corrected_analysis['min_vram_gb'] = 80
+                        
+                        final_reasoning.append(f"Corrected minimum GPU from {current_min_gpu} to {corrected_analysis['min_gpu_type']} since consumer GPUs are not viable")
+            
+            if 'consumer_limitation' in corrections:
+                corrected_analysis['consumer_limitation'] = corrections['consumer_limitation']
             
             # Apply confidence adjustment with validation
             if 'confidence' in corrections:
