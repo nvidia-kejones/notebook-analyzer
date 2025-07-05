@@ -14,8 +14,8 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Test configuration
-EXAMPLES_DIR="examples"
-TEST_RESULTS_DIR="test_results"
+EXAMPLES_DIR="../examples"
+TEST_RESULTS_DIR="results"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 RESULTS_FILE="${TEST_RESULTS_DIR}/accuracy_test_${TIMESTAMP}.json"
 LOG_FILE="${TEST_RESULTS_DIR}/accuracy_test_${TIMESTAMP}.log"
@@ -93,7 +93,7 @@ analyze_notebook() {
     local analysis_exit_code=0
     
     # Use timeout to prevent hanging
-    if timeout $MAX_ANALYSIS_TIME python3 notebook-analyzer.py --json "$notebook_path" > /tmp/analysis_output_$$.json 2>/tmp/analysis_error_$$.log; then
+            if timeout $MAX_ANALYSIS_TIME python3 ../notebook-analyzer.py --json "$notebook_path" > /tmp/analysis_output_$$.json 2>/tmp/analysis_error_$$.log; then
         analysis_result=$(cat /tmp/analysis_output_$$.json)
     else
         analysis_exit_code=$?
@@ -236,8 +236,8 @@ check_prerequisites() {
     log_message "INFO" "Checking prerequisites..."
     
     # Check if notebook-analyzer.py exists
-    if [ ! -f "notebook-analyzer.py" ]; then
-        log_message "ERROR" "notebook-analyzer.py not found in current directory"
+    if [ ! -f "../notebook-analyzer.py" ]; then
+        log_message "ERROR" "notebook-analyzer.py not found in parent directory"
         exit 1
     fi
     

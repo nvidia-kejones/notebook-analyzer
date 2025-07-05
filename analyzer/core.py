@@ -3518,32 +3518,6 @@ class GPUAnalyzer:
             # For larger quantities, scaling becomes less efficient
             return max(0.15, 0.25 * (8 / quantity))
 
-    def _format_runtime(self, time_hours: float) -> str:
-        """Format runtime value to show minutes if < 1 hour, hours if >= 1 hour."""
-        if time_hours < 1.0:
-            minutes = int(time_hours * 60)
-            return f"{minutes} minutes"
-        else:
-            return f"{time_hours:.1f} hours"
-    
-    def _format_runtime_range(self, min_hours: float, max_hours: float) -> str:
-        """Format runtime range to show appropriate units."""
-        if min_hours == max_hours:
-            return self._format_runtime(min_hours)
-        else:
-            # If both values are in the same unit range, format consistently
-            if min_hours < 1.0 and max_hours < 1.0:
-                # Both in minutes
-                min_minutes = int(min_hours * 60)
-                max_minutes = int(max_hours * 60)
-                return f"{min_minutes}-{max_minutes} minutes"
-            elif min_hours >= 1.0 and max_hours >= 1.0:
-                # Both in hours
-                return f"{min_hours:.1f}-{max_hours:.1f} hours"
-            else:
-                # Mixed units - format each separately
-                return f"{self._format_runtime(min_hours)}-{self._format_runtime(max_hours)}"
-
     def _calculate_runtime_for_gpu(self, baseline_runtime: str, baseline_gpu: str, target_gpu: str, 
                                  quantity: int, optimization_factor: float = 1.0) -> str:
         """Calculate runtime for target GPU based on baseline estimate."""
@@ -3569,7 +3543,20 @@ class GPUAnalyzer:
             new_max = max(0.1, max_time / total_speedup)
             
             # Format output with appropriate units
-            return self._format_runtime_range(new_min, new_max)
+            if new_min == new_max:
+                if new_min < 1.0:
+                    return f"{int(new_min * 60)} minutes"
+                else:
+                    return f"{new_min:.1f} hours"
+            else:
+                if new_min < 1.0 and new_max < 1.0:
+                    return f"{int(new_min * 60)}-{int(new_max * 60)} minutes"
+                elif new_min >= 1.0 and new_max >= 1.0:
+                    return f"{new_min:.1f}-{new_max:.1f} hours"
+                else:
+                    min_str = f"{int(new_min * 60)} minutes" if new_min < 1.0 else f"{new_min:.1f} hours"
+                    max_str = f"{int(new_max * 60)} minutes" if new_max < 1.0 else f"{new_max:.1f} hours"
+                    return f"{min_str}-{max_str}"
                 
         except Exception as e:
             # Fallback runtime
@@ -3814,16 +3801,6 @@ class GPUAnalyzer:
                 return False, f"Workload type requires enterprise infrastructure ({indicator})"
         
         return True, None
-
-    def _convert_runtime_to_new_format(self, runtime_str: str) -> str:
-        """Convert existing runtime string to new format with minutes/hours."""
-        try:
-            # Parse the runtime string
-            min_time, max_time = self._parse_runtime_range(runtime_str)
-            return self._format_runtime_range(min_time, max_time)
-        except:
-            # If parsing fails, return the original string
-            return runtime_str
 
     def _calculate_dynamic_confidence(self, analysis: Dict, llm_context: Optional[Dict] = None) -> float:
         """
@@ -4578,36 +4555,7 @@ class GPUAnalyzer:
             'vram_estimate': vram_estimate
         }
 
-    def provide_cpu_recommendation(self, workload_type, dataset_size_hint=None):
-        """
-        Provide honest CPU-only recommendations when appropriate
-        """
-        recommendations = {
-            "cpu_sufficient": True,
-            "reasoning": "",
-            "optional_gpu_benefit": "",
-            "gpu_recommendation": None
-        }
-        
-        if workload_type == "data_analysis":
-            recommendations.update({
-                "reasoning": "Data analysis with pandas/numpy/sklearn - CPU optimized by design",
-                "optional_gpu_benefit": "Minimal benefit unless using cuDF/cuML with large datasets (>10GB)",
-                "gpu_recommendation": self.find_minimum_viable_gpu(8) if dataset_size_hint == "large" else None
-            })
-        elif workload_type == "small_ml":
-            recommendations.update({
-                "reasoning": "Small ML workload - CPU sufficient but GPU may provide 2-5x training speedup",
-                "optional_gpu_benefit": "Faster experimentation and iteration cycles",
-                "gpu_recommendation": self.find_minimum_viable_gpu(12)  # RTX 4070 tier
-            })
-        elif workload_type == "visualization":
-            recommendations.update({
-                "reasoning": "Data visualization workload - CPU handles matplotlib/plotly efficiently",
-                "optional_gpu_benefit": "No significant benefit for standard plotting libraries"
-            })
-        
-        return recommendations
+
 
     def calculate_vram_requirements_with_gpu_context(self, notebook_analysis):
         """

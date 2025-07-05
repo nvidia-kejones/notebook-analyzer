@@ -369,6 +369,6 @@ production.py
 *.pyprof
 
 # Testing output
-test_results/
+tests/results/
 coverage_html/
 .coverage*

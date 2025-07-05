@@ -245,30 +245,189 @@ docker-compose up --build
 - RESTful API endpoints
 - **MCP (Model Context Protocol) integration** for AI assistants
 
-### API Usage
+### Docker Deployment
+
+#### Using Docker Compose (Recommended)
+
+1. **Clone and build**:
+   ```bash
+   git clone <repository-url>
+   cd notebook-analyzer
+   docker-compose up --build
+   ```
+
+2. **Access the application**:
+   Open your browser to [http://localhost:8080](http://localhost:8080)
+
+#### Using Docker directly
+
 ```bash
-# REST API endpoint
+# Build the image
+docker build -t notebook-analyzer-web .
+
+# Run the container
+docker run -p 5000:5000 notebook-analyzer-web
+```
+
+### API Usage
+
+#### REST API
+
+**Analyze from URL**
+```bash
 curl -X POST http://localhost:8080/api/analyze \
   -H "Content-Type: application/json" \
   -d '{"url": "https://github.com/user/repo/blob/main/notebook.ipynb"}'
-
-# MCP endpoint for AI assistants
-curl -X POST http://localhost:8080/mcp \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc": "2.0", "method": "tools/list", "id": 1}'
 ```
 
-### MCP Integration
-Connect AI assistants like Claude, ChatGPT, or Cursor to analyze notebooks through natural language:
+**Analyze uploaded file**
+```bash
+# Jupyter notebook
+curl -X POST http://localhost:8080/api/analyze \
+  -F "file=@your-notebook.ipynb"
+
+# marimo notebook
+curl -X POST http://localhost:8080/api/analyze \
+  -F "file=@your-marimo-app.py"
+```
+
+### MCP (Model Context Protocol) Integration
+
+The service supports MCP for AI assistant integration! This allows AI assistants like Claude to directly analyze notebooks through standardized tool calls.
+
+#### Quick MCP Setup
+
+1. **Start the service:**
+   ```bash
+   docker compose up -d
+   ```
+
+2. **Copy the MCP configuration:**
+   ```bash
+   cp mcp_config.json ~/.config/your-ai-assistant/mcp_servers.json
+   ```
+
+3. **Test the connection:**
+   ```bash
+   curl -X POST http://localhost:8080/mcp \
+     -H "Content-Type: application/json" \
+     -d '{"jsonrpc": "2.0", "method": "tools/list", "id": 1}'
+   ```
+
+#### Available MCP Tools
+
+1. **`analyze_notebook`** - Complete notebook analysis
+   - **Parameters:**
+     - `url` (required): URL to Jupyter or marimo notebook
+     - `include_reasoning` (optional): Include detailed reasoning
+     - `include_compliance` (optional): Include NVIDIA compliance assessment
+   - **Returns:** 3-tier GPU requirements, compliance score, runtime estimates
+
+2. **`get_gpu_recommendations`** - Workload-specific recommendations  
+   - **Parameters:**
+     - `workload_type` (required): `inference`, `training`, or `fine-tuning`
+     - `model_size` (optional): `small`, `medium`, `large`, or `xlarge`
+     - `batch_size` (optional): Expected batch size
+   - **Returns:** Recommended GPU configuration
+
+#### MCP Usage Examples
 
 ```bash
-# Copy MCP configuration for your AI assistant
-cp mcp_config.json ~/.config/your-ai-assistant/mcp_servers.json
+# Analyze a notebook
+curl -X POST http://localhost:8080/mcp \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "name": "analyze_notebook",
+      "arguments": {
+        "url": "https://github.com/brevdev/launchables/blob/main/llama3_finetune_inference.ipynb",
+        "include_compliance": true
+      }
+    },
+    "id": 1
+  }'
+
+# Get recommendations
+curl -X POST http://localhost:8080/mcp \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0", 
+    "method": "tools/call",
+    "params": {
+      "name": "get_gpu_recommendations",
+      "arguments": {
+        "workload_type": "training",
+        "model_size": "large",
+        "batch_size": 4
+      }
+    },
+    "id": 2
+  }'
 ```
 
-Then ask your AI: *"What GPU requirements does this notebook have?"* and it will automatically analyze it using this tool!
+#### AI Assistant Integration
 
-See `MCP_README.md` for detailed integration instructions.
+Once connected via MCP, you can simply ask your AI assistant:
+
+- *"What GPU requirements does this notebook have?"* (provide URL)
+- *"Analyze this training notebook for NVIDIA compliance"*
+- *"What GPUs do I need for fine-tuning a large model with batch size 8?"*
+- *"Compare the GPU requirements between these two notebooks"*
+
+The AI will automatically use the appropriate tools to provide detailed analysis.
+
+### Vercel Deployment
+
+The Flask application can be deployed to Vercel, but with important limitations due to the serverless nature of Vercel's platform.
+
+#### ⚠️ Important Limitations
+
+- **Execution Time**: Hobby Plan (10s max), Pro Plan (60s max)
+- **Memory Usage**: Large notebooks may hit memory limits
+- **File Processing**: Uses `/tmp` directory (max 500MB)
+
+#### Deployment Steps
+
+1. **Install Vercel CLI**:
+   ```bash
+   npm i -g vercel
+   ```
+
+2. **Configure Environment Variables**:
+   ```bash
+   vercel env add OPENAI_BASE_URL
+   vercel env add OPENAI_API_KEY
+   vercel env add OPENAI_MODEL
+   vercel env add GITHUB_TOKEN
+   vercel env add GITLAB_TOKEN
+   ```
+
+3. **Deploy**:
+   ```bash
+   vercel --prod
+   ```
+
+4. **Test the Deployment**:
+   ```bash
+   curl https://your-app.vercel.app/health
+   ```
+
+#### When NOT to Use Vercel
+
+Consider alternatives if you need:
+- Long-running analysis (>60 seconds)
+- Large file processing (>16MB notebooks)
+- Persistent storage between requests
+- Complex multi-step workflows
+
+#### Recommended Alternatives
+
+- **Railway** - Better for long-running processes
+- **Render** - Good for background processing  
+- **Google Cloud Run** - Flexible container deployment
+- **Docker** - Full control with unlimited resources
 
 ## 📊 Sample Output
 
@@ -402,6 +561,10 @@ GPU REQUIREMENTS ANALYSIS
 | `OPENAI_MODEL` | Model name to use | No | gpt-4 |
 | `GITHUB_TOKEN` | GitHub Personal Access Token | No** | None |
 | `GITLAB_TOKEN` | GitLab Personal Access Token | No*** | None |
+| `HOST` | Web server bind address | No | 0.0.0.0 |
+| `PORT` | Web server port | No | 5000 |
+| `DEBUG` | Enable debug mode | No | false |
+| `SECRET_KEY` | Flask secret key | No | Auto-generated |
 
 *Required for LLM enhancement  
 **Required for private GitHub repositories  
@@ -732,4 +895,30 @@ For issues with the tool:
 5. **Review the troubleshooting section** above
 
 For NVIDIA-specific notebook guidelines, refer to the NVIDIA notebook standards documentation.
+
+## 🧪 Testing
+
+The project includes comprehensive test scripts in the `tests/` directory:
+
+```bash
+# Run all tests
+cd tests && ./test.sh
+
+# Run quick tests only
+cd tests && ./test.sh --quick
+
+# Test against different URL
+cd tests && ./test.sh --url http://localhost:5000
+
+# Run accuracy tests
+cd tests && ./test_accuracy.sh
+
+# Test streaming functionality
+cd tests && ./test_streaming.sh
+
+# Verify security headers
+cd tests && ./verify_security_headers.sh
+```
+
+See `tests/README.md` for detailed testing documentation.
 

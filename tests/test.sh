@@ -520,12 +520,12 @@ test_mcp_gpu_recommendations() {
 }
 
 test_jupyter_analysis() {
-    if [ ! -f "examples/jupyter_example.ipynb" ]; then
+    if [ ! -f "../examples/jupyter_example.ipynb" ]; then
         log_result "Jupyter Analysis" "false" "Example file not found"
         return 1
     fi
     
-    local notebook_content=$(cat "examples/jupyter_example.ipynb" | jq -c .)
+    local notebook_content=$(cat "../examples/jupyter_example.ipynb" | jq -c .)
     local payload="{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"analyze_notebook\",\"arguments\":{\"notebook_content\":$notebook_content,\"source_info\":\"jupyter_example.ipynb\"}}}"
     local response_file="$TEMP_DIR/jupyter_response"
     
@@ -560,7 +560,7 @@ test_jupyter_analysis() {
 }
 
 test_marimo_analysis() {
-    if [ ! -f "examples/marimo_example.py" ]; then
+    if [ ! -f "../examples/marimo_example.py" ]; then
         log_result "Marimo Analysis" "false" "Example file not found"
         return 1
     fi
@@ -578,7 +578,7 @@ import sys
 
 try:
     # Read the marimo file content
-    marimo_path = sys.argv[3] if len(sys.argv) > 3 else 'examples/marimo_example.py'
+    marimo_path = sys.argv[3] if len(sys.argv) > 3 else '../examples/marimo_example.py'
     with open(marimo_path, 'r', encoding='utf-8') as f:
         content = f.read()
     
@@ -609,7 +609,7 @@ except Exception as e:
     sys.exit(1)
 EOF
     
-    if python3 "$TEMP_DIR/marimo_test.py" "$BASE_URL/mcp" "$response_file" "examples/marimo_example.py" > "$TEMP_DIR/marimo_code" 2>/dev/null; then
+    if python3 "$TEMP_DIR/marimo_test.py" "$BASE_URL/mcp" "$response_file" "../examples/marimo_example.py" > "$TEMP_DIR/marimo_code" 2>/dev/null; then
         
         local http_code=$(cat "$TEMP_DIR/marimo_code")
         if [ "$http_code" = "200" ]; then
@@ -637,7 +637,7 @@ EOF
 }
 
 test_streaming_endpoint() {
-    if [ ! -f "examples/jupyter_example.ipynb" ]; then
+    if [ ! -f "../examples/jupyter_example.ipynb" ]; then
         log_result "Streaming Analysis" "false" "Example file not found"
         return 1
     fi
@@ -648,7 +648,7 @@ test_streaming_endpoint() {
     # Test streaming endpoint - handle both success and timeout cases
     local curl_exit_code=0
     curl -s -m "$timeout_for_streaming" -D "$TEMP_DIR/streaming_headers" -o "$response_file" -w "%{http_code}" \
-        -F "file=@examples/jupyter_example.ipynb" \
+        -F "file=@../examples/jupyter_example.ipynb" \
         -F "analysis_type=basic" \
         "$BASE_URL/analyze-stream" > "$TEMP_DIR/streaming_code" 2>/dev/null
     curl_exit_code=$?
@@ -688,7 +688,7 @@ test_streaming_endpoint() {
 }
 
 test_web_form_analysis() {
-    if [ ! -f "examples/jupyter_example.ipynb" ]; then
+    if [ ! -f "../examples/jupyter_example.ipynb" ]; then
         log_result "Web Form Analysis" "false" "Example file not found"
         return 1
     fi
@@ -697,7 +697,7 @@ test_web_form_analysis() {
     
     # Use -L flag to follow redirects since /analyze now redirects to streaming interface
     if curl -s -L -m "$TIMEOUT" -o "$response_file" -w "%{http_code}" \
-        -F "file=@examples/jupyter_example.ipynb" \
+        -F "file=@../examples/jupyter_example.ipynb" \
         -F "analysis_type=basic" \
         "$BASE_URL/analyze" > "$TEMP_DIR/webform_code" 2>/dev/null; then
         
@@ -724,7 +724,7 @@ test_web_form_analysis() {
 
 test_nvidia_best_practices() {
     # Check if Python script exists
-    if [ ! -f "notebook-analyzer.py" ]; then
+    if [ ! -f "../notebook-analyzer.py" ]; then
         log_result "NVIDIA Best Practices - Script" "false" "notebook-analyzer.py not found"
         return 1
     fi
@@ -758,8 +758,8 @@ test_nvidia_best_practices() {
     
     # Test basic CLI functionality
     local basic_output="$TEMP_DIR/nvidia_basic_output"
-    if [ -f "examples/jupyter_example.ipynb" ]; then
-        local test_file="examples/jupyter_example.ipynb"
+    if [ -f "../examples/jupyter_example.ipynb" ]; then
+        local test_file="../examples/jupyter_example.ipynb"
     else
         # Use a public notebook if local example not available
         local test_file="https://raw.githubusercontent.com/fastai/fastbook/master/01_intro.ipynb"
@@ -767,7 +767,7 @@ test_nvidia_best_practices() {
     
     # Test basic analysis
     echo "   Testing basic NVIDIA analysis..."
-    if $python_cmd notebook-analyzer.py "$test_file" > "$basic_output" 2>&1; then
+            if $python_cmd ../notebook-analyzer.py "$test_file" > "$basic_output" 2>&1; then
         if grep -q "NVIDIA NOTEBOOK COMPLIANCE" "$basic_output" && grep -q "GPU REQUIREMENTS" "$basic_output"; then
             log_result "NVIDIA Best Practices - Basic Analysis" "true" "CLI analysis working with NVIDIA features"
         else
@@ -788,7 +788,7 @@ test_nvidia_best_practices() {
         source bin/activate
     fi
     
-    if $python_cmd notebook-analyzer.py --verbose "$test_file" > "$verbose_output" 2>&1; then
+            if $python_cmd ../notebook-analyzer.py --verbose "$test_file" > "$verbose_output" 2>&1; then
         if grep -q "NVIDIA Best Practices Summary" "$verbose_output" && grep -q "compliance" "$verbose_output"; then
             log_result "NVIDIA Best Practices - Verbose Mode" "true" "Verbose analysis working"
         else
@@ -803,7 +803,7 @@ test_nvidia_best_practices() {
     # Test JSON output
     local json_output="$TEMP_DIR/nvidia_json_output"
     echo "   Testing JSON output with NVIDIA data..."
-    if $python_cmd notebook-analyzer.py --json "$test_file" > "$json_output" 2>&1; then
+            if $python_cmd ../notebook-analyzer.py --json "$test_file" > "$json_output" 2>&1; then
         if command -v jq >/dev/null 2>&1; then
             # Validate JSON structure with jq if available
             if jq -e '.nvidia_compliance_score' "$json_output" >/dev/null 2>&1; then
