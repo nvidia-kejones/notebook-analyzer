@@ -845,7 +845,7 @@ test_nvidia_best_practices() {
     cd "$current_dir"
     
     # Check if best practices guidelines file exists
-    if [ -f "analyzer/nvidia_best_practices.md" ]; then
+    if [ -f "../analyzer/nvidia_best_practices.md" ]; then
         log_result "NVIDIA Best Practices - Guidelines File" "true" "Best practices guidelines available"
     else
         log_result "NVIDIA Best Practices - Guidelines File" "false" "Guidelines file missing"

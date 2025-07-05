@@ -856,94 +856,36 @@ class LLMAnalyzer:
             elif progress_callback:
                 progress_callback("🧠 Preparing AI analysis request...")
             
-            prompt = f"""Analyze this Jupyter notebook for GPU requirements using the 3-tier recommendation system (minimum/recommended/optimal). 
+            prompt = f"""Analyze this notebook for GPU requirements. Be quick and precise.
 
-**CRITICAL FIRST STEP**: Determine if this workload actually needs a GPU at all.
+**STEP 1: CPU-Only Check**
+If this is basic Python (print, variables, simple data analysis, no ML/AI), return workload_type: "cpu-only" and estimated_vram_gb: 0.
 
-**CPU-Only Workloads** (no GPU needed):
-- Basic Python operations (print, variables, loops, functions)
-- Simple data manipulation (small lists, dictionaries, basic math)
-- File operations (reading files, environment variables)
-- Pure data analysis with pandas/numpy on small datasets
-- Basic visualization with matplotlib/seaborn
-- Simple string processing
-- Tutorial/educational content with no computational workload
+**STEP 2: GPU Workload Analysis**
+For GPU workloads, identify:
+- Workload type: inference|fine-tuning|training|gpu-computing
+- Models and their VRAM needs
+- Batch sizes and scale
+- Memory optimizations (LoRA, quantization)
 
-**GPU-Beneficial Workloads**:
-1. **Workload Type**: Is this inference, fine-tuning, training from scratch, GPU computing, or other?
-2. **Model Details**: What models are being used? What are their memory requirements?
-3. **Batch Sizes**: What batch sizes are used and are they for experimentation or production?
-4. **Memory Optimization**: Are there techniques like gradient checkpointing, LoRA, quantization?
-5. **Multi-GPU Patterns**: Is distributed training or model parallelism used?
-6. **Dataset Scale**: How large is the dataset being processed?
-7. **GPU Computing**: Look for CUDA kernels, Numba CUDA (@cuda.jit), PyCUDA, or other GPU acceleration
-8. **Runtime Estimation**: Based on workload complexity, model size, optimizations, and typical convergence
-9. **Performance Considerations**: Consider GPU performance differences when recommending hardware
-10. **Tutorial Detection**: Identify if this is a tutorial/demo with small datasets vs production workload
+**Valid GPUs**: RTX 4060, RTX 4070, RTX 4080, RTX 4090, RTX 5080, RTX 5090, L4, L40, L40S, A100 PCIe 40G, A100 PCIe 80G, A100 SXM 40G, A100 SXM 80G, H100 PCIe, H100 SXM, H100 NVL, H200 SXM, H200 NVL, B200 SXM
 
-**IMPORTANT**: Pay special attention to:
-- **CPU-only indicators**: Basic Python, simple math, small data, no ML/AI libraries
-- Numba CUDA patterns (@cuda.jit, cuda.grid, cuda.device_array)
-- Direct CUDA programming (PyCUDA, CuPy)
-- GPU-accelerated computing (not just ML/AI)
-- Scientific computing that uses GPU acceleration
-- Small dataset indicators (sample sizes, tutorial mentions, example data)
-- Context clues that suggest demo/tutorial vs production use
-
-**3-Tier System Context**:
-- **Minimum**: Entry-level viable option (lowest cost that works)
-- **Recommended**: Balanced price/performance (best value for most users)
-- **Optimal**: High performance option (best performance regardless of cost)
-
-**GPU Performance Context** (relative performance factors):
-- **Consumer GPUs**: RTX 4060 (0.35×), RTX 4070 (0.50×), RTX 4080 (0.70×), RTX 4090 (1.0× baseline), RTX 5080 (1.15×), RTX 5090 (1.4×)
-        - **Enterprise GPUs**: L4 (0.25×), L40 (0.60×), L40S (0.75×), A100 PCIe (1.0×), A100 SXM (1.05×), H100 PCIe (2.2×), H100 SXM (2.4×), H100 NVL (2.3×), H200 SXM (2.8×), H200 NVL (2.8×), B200 SXM (4.0×)
-- Performance factors relative to RTX 4090. Higher = faster execution.
-- Enterprise GPUs provide better reliability, ECC memory, and professional support.
-
-**Valid GPU Options** (use ONLY these):
-- Consumer: RTX 4060, RTX 4070, RTX 4080, RTX 4090, RTX 5080, RTX 5090
-- Enterprise: L4, L40, L40S, A100 PCIe 40G, A100 PCIe 80G, A100 SXM 40G, A100 SXM 80G, H100 PCIe, H100 SXM, H100 NVL, H200 SXM, H200 NVL, B200 SXM
-
-Notebook Content:
+**Notebook Content:**
 {notebook_content}
 
-Respond in JSON format with:
+**JSON Response:**
 {{
-    "workload_type": "cpu-only|inference|fine-tuning|training|gpu-computing|other",
-    "complexity": "simple|moderate|complex|extreme",
+    "workload_type": "cpu-only|inference|fine-tuning|training|gpu-computing",
+    "complexity": "simple|moderate|complex",
     "models_detected": ["model1", "model2"],
     "estimated_vram_gb": number,
     "multi_gpu_required": boolean,
-    "memory_optimizations": ["technique1", "technique2"],
-    "batch_size_analysis": "description",
-    "runtime_factors": ["factor1", "factor2"],
-    "baseline_runtime_hours": "1.5-2.5",
-    "baseline_reference_gpu": "RTX 4090",
-    "optimization_speedup_factor": 0.7,
-    "performance_considerations": ["Consider enterprise GPU performance vs consumer options"],
-    "tutorial_indicators": ["indicator1", "indicator2"],
-    "dataset_scale": "small|medium|large|enterprise",
+    "memory_optimizations": ["technique1"],
     "confidence": 0.0-1.0,
-    "reasoning": ["reason1", "reason2"],
-    "runtime_reasoning": ["runtime factor1", "runtime factor2"]
+    "reasoning": ["key reason 1", "key reason 2"]
 }}
 
-**Critical Analysis Guidelines**:
-- **CPU-Only First**: If the notebook contains only basic Python operations, simple data manipulation, or educational content with no computational workload, classify as "cpu-only" with estimated_vram_gb: 0
-- For tutorials/demos with small datasets: Recommend consumer GPUs even if enterprise tools are mentioned
-- For production workloads: Consider enterprise GPUs for reliability and support
-- For GPU computing: Assess actual computational complexity, not just tool mentions
-- For VRAM estimation: Consider batch sizes, model parameters, and optimization techniques (set to 0 for CPU-only workloads)
-- For runtime estimation: Account for GPU performance differences and optimization speedups
-- Always provide realistic, evidence-based recommendations
-
-For runtime estimation:
-- baseline_runtime_hours: Estimated time on baseline_reference_gpu (single GPU)
-- baseline_reference_gpu: Reference GPU for the estimate (typically RTX 4090 or A100)  
-- optimization_speedup_factor: Combined speedup from optimizations (0.5 = 50% faster, 1.0 = no change)
-- performance_considerations: Notes about GPU performance trade-offs and recommendations
-- Consider: model parameters, dataset size, epochs, optimizations like LoRA/quantization, and GPU performance factors"""
+Focus on accuracy and speed. Avoid overthinking."""
 
             # Phase 5: AI Analysis Request (simplified in production)
             if progress_callback and self.env_config['detailed_phases']:
@@ -964,7 +906,7 @@ For runtime estimation:
                         {"role": "user", "content": prompt}
                     ],
                     "temperature": 0.1,
-                    "max_tokens": 1000
+                    "max_tokens": 500
                 },
                 timeout=self.env_config['llm_timeout'],
                 max_retries=3,
@@ -1420,88 +1362,36 @@ LLM REASONING:
 {chr(10).join(f"• {reason}" for reason in llm_reasoning[:5])}
 """
 
-            prompt = f"""You are an expert reviewer evaluating GPU analysis for the 3-tier recommendation system. Act as a "teacher grading your work."
+            prompt = f"""Review this GPU analysis quickly. Focus on key issues only.
 
-NOTEBOOK CODE SAMPLE:
+**CODE SAMPLE:**
 {notebook_sample}
 
-YOUR ANALYSIS RESULTS:
+**ANALYSIS:**
 {analysis_summary}
 
-**3-TIER SYSTEM REQUIREMENTS**:
-- **CPU-Only Workloads**: If the workload is truly CPU-only (basic Python, simple data analysis, no ML/AI), all GPU fields should be "CPU-only" or null - this is CORRECT and should NOT be changed
-- **GPU Workloads**: When GPU workload is detected, all three tiers must show actual GPU recommendations
-- **Minimum**: Entry-level viable option (lowest cost that works)
-- **Recommended**: Balanced price/performance (best value for most users)  
-- **Optimal**: High performance option (best performance regardless of cost)
-- **CRITICAL RULE**: For GPU workloads, all three tiers must show actual GPU recommendations
-- **CRITICAL RULE**: For GPU workloads, never set recommended_viable=false - instead populate recommended tier with appropriate enterprise GPU
+**QUICK CHECKS:**
+1. CPU-only workload? (basic Python, no ML/AI) → All tiers should be "CPU-only"
+2. GPU workload? → All three tiers need actual GPU recommendations
+3. Tier progression logical? (min ≤ recommended ≤ optimal)
+4. Confidence matches evidence?
 
-**CRITICAL REVIEW QUESTIONS**:
-1. **CPU-Only vs GPU Workload**: Is this truly a CPU-only workload (basic Python, simple data analysis) or does it need GPU acceleration?
-2. **3-Tier Logic**: For GPU workloads, are all three tiers properly populated with actual GPUs? For CPU-only workloads, should all tiers show "CPU-only"?
-3. **Tier Progression**: Do the tiers follow logical progression (minimum ≤ recommended ≤ optimal in capability)?
-4. **Workload Alignment**: Do the GPU recommendations match the detected workload complexity and requirements?
-5. **Reasoning Consistency**: Are static analysis and LLM insights properly unified without contradictions?
-6. **Confidence Calibration**: Does the confidence percentage match the certainty of evidence?
-7. **Tutorial vs Production**: Is the workload correctly classified as tutorial/demo vs production use?
+**VALID GPUS:** RTX 4060, RTX 4070, RTX 4080, RTX 4090, RTX 5080, RTX 5090, L4, L40, L40S, A100 PCIe 40G, A100 PCIe 80G, A100 SXM 40G, A100 SXM 80G, H100 PCIe, H100 SXM, H100 NVL, H200 SXM, H200 NVL, B200 SXM
 
-**SPECIFIC VALIDATION CHECKS**:
-- **Tutorial Detection**: Small datasets (10 samples, example data) should get consumer GPU recommendations
-- **Production Workloads**: Large-scale training/inference should get enterprise GPU recommendations
-- **GPU Computing**: CUDA/scientific computing should be assessed for actual computational complexity
-- **VRAM Logic**: Do VRAM estimates make sense for detected models/operations/batch sizes?
-- **Runtime Realism**: Are runtime estimates realistic for the recommended hardware?
-- **Performance Scaling**: Do higher tiers provide meaningful performance improvements?
-
-**FORBIDDEN SCENARIOS FOR GPU WORKLOADS**:
-- ❌ Recommended tier showing "N/A" or "Not Recommended" when GPU is needed
-- ❌ Setting recommended_viable=false instead of showing enterprise GPU
-- ❌ Identical GPUs across all three tiers
-- ❌ Tier regression (optimal worse than recommended)
-- ❌ Overestimating simple tutorials as enterprise workloads
-- ❌ Underestimating production workloads as consumer-only
-
-**ALLOWED FOR CPU-ONLY WORKLOADS**:
-- ✅ All GPU tiers showing "CPU-only" or null values
-- ✅ No GPU recommendations for basic Python operations
-- ✅ Simple data analysis without ML/AI libraries
-
-**VALID GPU OPTIONS** (use ONLY these):
-- Consumer: RTX 4060, RTX 4070, RTX 4080, RTX 4090, RTX 5080, RTX 5090
-- Enterprise: L4, L40, L40S, A100 PCIe 40G, A100 PCIe 80G, A100 SXM 40G, A100 SXM 80G, H100 PCIe, H100 SXM, H100 NVL, H200 SXM, H200 NVL, B200 SXM
-
-**EXAMPLE CORRECT 3-TIER PATTERNS**:
-- CPU-Only Workload: CPU-only → CPU-only → CPU-only
-- Tutorial/Demo: RTX 4060 → RTX 4070 → RTX 4080
-- Mid-scale Training: RTX 4080 → RTX 4090 → L40S
-- Large-scale Training: RTX 4090 → L40S → A100 PCIe 80G
-- Enterprise Production: L40S → A100 PCIe 80G → H100 PCIe
-
-Respond in JSON format:
+**JSON Response:**
 {{
     "review_passed": true/false,
-    "consistency_issues": ["issue1", "issue2"],
+    "consistency_issues": ["issue1"],
     "recommended_corrections": {{
         "workload_type": "corrected_type_if_needed",
-        "confidence": integer_between_0_and_100,
-        "min_gpu_type": "valid_gpu_from_list_above_if_needed",
-        "recommended_gpu_type": "valid_gpu_for_recommended_tier",
-        "optimal_gpu_type": "valid_gpu_for_optimal_tier",
-        "recommended_viable": true,
-        "reasoning_updates": ["updated reasoning point 1", "updated reasoning point 2"]
+        "confidence": integer_0_to_100,
+        "min_gpu_type": "gpu_if_needed"
     }},
-    "unified_reasoning": ["clear unified reasoning point 1", "clear unified reasoning point 2"],
-    "confidence_explanation": "why this confidence level is appropriate",
-    "tier_validation": "assessment of 3-tier system compliance",
-    "overall_assessment": "brief summary of analysis quality"
+    "unified_reasoning": ["key point 1", "key point 2"],
+    "overall_assessment": "brief summary"
 }}
 
-**PRIORITY**: 
-1. **First determine if this is truly CPU-only** (basic Python, simple data analysis, no ML/AI libraries)
-2. **For CPU-only workloads**: Keep all GPU recommendations as "CPU-only" - DO NOT force GPU recommendations
-3. **For GPU workloads**: Ensure all three tiers show actual GPU recommendations
-4. **Fix any "Not Recommended" scenarios** by selecting appropriate enterprise GPUs for the recommended tier (only for GPU workloads)"""
+Be quick and decisive. Only flag real issues."""
 
             if progress_callback:
                 progress_callback("🧠 Phase 3: Sending self-review request to AI...")
@@ -1917,59 +1807,34 @@ Respond in JSON format:
             # Get comprehensive guidelines for the prompt
             guidelines_text = self.best_practices.get_guidelines_for_evaluation()
             
-            prompt = f"""Evaluate this Jupyter notebook against NVIDIA's comprehensive best practices for notebooks.
+            prompt = f"""Rate this notebook against NVIDIA best practices. Be quick and efficient.
 
-{guidelines_text}
+**EVALUATE 4 AREAS (25 points each):**
+1. **Structure**: Title, intro, navigation, conclusion
+2. **Content**: Documentation, explanations, educational value
+3. **Technical**: Requirements, environment, reproducibility
+4. **NVIDIA**: Branding, messaging, developer focus
 
-Use the detailed scoring framework to evaluate:
-
-**STRUCTURE & LAYOUT (25 points):**
-- Title Quality (6.25 points): "Accomplish X with NVIDIA Product" format, clear, accessible
-- Introduction Completeness (6.25 points): Target audience, overview, time estimate, tools, requirements
-- Navigation (6.25 points): Proper markdown headers, logical flow, progress indicators
-- Conclusion Quality (6.25 points): Summary, call-to-action, links to resources
-
-**CONTENT QUALITY (25 points):**
-- Documentation Ratio (8.33 points): Balanced markdown to code, adequate explanatory text
-- Code Explanations (8.33 points): Code cells explained, clear I/O descriptions
-- Educational Value (8.34 points): Clear objectives, practical content, professional writing
-
-**TECHNICAL STANDARDS (25 points):**
-- Requirements Management (6.25 points): requirements.txt implemented, version pinning
-- Environment Variables (6.25 points): Proper handling, no hardcoded credentials
-- Reproducibility (6.25 points): Seeds set, deterministic operations, debugging-friendly
-- File Structure (6.25 points): Minimal complexity, documented structure
-
-**NVIDIA COMPLIANCE (25 points):**
-- Product Messaging (6.25 points): Proper NVIDIA references, consistent branding
-- Brand Consistency (6.25 points): Professional presentation, unified voice
-- Developer Focus (6.25 points): Clear value proposition, developer-centric
-- Maintenance Quality (6.25 points): Well-structured, complete, clear guidelines
-
-Notebook Content:
+**NOTEBOOK:**
 {structure_sample}
 
-Respond in JSON format:
+**JSON Response:**
 {{
     "structure_score": 0-25,
     "content_score": 0-25, 
     "technical_score": 0-25,
     "nvidia_score": 0-25,
     "total_score": 0-100,
-    "structure_issues": ["specific issue 1", "specific issue 2"],
-    "content_issues": ["specific issue 1", "specific issue 2"],
-    "technical_issues": ["specific issue 1", "specific issue 2"],
-    "nvidia_issues": ["specific issue 1", "specific issue 2"],
-    "strengths": ["strength 1", "strength 2"],
-    "recommendations": ["actionable rec 1", "actionable rec 2"],
-    "confidence": 0.0-1.0,
-    "detailed_analysis": {{
-        "title_analysis": "detailed feedback on title",
-        "introduction_analysis": "detailed feedback on introduction",
-        "structure_analysis": "detailed feedback on structure",
-        "technical_analysis": "detailed feedback on technical aspects"
-    }}
-}}"""
+    "structure_issues": ["issue1"],
+    "content_issues": ["issue1"],
+    "technical_issues": ["issue1"],
+    "nvidia_issues": ["issue1"],
+    "strengths": ["strength1"],
+    "recommendations": ["rec1"],
+    "confidence": 0.0-1.0
+}}
+
+Focus on major issues only. Be concise."""
 
             # Use robust retry mechanism for API requests (consistent with other LLM calls)
             session = get_http_session()
@@ -1984,7 +1849,7 @@ Respond in JSON format:
                         {"role": "user", "content": prompt}
                     ],
                     "temperature": 0.1,
-                    "max_tokens": 1500
+                    "max_tokens": 800
                 },
                 timeout=self.env_config['llm_timeout'],
                 max_retries=3,
