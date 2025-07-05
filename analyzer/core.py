@@ -219,6 +219,71 @@ def convert_runtime_to_new_format(runtime_str: str) -> str:
         # If all parsing fails, return the original string
         return runtime_str
 
+# General utility functions (extracted from GPUAnalyzer)
+def compare_versions(version1: str, version2: str) -> int:
+    """
+    Compare two version strings.
+    Returns: -1 if version1 < version2, 0 if equal, 1 if version1 > version2
+    """
+    def normalize_version(v):
+        # Convert version string to list of integers
+        try:
+            return [int(x) for x in v.split('.')]
+        except ValueError:
+            # Handle non-numeric version parts
+            parts = []
+            for part in v.split('.'):
+                try:
+                    parts.append(int(part))
+                except ValueError:
+                    # For non-numeric parts, use their ASCII values
+                    parts.append(ord(part[0]) if part else 0)
+            return parts
+    
+    v1_parts = normalize_version(version1)
+    v2_parts = normalize_version(version2)
+    
+    # Pad shorter version with zeros
+    max_len = max(len(v1_parts), len(v2_parts))
+    v1_parts += [0] * (max_len - len(v1_parts))
+    v2_parts += [0] * (max_len - len(v2_parts))
+    
+    for i in range(max_len):
+        if v1_parts[i] < v2_parts[i]:
+            return -1
+        elif v1_parts[i] > v2_parts[i]:
+            return 1
+    
+    return 0
+
+def normalize_gpu_quantity(quantity: int) -> int:
+    """Normalize GPU quantity to valid values: 1, 2, 4, 8, or multiples of 8."""
+    if quantity <= 1:
+        return 1
+    elif quantity <= 2:
+        return 2
+    elif quantity <= 4:
+        return 4
+    elif quantity <= 8:
+        return 8
+    else:
+        # For quantities > 8, round to nearest multiple of 8
+        return ((quantity + 7) // 8) * 8
+
+def calculate_multi_gpu_scaling(quantity: int) -> float:
+    """Calculate multi-GPU scaling efficiency factor."""
+    if quantity <= 1:
+        return 1.0
+    elif quantity == 2:
+        return 0.55  # ~45% speedup per GPU (1/0.55 = 1.82x total speedup)
+    elif quantity == 4:
+        return 0.35  # ~65% speedup per GPU (1/0.35 = 2.86x total speedup) 
+    elif quantity == 8:
+        return 0.25  # ~75% speedup per GPU (1/0.25 = 4.0x total speedup)
+    else:
+        # For larger quantities, scaling becomes less efficient
+        return max(0.15, 0.25 * (8 / quantity))
+
 @dataclass
 class GPURequirement:
     # Minimum (entry-level viable option)
@@ -2970,8 +3035,8 @@ class GPUAnalyzer:
             analysis['optimal_quantity'] = 1
         
         # Validate and normalize quantities to allowed values (1, 2, 4, 8, multiples of 8)
-        analysis['min_quantity'] = self._normalize_gpu_quantity(analysis['min_quantity'])
-        analysis['optimal_quantity'] = self._normalize_gpu_quantity(analysis['optimal_quantity'])
+        analysis['min_quantity'] = normalize_gpu_quantity(analysis['min_quantity'])
+        analysis['optimal_quantity'] = normalize_gpu_quantity(analysis['optimal_quantity'])
         
         # CRITICAL FIX: Validate SXM requirements against selected GPUs
         analysis = self._validate_sxm_requirements(analysis)
@@ -3013,12 +3078,12 @@ class GPUAnalyzer:
         for package, version in pip_patterns:
             if package in self.arm_compatibility_versions and version:
                 min_version = self.arm_compatibility_versions[package]['min_compatible']
-                if self._compare_versions(version, min_version) < 0:
+                if compare_versions(version, min_version) < 0:
                     arm_issues.append(f"{package} v{version} may have ARM issues (min recommended: v{min_version})")
                     arm_compatibility_score -= 20
                 else:
                     optimal_version = self.arm_compatibility_versions[package]['optimal']
-                    if self._compare_versions(version, optimal_version) >= 0:
+                    if compare_versions(version, optimal_version) >= 0:
                         arm_compatibility_score += 5
                         arm_positives.append(f"{package} v{version} has good ARM support")
         
@@ -3383,40 +3448,8 @@ class GPUAnalyzer:
         }
 
     def _compare_versions(self, version1: str, version2: str) -> int:
-        """
-        Compare two version strings.
-        Returns: -1 if version1 < version2, 0 if equal, 1 if version1 > version2
-        """
-        def normalize_version(v):
-            # Convert version string to list of integers
-            try:
-                return [int(x) for x in v.split('.')]
-            except ValueError:
-                # Handle non-numeric version parts
-                parts = []
-                for part in v.split('.'):
-                    try:
-                        parts.append(int(part))
-                    except ValueError:
-                        # For non-numeric parts, use their ASCII values
-                        parts.append(ord(part[0]) if part else 0)
-                return parts
-        
-        v1_parts = normalize_version(version1)
-        v2_parts = normalize_version(version2)
-        
-        # Pad shorter version with zeros
-        max_len = max(len(v1_parts), len(v2_parts))
-        v1_parts += [0] * (max_len - len(v1_parts))
-        v2_parts += [0] * (max_len - len(v2_parts))
-        
-        for i in range(max_len):
-            if v1_parts[i] < v2_parts[i]:
-                return -1
-            elif v1_parts[i] > v2_parts[i]:
-                return 1
-        
-        return 0
+        """Compare two version strings. Delegates to module-level function."""
+        return compare_versions(version1, version2)
     
     def sanitize_file_content(self, file_content: bytes, filename: str) -> tuple:
         """
@@ -3541,36 +3574,16 @@ class GPUAnalyzer:
         return full_url 
 
     def _normalize_gpu_quantity(self, quantity: int) -> int:
-        """Normalize GPU quantity to valid values: 1, 2, 4, 8, or multiples of 8."""
-        if quantity <= 1:
-            return 1
-        elif quantity <= 2:
-            return 2
-        elif quantity <= 4:
-            return 4
-        elif quantity <= 8:
-            return 8
-        else:
-            # For quantities > 8, round to nearest multiple of 8
-            return ((quantity + 7) // 8) * 8
+        """Normalize GPU quantity to valid values. Delegates to module-level function."""
+        return normalize_gpu_quantity(quantity)
 
     def _parse_runtime_range(self, runtime_str: str) -> tuple:
         """Parse runtime string like '1.5-2.5' into (min, max) float tuple."""
         return parse_runtime_range(runtime_str)
 
     def _calculate_multi_gpu_scaling(self, quantity: int) -> float:
-        """Calculate multi-GPU scaling efficiency factor."""
-        if quantity <= 1:
-            return 1.0
-        elif quantity == 2:
-            return 0.55  # ~45% speedup per GPU (1/0.55 = 1.82x total speedup)
-        elif quantity == 4:
-            return 0.35  # ~65% speedup per GPU (1/0.35 = 2.86x total speedup) 
-        elif quantity == 8:
-            return 0.25  # ~75% speedup per GPU (1/0.25 = 4.0x total speedup)
-        else:
-            # For larger quantities, scaling becomes less efficient
-            return max(0.15, 0.25 * (8 / quantity))
+        """Calculate multi-GPU scaling efficiency factor. Delegates to module-level function."""
+        return calculate_multi_gpu_scaling(quantity)
 
     def _calculate_runtime_for_gpu(self, baseline_runtime: str, baseline_gpu: str, target_gpu: str, 
                                  quantity: int, optimization_factor: float = 1.0) -> str:
@@ -3587,7 +3600,7 @@ class GPUAnalyzer:
             gpu_speedup = target_perf / baseline_perf
             
             # Calculate multi-GPU scaling
-            multi_gpu_factor = self._calculate_multi_gpu_scaling(quantity)
+            multi_gpu_factor = calculate_multi_gpu_scaling(quantity)
             
             # Apply all factors
             total_speedup = gpu_speedup * optimization_factor / multi_gpu_factor

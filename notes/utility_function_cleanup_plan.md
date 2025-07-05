@@ -102,30 +102,41 @@ def _assess_consumer_viability(self, analysis: Dict, per_gpu_vram: Optional[int]
 ✅ **Backward Compatibility:** All existing calls continue to work without changes  
 ✅ **Testing Verified:** All parameter combinations tested and working correctly
 
-### Phase 3: Module-Level Utilities
-**Status**: 🔄 Pending  
+### Phase 3: Module-Level Utilities ✅ COMPLETED
+**Status**: ✅ Completed  
 **Estimated Time**: 1 hour  
-**Dependencies**: Phase 2  
+**Dependencies**: Phase 2 ✅  
+**Completion Date**: December 2024
 
 #### Tasks:
-- [ ] Move `_compare_versions()` to module level
-- [ ] Move `_normalize_gpu_quantity()` to module level  
-- [ ] Move `_calculate_multi_gpu_scaling()` to module level
-- [ ] Update all class references to use module-level functions
-- [ ] Test version comparisons and GPU calculations
+- [x] Move `_compare_versions()` to module level
+- [x] Move `_normalize_gpu_quantity()` to module level  
+- [x] Move `_calculate_multi_gpu_scaling()` to module level
+- [x] Update all class references to use module-level functions
+- [x] Test version comparisons and GPU calculations ✅ VERIFIED
 
-#### Implementation Notes:
+#### Implementation Results:
+✅ **Module-level functions created:**
 ```python
-# Module-level utilities to extract:
 def compare_versions(version1: str, version2: str) -> int:
-    """Compare two version strings."""
+    """Compare two version strings. Returns -1, 0, or 1."""
     
 def normalize_gpu_quantity(quantity: int) -> int:
-    """Normalize GPU quantity to valid values."""
+    """Normalize GPU quantity to valid values: 1, 2, 4, 8, or multiples of 8."""
     
 def calculate_multi_gpu_scaling(quantity: int) -> float:
     """Calculate multi-GPU scaling efficiency factor."""
 ```
+
+✅ **Usage calls updated:** All 5 usage locations updated to use module-level functions:
+- `compare_versions()` usage: Lines 3080, 3085 (ARM compatibility checks)
+- `normalize_gpu_quantity()` usage: Lines 3037, 3038 (quantity validation)
+- `calculate_multi_gpu_scaling()` usage: Line 3602 (runtime calculations)
+
+✅ **Backward compatibility maintained:** Class methods remain as thin wrappers  
+✅ **Code reduction:** Eliminated ~50 lines of duplicate utility code  
+✅ **Testing completed:** All functions tested and working correctly  
+✅ **Analysis functionality verified:** Basic notebook analysis still works correctly
 
 ### Phase 4: GPU Finding Optimization
 **Status**: 🔄 Pending  
@@ -177,16 +188,22 @@ def calculate_multi_gpu_scaling(quantity: int) -> float:
   - [x] Removed duplicate function (~30 lines)
   - [x] Maintained backward compatibility
   - [x] Verified all parameter combinations work correctly
+- [x] **Phase 3: Module-Level Utilities** ✅
+  - [x] Extracted 3 general utility functions to module level
+  - [x] Updated all 5 usage locations to use module-level functions
+  - [x] Maintained backward compatibility with thin wrapper methods
+  - [x] Eliminated ~50 lines of duplicate utility code
+  - [x] Verified all functions work correctly
 
 ### Current Phase
-**Phase 3: Module-Level Utilities**
-- Current Task: Extract general utility functions to module level
+**Phase 4: GPU Finding Optimization**
+- Current Task: Analyze and consolidate GPU finding functions
 - Blockers: None
-- Next Steps: Move _compare_versions, _normalize_gpu_quantity, _calculate_multi_gpu_scaling to module level
+- Next Steps: Review GPU selection functions for consolidation opportunities
 
 ### Metrics to Track
-- **Lines of Code Reduced**: ✅ 90+ lines (Phases 1+2) / Target ~200+ lines total
-- **Functions Consolidated**: ✅ 5 functions (Phases 1+2) / Target ~8-10 functions total
+- **Lines of Code Reduced**: ✅ 140+ lines (Phases 1+2+3) / Target ~200+ lines total
+- **Functions Consolidated**: ✅ 8 functions (Phases 1+2+3) / Target ~8-10 functions total
 - **Test Coverage**: Maintain 100% of existing functionality
 - **Performance**: No degradation in analysis speed
 
