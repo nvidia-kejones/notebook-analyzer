@@ -19,6 +19,37 @@ import shutil
 import resource
 import signal
 import time
+import subprocess
+import threading
+from dataclasses import dataclass
+from contextlib import contextmanager
+
+# Optional dependency - graceful fallback if not available
+try:
+    import psutil
+    HAS_PSUTIL = True
+    # Type aliases for when psutil is available
+    PsutilProcess = psutil.Process
+    PsutilNoSuchProcess = psutil.NoSuchProcess
+    PsutilAccessDenied = psutil.AccessDenied
+except ImportError:
+    psutil = None
+    HAS_PSUTIL = False
+    # Dummy types for when psutil is not available
+    class PsutilProcess: pass
+    class PsutilNoSuchProcess(Exception): pass
+    class PsutilAccessDenied(Exception): pass
+
+
+@dataclass
+class ProcessResourceUsage:
+    """Resource usage metrics for a process."""
+    cpu_percent: float
+    memory_mb: float
+    max_memory_mb: float
+    runtime_seconds: float
+    process_count: int
+    status: str
 
 
 class SecuritySandbox:
@@ -299,3 +330,271 @@ class SecuritySandbox:
             # Restore old handler and cancel alarm
             signal.alarm(0)
             signal.signal(signal.SIGALRM, old_handler)
+    
+    def create_isolated_process(self, command: List[str], working_dir: Optional[str] = None, 
+                               env_vars: Optional[Dict[str, str]] = None) -> subprocess.Popen:
+        """
+        Create a subprocess with enhanced isolation and security restrictions.
+        
+        Args:
+            command: Command and arguments to execute
+            working_dir: Working directory for the process
+            env_vars: Environment variables (only allowed ones will be passed)
+            
+        Returns:
+            subprocess.Popen object with enhanced isolation
+        """
+        # Create a restricted environment
+        safe_env = {
+            'PATH': '/usr/bin:/bin',
+            'LANG': 'C.UTF-8',
+            'LC_ALL': 'C.UTF-8',
+            'HOME': '/tmp',
+            'TMPDIR': '/tmp',
+            'USER': 'sandbox',
+            'SHELL': '/bin/sh'
+        }
+        
+        # Add only safe environment variables if provided
+        if env_vars:
+            safe_env_keys = {'PYTHONPATH', 'JUPYTER_CONFIG_DIR', 'JUPYTER_DATA_DIR'}
+            for key, value in env_vars.items():
+                if key in safe_env_keys and isinstance(value, str):
+                    safe_env[key] = value
+        
+        # Set up process isolation parameters
+        process_args = {
+            'args': command,
+            'env': safe_env,
+            'cwd': working_dir or '/tmp',
+            'stdout': subprocess.PIPE,
+            'stderr': subprocess.PIPE,
+            'stdin': subprocess.PIPE,
+            'start_new_session': True,  # Create new process group
+            'preexec_fn': self._setup_process_isolation,
+            'creationflags': 0 if os.name != 'nt' else subprocess.CREATE_NEW_PROCESS_GROUP
+        }
+        
+        try:
+            process = subprocess.Popen(**process_args)
+            return process
+        except Exception as e:
+            raise RuntimeError(f"Failed to create isolated process: {str(e)}")
+    
+    def _setup_process_isolation(self):
+        """Set up process isolation (called in child process)."""
+        try:
+            # Set resource limits in the child process
+            self.set_resource_limits()
+            
+            # Set process group (already done by start_new_session, but ensure it)
+            os.setsid()
+            
+            # Set umask for restrictive file permissions
+            os.umask(0o077)
+            
+        except Exception:
+            # Don't let process isolation failures prevent execution
+            # In production, this should be logged
+            pass
+    
+    def monitor_process_resources(self, process: subprocess.Popen, 
+                                 interval: float = 0.5) -> ProcessResourceUsage:
+        """
+        Monitor process resource usage in real-time.
+        
+        Args:
+            process: The process to monitor
+            interval: Monitoring interval in seconds
+            
+        Returns:
+            ProcessResourceUsage object with current metrics
+        """
+        if not HAS_PSUTIL:
+            # Fallback when psutil is not available
+            return ProcessResourceUsage(
+                cpu_percent=0.0,
+                memory_mb=0.0,
+                max_memory_mb=0.0,
+                runtime_seconds=0.0,
+                process_count=1,
+                status='running' if process.poll() is None else 'terminated'
+            )
+        
+        try:
+            # Get process info using psutil
+            ps_process = psutil.Process(process.pid)
+            
+            # Get resource usage
+            memory_info = ps_process.memory_info()
+            memory_mb = memory_info.rss / (1024 * 1024)  # Convert to MB
+            
+            # Get CPU usage (may be 0.0 on first call)
+            cpu_percent = ps_process.cpu_percent(interval=interval)
+            
+            # Get process count (including children)
+            process_count = 1
+            try:
+                children = ps_process.children(recursive=True)
+                process_count += len(children)
+            except psutil.NoSuchProcess:
+                pass
+            
+            # Calculate runtime
+            create_time = ps_process.create_time()
+            runtime_seconds = time.time() - create_time
+            
+            # Get process status
+            status = ps_process.status()
+            
+            # Track maximum memory usage
+            max_memory_mb = getattr(self, '_max_memory_seen', 0)
+            max_memory_mb = max(max_memory_mb, memory_mb)
+            self._max_memory_seen = max_memory_mb
+            
+            return ProcessResourceUsage(
+                cpu_percent=cpu_percent,
+                memory_mb=memory_mb,
+                max_memory_mb=max_memory_mb,
+                runtime_seconds=runtime_seconds,
+                process_count=process_count,
+                status=status
+            )
+            
+        except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
+            # Process may have terminated or access denied
+            return ProcessResourceUsage(
+                cpu_percent=0.0,
+                memory_mb=0.0,
+                max_memory_mb=getattr(self, '_max_memory_seen', 0),
+                runtime_seconds=0.0,
+                process_count=0,
+                status='terminated'
+            )
+    
+    def terminate_process_group(self, process: subprocess.Popen, timeout: float = 5.0):
+        """
+        Safely terminate a process and all its children.
+        
+        Args:
+            process: The process to terminate
+            timeout: Time to wait for graceful termination
+        """
+        if not process or process.poll() is not None:
+            return  # Process already terminated
+        
+        if not HAS_PSUTIL:
+            # Fallback when psutil is not available - basic termination
+            try:
+                process.terminate()
+                process.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=1.0)
+            return
+        
+        try:
+            # Get the process and all children
+            ps_process = psutil.Process(process.pid)
+            children = ps_process.children(recursive=True)
+            
+            # First, try graceful termination
+            for child in children:
+                try:
+                    child.terminate()
+                except psutil.NoSuchProcess:
+                    pass
+            
+            try:
+                ps_process.terminate()
+            except psutil.NoSuchProcess:
+                pass
+            
+            # Wait for graceful termination
+            gone, alive = psutil.wait_procs(children + [ps_process], timeout=timeout)
+            
+            # Force kill any remaining processes
+            for proc in alive:
+                try:
+                    proc.kill()
+                except psutil.NoSuchProcess:
+                    pass
+            
+            # Final cleanup - terminate the subprocess object
+            try:
+                process.terminate()
+                process.wait(timeout=1.0)
+            except (subprocess.TimeoutExpired, OSError):
+                try:
+                    process.kill()
+                    process.wait(timeout=1.0)
+                except (subprocess.TimeoutExpired, OSError):
+                    pass
+                    
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            # Process may have already terminated
+            pass
+        except Exception:
+            # Fallback to basic termination
+            try:
+                process.terminate()
+                process.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=1.0)
+    
+    @contextmanager
+    def isolated_process_context(self, command: List[str], working_dir: Optional[str] = None,
+                                env_vars: Optional[Dict[str, str]] = None, monitor: bool = True):
+        """
+        Context manager for isolated process execution with automatic cleanup.
+        
+        Args:
+            command: Command and arguments to execute
+            working_dir: Working directory for the process
+            env_vars: Environment variables
+            monitor: Whether to monitor resource usage
+            
+        Yields:
+            Tuple of (process, resource_monitor_func)
+        """
+        process = None
+        monitor_thread = None
+        resource_usage = None
+        
+        try:
+            # Create isolated process
+            process = self.create_isolated_process(command, working_dir, env_vars)
+            
+            # Set up resource monitoring if requested
+            if monitor:
+                def monitor_resources():
+                    nonlocal resource_usage
+                    while process.poll() is None:
+                        try:
+                            resource_usage = self.monitor_process_resources(process)
+                            # Check if process exceeds limits
+                            if resource_usage.memory_mb > self.max_memory_mb:
+                                self.terminate_process_group(process)
+                                break
+                            if resource_usage.runtime_seconds > self.max_time_seconds:
+                                self.terminate_process_group(process)
+                                break
+                            time.sleep(0.5)
+                        except Exception:
+                            break
+                
+                monitor_thread = threading.Thread(target=monitor_resources, daemon=True)
+                monitor_thread.start()
+            
+            # Yield process and resource getter
+            yield process, lambda: resource_usage
+            
+        finally:
+            # Clean up process and monitoring
+            if process:
+                self.terminate_process_group(process)
+            
+            if monitor_thread and monitor_thread.is_alive():
+                # Give monitoring thread time to finish
+                monitor_thread.join(timeout=1.0)

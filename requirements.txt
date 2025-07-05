@@ -11,6 +11,9 @@ typing-extensions==4.8.0
 Flask>=3.0.0
 Werkzeug>=3.0.0
 
+# Security sandbox dependencies
+psutil>=5.9.0
+
 # For marimo notebook parsing (Python AST analysis)
 # ast is built-in, no additional dependencies needed
 
