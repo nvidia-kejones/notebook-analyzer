@@ -152,6 +152,73 @@ def parallel_pattern_search(text: str, patterns: List[str], flags: int = re.IGNO
     
     return results
 
+# Runtime utility functions (consolidated from LLMAnalyzer and GPUAnalyzer)
+def parse_runtime_range(runtime_str: str) -> tuple:
+    """Parse runtime string like '1.5-2.5' into (min, max) float tuple."""
+    try:
+        if '-' in runtime_str:
+            parts = runtime_str.split('-')
+            min_time = float(parts[0])
+            max_time = float(parts[1])
+            return (min_time, max_time)
+        else:
+            # Single value
+            time_val = float(runtime_str)
+            return (time_val, time_val)
+    except:
+        # Fallback for parsing errors
+        return (1.0, 2.0)
+
+def format_runtime(time_hours: float) -> str:
+    """Format runtime value to show minutes if < 1 hour, hours if >= 1 hour."""
+    if time_hours < 1.0:
+        minutes = int(time_hours * 60)
+        return f"{minutes} minutes"
+    else:
+        return f"{time_hours:.1f} hours"
+
+def format_runtime_range(min_hours: float, max_hours: float) -> str:
+    """Format runtime range to show appropriate units."""
+    if min_hours == max_hours:
+        return format_runtime(min_hours)
+    else:
+        # If both values are in the same unit range, format consistently
+        if min_hours < 1.0 and max_hours < 1.0:
+            # Both in minutes
+            min_minutes = int(min_hours * 60)
+            max_minutes = int(max_hours * 60)
+            return f"{min_minutes}-{max_minutes} minutes"
+        elif min_hours >= 1.0 and max_hours >= 1.0:
+            # Both in hours
+            return f"{min_hours:.1f}-{max_hours:.1f} hours"
+        else:
+            # Mixed units - format each separately
+            return f"{format_runtime(min_hours)}-{format_runtime(max_hours)}"
+
+def convert_runtime_to_new_format(runtime_str: str) -> str:
+    """Convert runtime string to standardized format (unified from both implementations)."""
+    if not runtime_str or runtime_str in ["N/A", "Unknown"]:
+        return "1-2 hours"
+    
+    # Handle range formats like "1.0-2.0"
+    if "-" in runtime_str and "hour" not in runtime_str and "minute" not in runtime_str:
+        try:
+            parts = runtime_str.split("-")
+            if len(parts) == 2:
+                min_val = float(parts[0])
+                max_val = float(parts[1])
+                return format_runtime_range(min_val, max_val)
+        except ValueError:
+            pass
+    
+    # Try to parse and reformat using the range parser
+    try:
+        min_time, max_time = parse_runtime_range(runtime_str)
+        return format_runtime_range(min_time, max_time)
+    except:
+        # If all parsing fails, return the original string
+        return runtime_str
+
 @dataclass
 class GPURequirement:
     # Minimum (entry-level viable option)
@@ -437,57 +504,22 @@ class LLMAnalyzer:
         else:
             print(f"⚡ Self-review enabled: {self.env_config.get('self_review_enabled', False)}")
     
+    # Runtime utility methods now use module-level functions
     def _parse_runtime_range(self, runtime_str: str) -> tuple:
         """Parse runtime string like '1.5-2.5' into (min, max) float tuple."""
-        try:
-            if '-' in runtime_str:
-                parts = runtime_str.split('-')
-                min_time = float(parts[0])
-                max_time = float(parts[1])
-                return (min_time, max_time)
-            else:
-                # Single value
-                time_val = float(runtime_str)
-                return (time_val, time_val)
-        except:
-            # Fallback for parsing errors
-            return (1.0, 2.0)
+        return parse_runtime_range(runtime_str)
     
     def _format_runtime(self, time_hours: float) -> str:
         """Format runtime value to show minutes if < 1 hour, hours if >= 1 hour."""
-        if time_hours < 1.0:
-            minutes = int(time_hours * 60)
-            return f"{minutes} minutes"
-        else:
-            return f"{time_hours:.1f} hours"
+        return format_runtime(time_hours)
     
     def _format_runtime_range(self, min_hours: float, max_hours: float) -> str:
         """Format runtime range to show appropriate units."""
-        if min_hours == max_hours:
-            return self._format_runtime(min_hours)
-        else:
-            # If both values are in the same unit range, format consistently
-            if min_hours < 1.0 and max_hours < 1.0:
-                # Both in minutes
-                min_minutes = int(min_hours * 60)
-                max_minutes = int(max_hours * 60)
-                return f"{min_minutes}-{max_minutes} minutes"
-            elif min_hours >= 1.0 and max_hours >= 1.0:
-                # Both in hours
-                return f"{min_hours:.1f}-{max_hours:.1f} hours"
-            else:
-                # Mixed units - format each separately
-                return f"{self._format_runtime(min_hours)}-{self._format_runtime(max_hours)}"
+        return format_runtime_range(min_hours, max_hours)
     
     def _convert_runtime_to_new_format(self, runtime_str: str) -> str:
         """Convert existing runtime string to new format with minutes/hours."""
-        try:
-            # Parse the runtime string
-            min_time, max_time = self._parse_runtime_range(runtime_str)
-            return self._format_runtime_range(min_time, max_time)
-        except:
-            # If parsing fails, return the original string
-            return runtime_str
+        return convert_runtime_to_new_format(runtime_str)
 
     def _clean_json_response(self, json_str: str) -> str:
         """Clean JSON response by removing comments and fixing common issues."""
@@ -3506,19 +3538,7 @@ class GPUAnalyzer:
 
     def _parse_runtime_range(self, runtime_str: str) -> tuple:
         """Parse runtime string like '1.5-2.5' into (min, max) float tuple."""
-        try:
-            if '-' in runtime_str:
-                parts = runtime_str.split('-')
-                min_time = float(parts[0])
-                max_time = float(parts[1])
-                return (min_time, max_time)
-            else:
-                # Single value
-                time_val = float(runtime_str)
-                return (time_val, time_val)
-        except:
-            # Fallback for parsing errors
-            return (1.0, 2.0)
+        return parse_runtime_range(runtime_str)
 
     def _calculate_multi_gpu_scaling(self, quantity: int) -> float:
         """Calculate multi-GPU scaling efficiency factor."""
@@ -3539,7 +3559,7 @@ class GPUAnalyzer:
         """Calculate runtime for target GPU based on baseline estimate."""
         try:
             # Parse baseline runtime
-            min_time, max_time = self._parse_runtime_range(baseline_runtime)
+            min_time, max_time = parse_runtime_range(baseline_runtime)
             
             # Get performance factors
             baseline_perf = self.gpu_specs.get(baseline_gpu, {}).get('performance_factor', 1.0)
@@ -3576,7 +3596,7 @@ class GPUAnalyzer:
                 
         except Exception as e:
             # Fallback runtime
-            return self._convert_runtime_to_new_format("1.0-2.0")
+            return convert_runtime_to_new_format("1.0-2.0")
 
     def _generate_comprehensive_recommendations(self, analysis: Dict):
         """Generate minimum, consumer, and enterprise recommendations using new GPU specs-based system."""
@@ -3756,26 +3776,7 @@ class GPUAnalyzer:
     
     def _convert_runtime_to_new_format(self, runtime_str: str) -> str:
         """Convert runtime string to new format."""
-        if not runtime_str or runtime_str in ["N/A", "Unknown"]:
-            return "1-2 hours"
-        
-        # Handle range formats like "1.0-2.0"
-        if "-" in runtime_str and "hour" not in runtime_str:
-            try:
-                parts = runtime_str.split("-")
-                if len(parts) == 2:
-                    min_val = float(parts[0])
-                    max_val = float(parts[1])
-                    if min_val < 1 and max_val < 1:
-                        return "< 1 hour"
-                    elif min_val < 1:
-                        return f"< {max_val:.0f} hours"
-                    else:
-                        return f"{min_val:.0f}-{max_val:.0f} hours"
-            except ValueError:
-                pass
-        
-        return runtime_str
+        return convert_runtime_to_new_format(runtime_str)
 
     def _fix_vram_calculations(self, analysis: Dict):
         """Fix vRAM calculations to ensure they are based on actual GPU specs * quantity."""
