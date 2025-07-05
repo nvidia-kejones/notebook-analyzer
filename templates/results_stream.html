@@ -517,10 +517,33 @@ function createShareableText(analysis, sourceName, sourceType) {
         `📄 File: ${sourceName}` : 
         `🔗 URL: ${sourceName}`;
     
+    // Check if this is a CPU-only workload
+    const isCpuOnly = analysis.min_gpu.type === 'CPU-only' || 
+                      (analysis.min_gpu.type && analysis.min_gpu.type.includes('CPU-only'));
+    
     let text = `🚀 **GPU Analysis Results**
 ${sourceInfo}
 
-**💾 Minimum Configuration:**
+`;
+
+    if (isCpuOnly) {
+        // Simplified CPU-only format matching CLI behavior
+        text += `**💻 CPU-OPTIMIZED WORKLOAD:**
+This notebook is designed for CPU execution and does not require GPU acceleration.
+
+• GPU Required: No
+• Estimated Runtime: ${analysis.min_gpu.runtime}
+• Processing: CPU-Only
+
+**📊 Technical Details:**
+• SXM Required: No
+• ARM Compatibility: ${analysis.arm_compatibility}
+• NVIDIA Compliance: ${analysis.nvidia_compliance_score}/100
+• Analysis Confidence: ${analysis.confidence}%
+• Enhancement: ${analysis.llm_enhanced ? 'LLM Enhanced' : 'Static Analysis'}${analysis.llm_model_used ? `\n• AI Model: ${analysis.llm_model_used}` : ''}`;
+    } else {
+        // Full 3-tier format for GPU workloads
+        text += `**💾 Minimum Configuration:**
 • GPU: ${analysis.min_gpu.type}
 • Quantity: ${analysis.min_gpu.quantity}
 • VRAM: ${analysis.min_gpu.vram_gb} GB
@@ -528,30 +551,30 @@ ${sourceInfo}
 
 **🎯 Recommended:**`;
 
-    // Handle CPU-only workloads
-    if (!analysis.consumer_gpu || analysis.consumer_gpu.type === 'CPU-only') {
-        text += `
+        // Handle recommended tier
+        if (!analysis.consumer_gpu || analysis.consumer_gpu.type === 'CPU-only') {
+            text += `
 • Processing: CPU-Only
 • GPU Required: No
 • VRAM: 0 GB
 • Runtime: CPU execution`;
-    } else if (analysis.consumer_gpu) {
-        text += `
+        } else if (analysis.consumer_gpu) {
+            text += `
 • GPU: ${analysis.consumer_gpu.type}
 • Quantity: ${analysis.consumer_gpu.quantity}
 • VRAM: ${analysis.consumer_gpu.vram_gb} GB
 • Runtime: ${analysis.consumer_gpu.runtime}`;
-        
-        // Add limitation note only for actual GPU workloads that have limitations
-        if (!analysis.consumer_viable && analysis.consumer_limitation) {
-            text += `\n• Note: ${analysis.consumer_limitation}`;
-        }
-    } else {
-        text += `
+            
+            // Add limitation note only for actual GPU workloads that have limitations
+            if (!analysis.consumer_viable && analysis.consumer_limitation) {
+                text += `\n• Note: ${analysis.consumer_limitation}`;
+            }
+        } else {
+            text += `
 • Not Recommended${analysis.consumer_limitation ? '\n• Reason: ' + analysis.consumer_limitation : ''}`;
-    }
+        }
 
-    text += `
+        text += `
 
 **⭐ Optimal:**
 • GPU: ${analysis.enterprise_gpu && analysis.enterprise_gpu.type ? analysis.enterprise_gpu.type : 'CPU-only'}
@@ -565,10 +588,11 @@ ${sourceInfo}
 • NVIDIA Compliance: ${analysis.nvidia_compliance_score}/100
 • Analysis Confidence: ${analysis.confidence}%
 • Enhancement: ${analysis.llm_enhanced ? 'LLM Enhanced' : 'Static Analysis'}${analysis.llm_model_used ? `\n• AI Model: ${analysis.llm_model_used}` : ''}`;
+    }
 
     // Add LLM insights first if available (Phase 1: Prioritize LLM)
     if (analysis.llm_reasoning && analysis.llm_reasoning.length > 0) {
-                 text += `\n\n**🤖 AI Enhanced Analysis:**`;
+        text += `\n\n**🤖 AI Enhanced Analysis:**`;
         analysis.llm_reasoning.slice(0, 3).forEach(reason => {
             text += `\n• ${reason}`;
         });

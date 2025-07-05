@@ -171,21 +171,6 @@ python notebook-analyzer.py -v ./local-notebook.ipynb
 
 ## 🔧 Troubleshooting
 
-### LLM Enhancement Issues
-
-**Problem**: Getting 404 errors from LLM API, falling back to static analysis  
-**Solution**: Make sure your `OPENAI_BASE_URL` does NOT include `/v1` at the end. The application adds this automatically.
-
-```bash
-# ❌ Wrong - will cause 404 errors
-export OPENAI_BASE_URL="https://integrate.api.nvidia.com/v1"
-
-# ✅ Correct
-export OPENAI_BASE_URL="https://integrate.api.nvidia.com"
-```
-
-The application automatically constructs the full endpoint: `{base_url}/v1/chat/completions`
-
 ### JSON Output for Automation
 ```bash
 # Pure JSON output (no status messages)
@@ -251,7 +236,7 @@ docker-compose up --build
 
 1. **Clone and build**:
    ```bash
-   git clone <repository-url>
+   git clone https://github.com/nvidia-kejones/notebook-analyzer.git
    cd notebook-analyzer
    docker-compose up --build
    ```
@@ -433,6 +418,7 @@ Consider alternatives if you need:
 
 ### Human-Readable Format (Default)
 
+#### GPU Workload Example
 ```
 ✅ LLM enhancement enabled using nvidia/llama-3.1-nemotron-ultra-253b-v1
 ✅ GitHub authentication enabled
@@ -444,7 +430,8 @@ Consider alternatives if you need:
 ✅ Compliance evaluation complete (score: 78/100)
 
 ======================================================================
-GPU REQUIREMENTS ANALYSIS
+📋 ENHANCED GPU REQUIREMENTS ANALYSIS
+🎯 WITH NVIDIA BEST PRACTICES COMPLIANCE
 ======================================================================
 
 📊 MINIMUM Configuration:
@@ -453,6 +440,12 @@ GPU REQUIREMENTS ANALYSIS
    VRAM: 24 GB
    Estimated Runtime: 4.2 hours
 
+🎯 RECOMMENDED Configuration:
+   GPU Type: RTX 4090
+   Quantity: 1
+   VRAM: 24 GB
+   Estimated Runtime: 2.1 hours
+
 🚀 OPTIMAL CONFIGURATION:
    GPU Type: A100 SXM 80G
    Quantity: 1
@@ -460,13 +453,14 @@ GPU REQUIREMENTS ANALYSIS
    Estimated Runtime: 1.1 hours
 
 📋 NVIDIA NOTEBOOK COMPLIANCE: 78/100
-🟡 Overall Quality Score
+🟡 Good - Generally follows NVIDIA best practices
 
 💡 ADDITIONAL INFO:
    SXM Form Factor Required: No
    ARM/Grace Compatibility: Likely Compatible
    Analysis Confidence: 87%
    LLM Enhanced: Yes
+   NVIDIA Best Practices: ✅ Loaded
 
 📚 Structure & Layout Assessment:
      Title: ✅ Good title format
@@ -489,17 +483,75 @@ GPU REQUIREMENTS ANALYSIS
 ======================================================================
 ```
 
+#### CPU-Only Workload Example
+```
+✅ GitHub authentication enabled
+📁 Loading local notebook: ./data-analysis.ipynb
+✅ Successfully loaded local notebook
+🤖 Enhancing analysis with LLM...
+✅ LLM analysis complete (confidence: 92%)
+📋 Evaluating NVIDIA compliance...
+✅ Compliance evaluation complete (score: 65/100)
+
+======================================================================
+📋 ENHANCED GPU REQUIREMENTS ANALYSIS
+🎯 WITH NVIDIA BEST PRACTICES COMPLIANCE
+======================================================================
+
+💻 CPU-OPTIMIZED WORKLOAD:
+   This notebook is designed for CPU execution and does not require GPU acceleration.
+   Estimated Runtime: 5-15 minutes
+   GPU Required: No
+
+📋 NVIDIA NOTEBOOK COMPLIANCE: 65/100
+🟠 Fair - Some improvements needed for NVIDIA standards
+
+💡 ADDITIONAL INFO:
+   SXM Form Factor Required: No
+   ARM/Grace Compatibility: Likely Compatible
+   Analysis Confidence: 92%
+   LLM Enhanced: Yes
+   NVIDIA Best Practices: ✅ Loaded
+
+📚 Structure & Layout Assessment:
+     Title: ⚠️ Consider NVIDIA-style title format
+     Introduction: ✅ Good introduction
+     Navigation: ✅ Good use of headers for navigation
+     Conclusion: ⚠️ Could benefit from stronger conclusion
+
+🎯 Content Quality Recommendations:
+     • Add more explanatory text for code cells
+     • Include links to relevant documentation
+
+🔧 Technical Standards Recommendations:
+     • Pin package versions (e.g., pandas==1.5.3)
+     • Add requirements.txt file
+
+🤖 LLM Analysis Insights:
+     • Detected pandas, numpy, matplotlib usage (CPU-optimized)
+     • No GPU-accelerated operations found
+     • Workload complexity: simple data analysis
+======================================================================
+```
+
 ### JSON Format (--json flag)
 
+#### GPU Workload JSON Example
 ```json
 {
   "min_gpu_type": "L4",
   "min_quantity": 1,
   "min_vram_gb": 24,
+  "min_runtime_estimate": "4.2 hours",
+  "recommended_gpu_type": "RTX 4090",
+  "recommended_quantity": 1,
+  "recommended_vram_gb": 24,
+  "recommended_runtime_estimate": "2.1 hours",
+  "recommended_viable": true,
+  "recommended_limitation": null,
   "optimal_gpu_type": "A100 SXM 80G",
   "optimal_quantity": 1,
   "optimal_vram_gb": 80,
-  "min_runtime_estimate": "4.2 hours",
   "optimal_runtime_estimate": "1.1 hours",
   "sxm_required": false,
   "sxm_reasoning": [],
@@ -524,10 +576,62 @@ GPU REQUIREMENTS ANALYSIS
     "Pin package versions (e.g., torch==2.1.0)",
     "Set seeds for reproducibility"
   ],
+  "workload_detected": true,
   "analysis_metadata": {
     "analyzed_url_or_path": "./fine-tune-analysis.ipynb",
     "timestamp": "2024-12-19T10:30:45.123456",
-    "version": "3.0.0"
+    "version": "3.1.0",
+    "enhanced_features": "NVIDIA Best Practices Integration"
+  }
+}
+```
+
+#### CPU-Only Workload JSON Example
+```json
+{
+  "min_gpu_type": "CPU-only",
+  "min_quantity": 0,
+  "min_vram_gb": 0,
+  "min_runtime_estimate": "CPU execution",
+  "recommended_gpu_type": null,
+  "recommended_quantity": null,
+  "recommended_vram_gb": null,
+  "recommended_runtime_estimate": null,
+  "recommended_viable": false,
+  "recommended_limitation": "CPU-optimized workload - GPU not needed",
+  "optimal_gpu_type": "CPU-only",
+  "optimal_quantity": 0,
+  "optimal_vram_gb": 0,
+  "optimal_runtime_estimate": "CPU execution",
+  "sxm_required": false,
+  "sxm_reasoning": [],
+  "arm_compatibility": "Likely Compatible",
+  "arm_reasoning": ["Uses CPU-optimized libraries"],
+  "confidence": 0.92,
+  "reasoning": ["No GPU workload detected", "CPU-optimized libraries: pandas, numpy, matplotlib"],
+  "llm_enhanced": true,
+  "llm_reasoning": ["Detected pandas, numpy, matplotlib usage (CPU-optimized)", "No GPU-accelerated operations found"],
+  "nvidia_compliance_score": 65.0,
+  "structure_assessment": {
+    "title": "⚠️ Consider NVIDIA-style title format",
+    "introduction": "✅ Good introduction",
+    "navigation": "✅ Good use of headers for navigation",
+    "conclusion": "⚠️ Could benefit from stronger conclusion"
+  },
+  "content_quality_issues": [
+    "Add more explanatory text for code cells",
+    "Include links to relevant documentation"
+  ],
+  "technical_recommendations": [
+    "Pin package versions (e.g., pandas==1.5.3)",
+    "Add requirements.txt file"
+  ],
+  "workload_detected": false,
+  "analysis_metadata": {
+    "analyzed_url_or_path": "./data-analysis.ipynb",
+    "timestamp": "2024-12-19T10:30:45.123456",
+    "version": "3.1.0",
+    "enhanced_features": "NVIDIA Best Practices Integration"
   }
 }
 ```
@@ -535,20 +639,14 @@ GPU REQUIREMENTS ANALYSIS
 ## 🎯 Supported GPU Models
 
 ### Consumer GPUs
-- RTX 50 Series: 5090 (32GB), 5080 (16GB)
-- RTX 40 Series: 4090 (24GB), 4080 (16GB)
-- RTX 30 Series: 3090 (24GB), 3080 (10GB)
-
-### Professional GPUs
-- RTX 6000 Pro Server/Workstation (48GB)
-- L40S (48GB), L40 (48GB), L4 (24GB)
+- RTX 50, 40, and 30 Series (various VRAM configurations)
 
 ### Data Center GPUs
-- **B200**: SXM (192GB), PCIe (192GB)
+- **B200**: SXM (192GB) - Dual-GPU design
 - **H200**: SXM (141GB), NVL (141GB)
-- **H100**: SXM (80GB), PCIe (80GB), NVL (188GB)
+- **H100**: SXM (80GB), PCIe (80GB), NVL (94GB)
 - **A100**: SXM 80G/40G, PCIe 80G/40G
-- **V100** (32GB), **T4** (16GB)
+- **L40S** (48GB), **L40** (48GB), **L4** (24GB)
 
 ## 🔧 Configuration Options
 

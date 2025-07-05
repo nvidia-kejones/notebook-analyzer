@@ -678,13 +678,13 @@ class LLMAnalyzer:
 
 **GPU Performance Context** (relative performance factors):
 - **Consumer GPUs**: RTX 4060 (0.35×), RTX 4070 (0.50×), RTX 4080 (0.70×), RTX 4090 (1.0× baseline), RTX 5080 (1.15×), RTX 5090 (1.4×)
-- **Enterprise GPUs**: L4 (0.25×), L40 (0.60×), L40S (0.75×), A100 PCIe (1.0×), A100 SXM (1.05×), H100 PCIe (2.2×), H100 SXM (2.4×), H200 SXM (2.8×), B200 SXM (4.0×)
+        - **Enterprise GPUs**: L4 (0.25×), L40 (0.60×), L40S (0.75×), A100 PCIe (1.0×), A100 SXM (1.05×), H100 PCIe (2.2×), H100 SXM (2.4×), H100 NVL (2.3×), H200 SXM (2.8×), H200 NVL (2.8×), B200 SXM (4.0×)
 - Performance factors relative to RTX 4090. Higher = faster execution.
 - Enterprise GPUs provide better reliability, ECC memory, and professional support.
 
 **Valid GPU Options** (use ONLY these):
 - Consumer: RTX 4060, RTX 4070, RTX 4080, RTX 4090, RTX 5080, RTX 5090
-- Enterprise: L4, L40, L40S, A100 PCIe 40G, A100 PCIe 80G, A100 SXM 40G, A100 SXM 80G, H100 PCIe, H100 SXM, H200 SXM, B200 SXM
+- Enterprise: L4, L40, L40S, A100 PCIe 40G, A100 PCIe 80G, A100 SXM 40G, A100 SXM 80G, H100 PCIe, H100 SXM, H100 NVL, H200 SXM, H200 NVL, B200 SXM
 
 Notebook Content:
 {notebook_content}
@@ -1229,7 +1229,7 @@ YOUR ANALYSIS RESULTS:
 
 **VALID GPU OPTIONS** (use ONLY these):
 - Consumer: RTX 4060, RTX 4070, RTX 4080, RTX 4090, RTX 5080, RTX 5090
-- Enterprise: L4, L40, L40S, A100 PCIe 40G, A100 PCIe 80G, A100 SXM 40G, A100 SXM 80G, H100 PCIe, H100 SXM, H200 SXM, B200 SXM
+- Enterprise: L4, L40, L40S, A100 PCIe 40G, A100 PCIe 80G, A100 SXM 40G, A100 SXM 80G, H100 PCIe, H100 SXM, H100 NVL, H200 SXM, H200 NVL, B200 SXM
 
 **EXAMPLE CORRECT 3-TIER PATTERNS**:
 - CPU-Only Workload: CPU-only → CPU-only → CPU-only
@@ -1853,6 +1853,18 @@ class GPUAnalyzer:
                 'release_year': 2023, 'tier': 'cutting_edge', 'tensor_cores': True,
                 'category': 'enterprise', 'max_reasonable_quantity': 32, 'performance_factor': 3.0,
                 'cost_factor': 35.0  # ~$35000
+            },
+            'H100 NVL': {
+                'vram': 94, 'compute_capability': 9.0, 'form_factor': 'NVL', 'nvlink': True,
+                'release_year': 2022, 'tier': 'cutting_edge', 'tensor_cores': True,
+                'category': 'enterprise', 'max_reasonable_quantity': 8, 'performance_factor': 2.3,
+                'cost_factor': 22.0  # ~$22000
+            },
+            'H200 NVL': {
+                'vram': 141, 'compute_capability': 9.0, 'form_factor': 'NVL', 'nvlink': True,
+                'release_year': 2023, 'tier': 'cutting_edge', 'tensor_cores': True,
+                'category': 'enterprise', 'max_reasonable_quantity': 8, 'performance_factor': 2.8,
+                'cost_factor': 32.0  # ~$32000
             },
             'B200 SXM': {
                 'vram': 192, 'compute_capability': 10.0, 'form_factor': 'SXM', 'nvlink': True,
@@ -3738,6 +3750,29 @@ class GPUAnalyzer:
             return "30-60 minutes"
         else:
             return "1-3 hours"
+    
+    def _convert_runtime_to_new_format(self, runtime_str: str) -> str:
+        """Convert runtime string to new format."""
+        if not runtime_str or runtime_str in ["N/A", "Unknown"]:
+            return "1-2 hours"
+        
+        # Handle range formats like "1.0-2.0"
+        if "-" in runtime_str and "hour" not in runtime_str:
+            try:
+                parts = runtime_str.split("-")
+                if len(parts) == 2:
+                    min_val = float(parts[0])
+                    max_val = float(parts[1])
+                    if min_val < 1 and max_val < 1:
+                        return "< 1 hour"
+                    elif min_val < 1:
+                        return f"< {max_val:.0f} hours"
+                    else:
+                        return f"{min_val:.0f}-{max_val:.0f} hours"
+            except ValueError:
+                pass
+        
+        return runtime_str
 
     def _fix_vram_calculations(self, analysis: Dict):
         """Fix vRAM calculations to ensure they are based on actual GPU specs * quantity."""
