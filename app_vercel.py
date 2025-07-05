@@ -21,6 +21,66 @@ from datetime import datetime, timedelta
 import gzip
 import io
 
+# Import request validation
+try:
+    from analyzer.request_validator import validate_flask_request
+    REQUEST_VALIDATION_AVAILABLE = True
+except ImportError:
+    REQUEST_VALIDATION_AVAILABLE = False
+
+def validate_request_security(request):
+    """
+    Validate request for security issues.
+    Returns error response if invalid, None if valid.
+    """
+    if not REQUEST_VALIDATION_AVAILABLE:
+        return None
+    
+    try:
+        # Get client IP for rate limiting
+        client_ip = request.environ.get('REMOTE_ADDR', '127.0.0.1')
+        
+        # Handle forwarded headers
+        forwarded_for = request.headers.get('X-Forwarded-For')
+        if forwarded_for:
+            client_ip = forwarded_for.split(',')[0].strip()
+        
+        # Validate request
+        result = validate_flask_request(request, client_ip)
+        
+        if not result.is_valid:
+            # Log security violation
+            print(f"🚨 Security validation failed: {result.error_message}")
+            print(f"   Error code: {result.error_code}")
+            print(f"   Risk level: {result.risk_level}")
+            print(f"   Client IP: {client_ip}")
+            
+            # Return appropriate error response
+            if result.error_code == "RATE_LIMIT_EXCEEDED":
+                return jsonify({
+                    'error': 'Rate limit exceeded. Please try again later.',
+                    'retry_after': 60
+                }), 429
+            elif result.risk_level == "critical":
+                return jsonify({
+                    'error': 'Request blocked for security reasons.'
+                }), 403
+            elif result.risk_level == "high":
+                return jsonify({
+                    'error': 'Request validation failed.'
+                }), 400
+            else:
+                return jsonify({
+                    'error': 'Invalid request format.'
+                }), 400
+        
+        return None
+        
+    except Exception as e:
+        # Don't fail on validation errors, but log them
+        print(f"⚠️  Request validation error: {e}")
+        return None
+
 # Performance optimization: Response compression
 def compress_response(response: Response) -> Response:
     """Compress response data if it's large enough to benefit."""
@@ -407,6 +467,11 @@ def api_analyze():
     if not GPUAnalyzer:
         return jsonify({'error': 'Analysis service not available'}), 503
     
+    # Validate request for security
+    validation_error = validate_request_security(request)
+    if validation_error:
+        return validation_error
+    
     try:
         # Get selected model from request (if provided)
         selected_model = None
@@ -605,7 +670,7 @@ def analyze_stream():
             env_config = get_environment_config()
             
             # Progress batching for production
-            if env_config['progress_batching']:
+            if env_config and env_config.get('progress_batching', False):
                 batch_buffer = []
                 batch_size = 3  # Send messages in batches of 3
                 last_send_time = time.time()
@@ -1071,7 +1136,7 @@ def mcp_endpoint():
         return jsonify({
             'jsonrpc': '2.0',
             'error': {'code': -32000, 'message': 'Analysis service not available'},
-            'id': request.json.get('id') if request.is_json else None
+            'id': request.json.get('id') if request.is_json and request.json else None
         }), 503
     
     if not request.is_json:
