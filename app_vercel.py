@@ -1265,6 +1265,13 @@ def mcp_endpoint():
                                                f"- Quantity: {analysis_data['min_gpu']['quantity']}\n" +
                                                f"- VRAM: {analysis_data['min_gpu']['vram_gb']} GB\n" +
                                                f"- Runtime: {analysis_data['min_gpu']['runtime']}\n\n" +
+                                               f"**Recommended Configuration:**\n" +
+                                               (f"- GPU: {analysis_data['recommended_gpu']['type']}\n" +
+                                               f"- Quantity: {analysis_data['recommended_gpu']['quantity']}\n" +
+                                               f"- VRAM: {analysis_data['recommended_gpu']['vram_gb']} GB\n" +
+                                               f"- Runtime: {analysis_data['recommended_gpu']['runtime']}\n" if analysis_data.get('recommended_gpu') else
+                                               f"- Same as minimum configuration\n") +
+                                               f"\n" +
                                                f"**Optimal Configuration:**\n" +
                                                f"- GPU: {analysis_data['optimal_gpu']['type']}\n" +
                                                f"- Quantity: {analysis_data['optimal_gpu']['quantity']}\n" +

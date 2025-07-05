@@ -15,12 +15,12 @@ This folder contains various notebook examples that serve as test cases for the 
 
 ### `test_gpu_workload.ipynb` - Basic GPU Training Test
 **Purpose**: Tests analyzer's ability to detect legitimate GPU training workloads  
-**Expected Result**: Entry to mid-tier GPU recommendation (RTX 4070-4080)  
+**Expected Result**: 3-tier GPU recommendations (RTX 4060 → RTX 5090 → H100 PCIe)  
 **Key Features**:
 - Simple PyTorch neural network training
 - Clear GPU usage patterns (.cuda(), .to(device))
 - Training loop with optimizer, loss, backpropagation
-- Demonstrates proper GPU requirement scaling
+- Demonstrates proper 3-tier GPU requirement scaling
 
 ### `jupyter_example.ipynb` - Standard Jupyter Example
 **Purpose**: Existing example notebook for general testing  
@@ -42,18 +42,33 @@ curl -X POST -F "file=@examples/test_arm_problems.ipynb" "http://localhost:8080/
 curl -X POST -F "file=@examples/test_gpu_workload.ipynb" "http://localhost:8080/api/analyze"
 ```
 
-## Expected Behavior Changes
+## Expected Behavior - 3-Tier System
 
-### Before GPU Detection Fix
-- All notebooks got expensive defaults (L4 minimum, A100 SXM optimal)
-- No distinction between CPU-only and GPU workloads
+### CPU-Only Workloads
+- **All Tiers**: CPU-only recommendation
+- **Examples**: Basic Python, data analysis with pandas/numpy, simple plotting
 
-### After GPU Detection Fix  
-- CPU-only notebooks: CPU-only recommendation
-- Entry-level GPU workloads: RTX 4060-4070 
-- Mid-tier workloads: RTX 4070-4080
-- High-end workloads: RTX 4090-L4
-- Enterprise workloads: A100 series
+### GPU Workloads - 3-Tier Recommendations
+
+**Entry-level ML/Training:**
+- **Minimum**: RTX 4060 (8GB)
+- **Recommended**: RTX 4070 (12GB) 
+- **Optimal**: RTX 4080 (16GB)
+
+**Mid-scale Training:**
+- **Minimum**: RTX 4070 (12GB)
+- **Recommended**: RTX 4090 (24GB)
+- **Optimal**: L40S (48GB)
+
+**Large-scale Training:**
+- **Minimum**: RTX 4090 (24GB)
+- **Recommended**: L40S (48GB)
+- **Optimal**: A100 PCIe 80G (80GB)
+
+**Enterprise Production:**
+- **Minimum**: L40S (48GB)
+- **Recommended**: A100 PCIe 80G (80GB)
+- **Optimal**: H100 PCIe (80GB)
 
 ## Adding New Test Cases
 

@@ -615,6 +615,105 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
     
+    function calculateRealisticProgress(message, step) {
+        // Phase-based progress calculation that reflects actual work complexity
+        
+        // Initial setup phase (5% total)
+        if (message.includes('Starting notebook analysis') || 
+            message.includes('Loading notebook content') || 
+            message.includes('Loaded') && message.includes('code cells')) {
+            return Math.min(5, step * 2);
+        }
+        
+        // Static analysis phase (15% total: 5% -> 20%)
+        if (message.includes('Analyzing GPU requirements') || 
+            message.includes('Evaluating workload complexity') ||
+            message.includes('No obvious ML/GPU patterns') ||
+            message.includes('No GPU-specific code found')) {
+            return Math.min(20, 5 + step * 3);
+        }
+        
+        // AI Analysis phase - the heavy lifting (45% total: 20% -> 65%)
+        if (message.includes('Starting AI analysis') ||
+            message.includes('Phase 1: Scanning notebook') ||
+            message.includes('Phase 2: Analyzing documentation') ||
+            message.includes('Phase 3: Preparing content') ||
+            message.includes('Phase 4: Formulating analysis') ||
+            message.includes('Phase 5: Sending analysis') ||
+            message.includes('Phase 6: Processing AI response') ||
+            message.includes('Phase 7: Parsing analysis') ||
+            message.includes('Phase 8: Extracting key insights') ||
+            message.includes('JSON parsing failed') ||
+            message.includes('Applying fallback') ||
+            message.includes('Enhancing GPU recommendations')) {
+            
+            // More granular progress within AI analysis
+            if (message.includes('Phase 1') || message.includes('Starting AI analysis')) {
+                return 25;
+            } else if (message.includes('Phase 2') || message.includes('Phase 3')) {
+                return 35;
+            } else if (message.includes('Phase 4') || message.includes('Phase 5')) {
+                return 45;
+            } else if (message.includes('Phase 6') || message.includes('Phase 7')) {
+                return 55;
+            } else if (message.includes('Phase 8') || message.includes('Enhancing GPU')) {
+                return 65;
+            } else {
+                return Math.min(65, 20 + (step - 5) * 4);
+            }
+        }
+        
+        // Self-review phase - another heavy phase (20% total: 65% -> 85%)
+        if (message.includes('Performing self-review') ||
+            message.includes('🎓 Phase 1: Preparing analysis') ||
+            message.includes('🔍 Phase 2: Analyzing current recommendations') ||
+            message.includes('🧠 Phase 3: Sending self-review') ||
+            message.includes('📥 Phase 4: Processing self-review') ||
+            message.includes('🔍 Phase 5: Parsing self-review') ||
+            message.includes('🎯 Phase 6: Analyzing self-review') ||
+            message.includes('Self-review found issues') ||
+            message.includes('Found') && message.includes('specific issues') ||
+            message.includes('🔧 Correcting') ||
+            message.includes('🔧 Adjusting') ||
+            message.includes('🔧 Updating') ||
+            message.includes('📊 Assessment') ||
+            message.includes('Applying self-review corrections')) {
+            
+            // More granular progress within self-review
+            if (message.includes('🎓 Phase 1') || message.includes('Performing self-review')) {
+                return 68;
+            } else if (message.includes('🔍 Phase 2') || message.includes('🧠 Phase 3')) {
+                return 72;
+            } else if (message.includes('📥 Phase 4') || message.includes('🔍 Phase 5')) {
+                return 76;
+            } else if (message.includes('🎯 Phase 6') || message.includes('Self-review found issues')) {
+                return 80;
+            } else if (message.includes('🔧 Correcting') || message.includes('🔧 Adjusting') || message.includes('🔧 Updating')) {
+                return 83;
+            } else if (message.includes('Applying self-review corrections')) {
+                return 85;
+            } else {
+                return Math.min(85, 65 + (step - 15) * 2);
+            }
+        }
+        
+        // NVIDIA compliance evaluation (10% total: 85% -> 95%)
+        if (message.includes('Evaluating NVIDIA compliance') ||
+            message.includes('Compliance evaluation complete')) {
+            return message.includes('complete') ? 95 : 90;
+        }
+        
+        // Final phase (5% total: 95% -> 100%)
+        if (message.includes('Generating final recommendations') ||
+            message.includes('Analysis complete')) {
+            return message.includes('complete') ? 100 : 98;
+        }
+        
+        // Fallback for unrecognized messages - use conservative step-based calculation
+        // This ensures progress always moves forward, even for unexpected messages
+        return Math.min(95, Math.max(5, step * 2));
+    }
+
     function handleStreamMessage(data, step) {
         const progressBar = document.getElementById('progressBar');
         const currentStatus = document.getElementById('currentStatus');
@@ -623,22 +722,8 @@ document.addEventListener('DOMContentLoaded', function() {
         const llmProgressLog = document.getElementById('llmProgressLog');
         
         if (data.type === 'progress') {
-            // Update progress bar with more realistic progression
-            // Based on typical analysis having 15-20 steps total
-            let progress;
-            if (step <= 3) {
-                // Initial loading and setup: 0-25%
-                progress = step * 8;
-            } else if (step <= 8) {
-                // Static analysis and LLM phases: 25-65%
-                progress = 25 + (step - 3) * 8;
-            } else if (step <= 12) {
-                // Self-review and compliance: 65-85%
-                progress = 65 + (step - 8) * 5;
-            } else {
-                // Final phases: 85-95%
-                progress = Math.min(95, 85 + (step - 12) * 2);
-            }
+            // Update progress bar based on actual analysis phases
+            let progress = calculateRealisticProgress(data.message, step);
             progressBar.style.width = progress + '%';
             
             // Update current status

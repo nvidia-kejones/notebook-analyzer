@@ -83,10 +83,16 @@ Examples:
             'min_gpu_type': result.min_gpu_type,
             'min_quantity': result.min_quantity,
             'min_vram_gb': result.min_vram_gb,
+            'min_runtime_estimate': result.min_runtime_estimate,
+            'recommended_gpu_type': result.recommended_gpu_type,
+            'recommended_quantity': result.recommended_quantity,
+            'recommended_vram_gb': result.recommended_vram_gb,
+            'recommended_runtime_estimate': result.recommended_runtime_estimate,
+            'recommended_viable': result.recommended_viable,
+            'recommended_limitation': result.recommended_limitation,
             'optimal_gpu_type': result.optimal_gpu_type,
             'optimal_quantity': result.optimal_quantity,
             'optimal_vram_gb': result.optimal_vram_gb,
-            'min_runtime_estimate': result.min_runtime_estimate,
             'optimal_runtime_estimate': result.optimal_runtime_estimate,
             'sxm_required': result.sxm_required,
             'sxm_reasoning': result.sxm_reasoning,
@@ -118,17 +124,40 @@ Examples:
     print("🎯 WITH NVIDIA BEST PRACTICES COMPLIANCE")
     print("="*70)
     
-    print("\n📊 MINIMUM Configuration:")
-    print(f"   GPU Type: {result.min_gpu_type}")
-    print(f"   Quantity: {result.min_quantity}")
-    print(f"   VRAM: {result.min_vram_gb} GB")
-    print(f"   Estimated Runtime: {result.min_runtime_estimate}")
+    # Check if this is a CPU-only workload
+    is_cpu_only = (result.min_gpu_type == 'CPU-only' or 
+                   (result.min_gpu_type and 'CPU-only' in result.min_gpu_type))
     
-    print("\n🚀 OPTIMAL CONFIGURATION:")
-    print(f"   GPU Type: {result.optimal_gpu_type}")
-    print(f"   Quantity: {result.optimal_quantity}")
-    print(f"   VRAM: {result.optimal_vram_gb} GB")
-    print(f"   Estimated Runtime: {result.optimal_runtime_estimate}")
+    if is_cpu_only:
+        # Simplified display for CPU-only workloads
+        print("\n💻 CPU-OPTIMIZED WORKLOAD:")
+        print("   This notebook is designed for CPU execution and does not require GPU acceleration.")
+        print(f"   Estimated Runtime: {result.min_runtime_estimate}")
+        print("   GPU Required: No")
+    else:
+        # Full 3-tier display for GPU workloads
+        print("\n📊 MINIMUM Configuration:")
+        print(f"   GPU Type: {result.min_gpu_type}")
+        print(f"   Quantity: {result.min_quantity}")
+        print(f"   VRAM: {result.min_vram_gb} GB")
+        print(f"   Estimated Runtime: {result.min_runtime_estimate}")
+        
+        print("\n🎯 RECOMMENDED Configuration:")
+        if result.recommended_gpu_type:
+            print(f"   GPU Type: {result.recommended_gpu_type}")
+            print(f"   Quantity: {result.recommended_quantity}")
+            print(f"   VRAM: {result.recommended_vram_gb} GB")
+            print(f"   Estimated Runtime: {result.recommended_runtime_estimate}")
+            if not result.recommended_viable and result.recommended_limitation:
+                print(f"   Note: {result.recommended_limitation}")
+        else:
+            print("   Same as minimum configuration")
+        
+        print("\n🚀 OPTIMAL CONFIGURATION:")
+        print(f"   GPU Type: {result.optimal_gpu_type}")
+        print(f"   Quantity: {result.optimal_quantity}")
+        print(f"   VRAM: {result.optimal_vram_gb} GB")
+        print(f"   Estimated Runtime: {result.optimal_runtime_estimate}")
     
     print(f"\n📋 NVIDIA NOTEBOOK COMPLIANCE: {result.nvidia_compliance_score:.0f}/100")
     

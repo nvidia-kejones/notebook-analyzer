@@ -7,7 +7,10 @@ A comprehensive tool for analyzing Jupyter notebooks (.ipynb) and marimo noteboo
 ## 🚀 Features
 
 ### GPU Requirements Analysis
-- **Minimum & Optimal GPU Recommendations**: Get both cost-effective and performance-optimized hardware suggestions
+- **3-Tier GPU Recommendations**: Get comprehensive hardware suggestions across three tiers:
+  - **Minimum**: Entry-level viable option (lowest cost that works)
+  - **Recommended**: Balanced price/performance (best value for most users)
+  - **Optimal**: High performance option (best performance regardless of cost)
 - **VRAM Estimation**: Accurate memory requirements based on workload analysis
 - **Runtime Predictions**: Estimated execution times for different GPU configurations
 - **Multi-GPU Detection**: Identifies distributed training and model parallelism requirements
@@ -91,6 +94,29 @@ python notebook-analyzer.py ./my-marimo-app.py
 python notebook-analyzer.py /path/to/notebook.ipynb
 ```
 
+The analyzer provides **3-tier GPU recommendations** for every workload:
+
+**Example Output:**
+```
+📊 MINIMUM Configuration:
+   GPU Type: RTX 4060
+   Quantity: 1
+   VRAM: 8 GB
+   Estimated Runtime: 1-3 hours
+
+🎯 RECOMMENDED Configuration:
+   GPU Type: RTX 4080
+   Quantity: 1
+   VRAM: 16 GB
+   Estimated Runtime: 30-60 minutes
+
+🚀 OPTIMAL CONFIGURATION:
+   GPU Type: L40S
+   Quantity: 1
+   VRAM: 48 GB
+   Estimated Runtime: 5-15 minutes
+```
+
 ### Private Repository Access
 ```bash
 # Set GitHub token for private repos
@@ -168,11 +194,34 @@ python notebook-analyzer.py --json https://github.com/user/repo/blob/main/notebo
 # Pretty-printed JSON with verbose flag
 python notebook-analyzer.py --json --verbose ./notebook.ipynb
 
-# Pipeline integration with jq
-python notebook-analyzer.py --json notebook.ipynb | jq '.min_vram_gb'
+# Pipeline integration with jq - extract all 3 tiers
+python notebook-analyzer.py --json notebook.ipynb | jq '.min_gpu_type, .recommended_gpu_type, .optimal_gpu_type'
+
+# Extract VRAM requirements for each tier
+python notebook-analyzer.py --json notebook.ipynb | jq '.min_vram_gb, .recommended_vram_gb, .optimal_vram_gb'
 
 # Save results to file
 python notebook-analyzer.py --json notebook.ipynb > analysis_results.json
+```
+
+**JSON Structure:**
+```json
+{
+  "min_gpu_type": "RTX 4060",
+  "min_quantity": 1,
+  "min_vram_gb": 8,
+  "min_runtime_estimate": "1-3 hours",
+  "recommended_gpu_type": "RTX 4080", 
+  "recommended_quantity": 1,
+  "recommended_vram_gb": 16,
+  "recommended_runtime_estimate": "30-60 minutes",
+  "optimal_gpu_type": "L40S",
+  "optimal_quantity": 1,
+  "optimal_vram_gb": 48,
+  "optimal_runtime_estimate": "5-15 minutes",
+  "confidence": 0.85,
+  "nvidia_compliance_score": 75
+}
 ```
 
 ## 🌐 Web Interface & API

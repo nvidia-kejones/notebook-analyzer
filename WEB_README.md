@@ -13,7 +13,11 @@ A containerized web application for analyzing Jupyter notebooks (.ipynb) and mar
 - **MCP Integration**: Model Context Protocol support enables AI assistants to analyze notebooks directly
 
 ### Analysis Capabilities
-- **GPU Requirements Analysis**: Minimum & optimal GPU recommendations with VRAM estimation
+- **3-Tier GPU Requirements Analysis**: Comprehensive recommendations across three performance/cost tiers:
+  - **Minimum**: Entry-level viable option (lowest cost that works)
+  - **Recommended**: Balanced price/performance (best value for most users)
+  - **Optimal**: High performance option (best performance regardless of cost)
+- **VRAM Estimation**: Accurate memory requirements for each tier
 - **Runtime Predictions**: Estimated execution times for different GPU configurations
 - **Multi-GPU Detection**: Identifies distributed training and model parallelism requirements
 - **SXM Form Factor Analysis**: Determines when SXM GPUs with NVLink are beneficial
@@ -71,7 +75,7 @@ python app.py
 
 1. **URL Analysis**: Enter any public GitHub, GitLab, or direct notebook URL (.ipynb or .py)
 2. **File Upload**: Drag and drop or select local .ipynb (Jupyter) or .py (marimo) files (up to 16MB)
-3. **View Results**: Get comprehensive GPU recommendations and compliance analysis
+3. **View Results**: Get comprehensive 3-tier GPU recommendations and compliance analysis
 
 ### API Access
 
@@ -100,7 +104,7 @@ curl -X POST http://localhost:8080/api/analyze \
 The service now supports MCP for AI assistant integration! This allows AI assistants like Claude to directly analyze notebooks through standardized tool calls.
 
 **Available MCP Tools:**
-- `analyze_notebook` - Complete notebook analysis with GPU requirements and compliance
+- `analyze_notebook` - Complete notebook analysis with 3-tier GPU requirements and compliance
 - `get_gpu_recommendations` - Get recommendations for specific workload types
 
 **Example MCP Tool Call:**
@@ -132,7 +136,7 @@ Copy `mcp_config.json` to your AI assistant's MCP configuration to enable notebo
      - `url` (required): URL to Jupyter or marimo notebook
      - `include_reasoning` (optional): Include detailed reasoning
      - `include_compliance` (optional): Include NVIDIA compliance assessment
-   - **Returns:** GPU requirements, compliance score, runtime estimates
+   - **Returns:** 3-tier GPU requirements, compliance score, runtime estimates
 
 2. **`get_gpu_recommendations`** - Workload-specific recommendations  
    - **Parameters:**
