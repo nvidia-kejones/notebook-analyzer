@@ -284,6 +284,128 @@ def calculate_multi_gpu_scaling(quantity: int) -> float:
         # For larger quantities, scaling becomes less efficient
         return max(0.15, 0.25 * (8 / quantity))
 
+def find_best_gpu(gpu_specs: dict, vram_needed: int, selection_mode: str = 'balanced', 
+                  workload_type: str = 'general', consumer_viable: bool = True, 
+                  vram_headroom: float = 1.0, max_cost_threshold: Optional[float] = None) -> Optional[tuple]:
+    """
+    Unified GPU selection function that consolidates all GPU finding logic.
+    
+    Args:
+        gpu_specs: Dictionary of GPU specifications
+        vram_needed: Minimum VRAM requirement in GB
+        selection_mode: 'cost', 'consumer', 'professional', 'balanced', 'performance', 'optimal'
+        workload_type: 'general', 'training', 'inference', 'large_models'
+        consumer_viable: Whether consumer GPUs are viable for this workload
+        vram_headroom: Multiplier for VRAM (1.0 = exact, 1.3 = 30% headroom, etc.)
+        max_cost_threshold: Maximum cost score to consider (None = no limit)
+    
+    Returns:
+        tuple: (gpu_name, gpu_specs, score) or None if no suitable GPU found
+    """
+    suitable_gpus = []
+    target_vram = vram_needed * vram_headroom
+    
+    # Filter GPUs by category based on selection mode
+    if selection_mode == 'consumer':
+        gpu_pool = {k: v for k, v in gpu_specs.items() if v.get('category') == 'consumer'}
+    elif selection_mode == 'professional':
+        gpu_pool = {k: v for k, v in gpu_specs.items() if v.get('category') == 'enterprise'}
+    else:
+        gpu_pool = gpu_specs
+    
+    for gpu_name, specs in gpu_pool.items():
+        # Basic VRAM requirement check
+        if specs['vram'] < target_vram:
+            continue
+            
+        # Consumer viability check
+        if not consumer_viable and specs.get('category') == 'consumer':
+            continue
+            
+        # Cost threshold check
+        if max_cost_threshold is not None:
+            cost_score = _calculate_price_score_helper(specs)
+            if cost_score > max_cost_threshold:
+                # Special exception for high-VRAM enterprise workloads
+                if not (workload_type in ["training", "large_models"] and specs.get('nvlink') and target_vram > 32):
+                    continue
+        
+        # Calculate scores based on selection mode
+        if selection_mode == 'cost':
+            # Minimize cost
+            score = -_calculate_price_score_helper(specs)  # Negative for sorting
+        elif selection_mode in ['consumer', 'balanced']:
+            # Efficiency: performance per dollar
+            cost_score = _calculate_price_score_helper(specs)
+            performance_score = specs['performance_factor']
+            
+            # Apply workload bonuses
+            if workload_type == "training" and specs.get('tensor_cores'):
+                performance_score *= 1.1
+            if workload_type == "inference" and specs.get('category') == 'consumer':
+                performance_score *= 1.05
+                
+            score = performance_score / cost_score
+        elif selection_mode in ['professional', 'performance', 'optimal']:
+            # Prioritize performance
+            score = specs['performance_factor']
+            
+            # Apply workload-specific bonuses
+            if workload_type == "training":
+                if specs.get('nvlink'):
+                    score *= 1.2 if selection_mode == 'professional' else 1.3
+                if specs.get('tensor_cores'):
+                    score *= 1.1 if selection_mode == 'professional' else 1.15
+            elif workload_type == "inference":
+                if specs.get('tier') in ['flagship', 'high']:
+                    score *= 1.1
+                if selection_mode == 'professional' and specs.get('category') == 'enterprise':
+                    score *= 1.1
+            elif workload_type == "large_models":
+                if specs.get('nvlink'):
+                    score *= 1.3
+                if specs.get('vram') >= 80:  # High VRAM bonus
+                    score *= 1.1
+        else:
+            # Default scoring
+            score = specs['performance_factor']
+        
+        suitable_gpus.append((gpu_name, specs, score))
+    
+    if suitable_gpus:
+        # Sort by score (highest first, except for cost mode which uses negative scores)
+        return sorted(suitable_gpus, key=lambda x: x[2], reverse=True)[0]
+    return None
+
+def _calculate_price_score_helper(specs: dict) -> float:
+    """Helper function to calculate price score for GPU selection."""
+    # Base price tiers
+    tier_costs = {
+        'budget': 1.0,
+        'mainstream': 2.0,
+        'high': 4.0,
+        'flagship': 8.0,
+        'cutting_edge': 16.0,
+        'enterprise': 20.0
+    }
+    
+    base_cost = tier_costs.get(specs.get('tier', 'mainstream'), 2.0)
+    
+    # Category multipliers
+    if specs.get('category') == 'consumer':
+        base_cost *= 0.5  # Consumer cards are cheaper
+    elif specs.get('category') == 'enterprise':
+        base_cost *= 2.0  # Enterprise cards are more expensive
+    
+    # Form factor multipliers
+    if specs.get('form_factor') == 'SXM':
+        base_cost *= 1.5  # SXM cards are more expensive
+    
+    # VRAM cost scaling
+    vram_multiplier = 1.0 + (specs.get('vram', 8) / 100.0)  # Each GB adds 1% to cost
+    
+    return base_cost * vram_multiplier
+
 @dataclass
 class GPURequirement:
     # Minimum (entry-level viable option)
@@ -4284,60 +4406,15 @@ class GPUAnalyzer:
 
     def _find_best_consumer_gpu(self, vram_needed):
         """Find best consumer GPU for given VRAM requirement"""
-        consumer_gpus = self.get_gpus_by_category(category='consumer')
-        suitable_gpus = []
-        
-        for gpu_name, specs in consumer_gpus.items():
-            if specs['vram'] >= vram_needed:
-                # Score based on price/performance balance
-                efficiency_score = specs['performance_factor'] / self._calculate_price_score(specs)
-                suitable_gpus.append((gpu_name, specs, efficiency_score))
-        
-        if suitable_gpus:
-            return sorted(suitable_gpus, key=lambda x: x[2], reverse=True)[0]  # Best efficiency
-        return None
+        return find_best_gpu(self.gpu_specs, vram_needed, selection_mode='consumer')
 
     def _find_best_professional_gpu(self, vram_needed, workload_type):
         """Find best professional/enterprise GPU"""
-        enterprise_gpus = self.get_gpus_by_category(category='enterprise')
-        suitable_gpus = []
-        
-        for gpu_name, specs in enterprise_gpus.items():
-            if specs['vram'] >= vram_needed:
-                # For enterprise, prioritize performance and features
-                score = specs['performance_factor']
-                
-                # Bonus for features relevant to workload
-                if workload_type == "training" and specs['nvlink']:
-                    score *= 1.2  # NVLink beneficial for multi-GPU training
-                if specs['tensor_cores']:
-                    score *= 1.1  # Tensor cores beneficial for ML
-                
-                suitable_gpus.append((gpu_name, specs, score))
-        
-        if suitable_gpus:
-            return sorted(suitable_gpus, key=lambda x: x[2], reverse=True)[0]  # Best performance
-        return None
+        return find_best_gpu(self.gpu_specs, vram_needed, selection_mode='professional', workload_type=workload_type)
 
     def _find_optimal_gpu(self, vram_needed, workload_type):
         """Find absolute best GPU regardless of cost"""
-        all_suitable_gpus = []
-        
-        for gpu_name, specs in self.gpu_specs.items():
-            if specs['vram'] >= vram_needed:
-                score = specs['performance_factor']
-                
-                # Workload-specific bonuses
-                if workload_type in ["training", "large_models"] and specs['nvlink']:
-                    score *= 1.3
-                if workload_type == "inference" and specs['tier'] in ['cutting_edge', 'flagship']:
-                    score *= 1.2
-                
-                all_suitable_gpus.append((gpu_name, specs, score))
-        
-        if all_suitable_gpus:
-            return sorted(all_suitable_gpus, key=lambda x: x[2], reverse=True)[0]
-        return None
+        return find_best_gpu(self.gpu_specs, vram_needed, selection_mode='optimal', workload_type=workload_type)
 
     def detect_gpu_benefit_level(self, notebook_content, imports=None, code_patterns=None):
         """
@@ -4873,92 +4950,18 @@ class GPUAnalyzer:
 
     def _find_minimum_viable_gpu_strict(self, vram_needed, consumer_viable=True):
         """Find the absolute cheapest GPU that meets VRAM requirements"""
-        suitable_gpus = []
-        
-        for gpu_name, specs in self.gpu_specs.items():
-            if specs['vram'] >= vram_needed:
-                # Skip consumer GPUs if they're not viable for this workload
-                if not consumer_viable and specs['category'] == 'consumer':
-                    continue
-                    
-                # Calculate cost score (lower is cheaper)
-                cost_score = self._calculate_price_score(specs)
-                suitable_gpus.append((gpu_name, specs, cost_score))
-        
-        if suitable_gpus:
-            # Sort by cost (lowest first)
-            return sorted(suitable_gpus, key=lambda x: x[2])[0]
-        return None
+        return find_best_gpu(self.gpu_specs, vram_needed, selection_mode='cost', consumer_viable=consumer_viable)
 
     def _find_balanced_gpu(self, vram_needed, workload_type, consumer_viable=True):
         """Find GPU with best price/performance ratio"""
-        suitable_gpus = []
-        target_vram = vram_needed * 1.3  # 30% headroom for balanced mode
-        
-        for gpu_name, specs in self.gpu_specs.items():
-            if specs['vram'] >= target_vram:
-                # Skip consumer GPUs if they're not viable for this workload
-                if not consumer_viable and specs['category'] == 'consumer':
-                    continue
-                    
-                # Calculate efficiency score (performance per dollar)
-                cost_score = self._calculate_price_score(specs)
-                performance_score = specs['performance_factor']
-                
-                # Workload-specific bonuses
-                if workload_type == "training" and specs['tensor_cores']:
-                    performance_score *= 1.1
-                if workload_type == "inference" and specs['category'] == 'consumer':
-                    performance_score *= 1.05  # Slight preference for consumer in inference
-                
-                efficiency_score = performance_score / cost_score
-                suitable_gpus.append((gpu_name, specs, efficiency_score))
-        
-        if suitable_gpus:
-            # Sort by efficiency (highest first)
-            return sorted(suitable_gpus, key=lambda x: x[2], reverse=True)[0]
-        return None
+        return find_best_gpu(self.gpu_specs, vram_needed, selection_mode='balanced', 
+                           workload_type=workload_type, consumer_viable=consumer_viable, vram_headroom=1.3)
 
     def _find_performance_gpu(self, vram_needed, workload_type, consumer_viable=True):
         """Find high-performance GPU within reasonable cost bounds"""
-        suitable_gpus = []
-        target_vram = vram_needed * 1.5  # 50% headroom for performance mode
-        
-        # Define "reasonable" cost bounds to avoid always recommending B200 SXM
-        max_reasonable_cost = 20.0  # Excludes ultra-expensive enterprise GPUs (H100+)
-        
-        for gpu_name, specs in self.gpu_specs.items():
-            if specs['vram'] >= target_vram:
-                # Skip consumer GPUs if they're not viable for this workload
-                if not consumer_viable and specs['category'] == 'consumer':
-                    continue
-                    
-                cost_score = self._calculate_price_score(specs)
-                
-                # Skip ultra-expensive GPUs unless workload truly requires them
-                if cost_score > max_reasonable_cost:
-                    # Only include if workload has specific enterprise requirements AND high VRAM needs
-                    if not (workload_type in ["training", "large_models"] and specs['nvlink'] and target_vram > 32):
-                        continue
-                
-                # Performance score with workload bonuses
-                performance_score = specs['performance_factor']
-                
-                if workload_type == "training":
-                    if specs['nvlink']:
-                        performance_score *= 1.2
-                    if specs['tensor_cores']:
-                        performance_score *= 1.15
-                elif workload_type == "inference":
-                    if specs['tier'] in ['flagship', 'high']:
-                        performance_score *= 1.1
-                
-                suitable_gpus.append((gpu_name, specs, performance_score))
-        
-        if suitable_gpus:
-            # Sort by performance (highest first)
-            return sorted(suitable_gpus, key=lambda x: x[2], reverse=True)[0]
-        return None
+        return find_best_gpu(self.gpu_specs, vram_needed, selection_mode='performance', 
+                           workload_type=workload_type, consumer_viable=consumer_viable, 
+                           vram_headroom=1.5, max_cost_threshold=20.0)
 
     def _ensure_minimum_gpu_consistency(self, analysis: Dict):
         """
