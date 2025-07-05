@@ -23,22 +23,17 @@ import subprocess
 import threading
 from dataclasses import dataclass
 from contextlib import contextmanager
+import stat
+import hashlib
+import uuid
 
 # Optional dependency - graceful fallback if not available
 try:
     import psutil
     HAS_PSUTIL = True
-    # Type aliases for when psutil is available
-    PsutilProcess = psutil.Process
-    PsutilNoSuchProcess = psutil.NoSuchProcess
-    PsutilAccessDenied = psutil.AccessDenied
 except ImportError:
     psutil = None
     HAS_PSUTIL = False
-    # Dummy types for when psutil is not available
-    class PsutilProcess: pass
-    class PsutilNoSuchProcess(Exception): pass
-    class PsutilAccessDenied(Exception): pass
 
 
 @dataclass
@@ -50,6 +45,18 @@ class ProcessResourceUsage:
     runtime_seconds: float
     process_count: int
     status: str
+
+
+@dataclass
+class FilesystemRestrictions:
+    """Configuration for filesystem access restrictions."""
+    allowed_read_paths: List[str]
+    allowed_write_paths: List[str]
+    blocked_paths: List[str]
+    max_file_size_mb: int
+    max_total_files: int
+    temp_dir_prefix: str
+    enforce_permissions: bool
 
 
 class SecuritySandbox:
@@ -71,10 +78,426 @@ class SecuritySandbox:
             'dir', 'getattr', 'setattr', 'hasattr', 'delattr'
         }
         
+        # Initialize filesystem restrictions
+        self.filesystem_restrictions = FilesystemRestrictions(
+            allowed_read_paths=['/tmp', '/var/tmp', '/usr/lib/python*', '/usr/local/lib/python*'],
+            allowed_write_paths=['/tmp', '/var/tmp'],
+            blocked_paths=[
+                '/etc', '/root', '/home', '/var/log', '/var/lib', '/var/run',
+                '/sys', '/proc', '/dev', '/boot', '/bin', '/sbin', '/usr/bin',
+                '/usr/sbin', '/opt', '/mnt', '/media', '/srv'
+            ],
+            max_file_size_mb=100,
+            max_total_files=1000,
+            temp_dir_prefix='notebook_sandbox_',
+            enforce_permissions=True
+        )
+        
+        # Track created files for cleanup
+        self._created_files = set()
+        self._created_dirs = set()
+        
     @lru_cache(maxsize=128)
     def _get_compiled_pattern(self, pattern: str) -> re.Pattern:
         """Cache compiled regex patterns for better performance."""
         return re.compile(pattern, re.IGNORECASE)
+    
+    def _normalize_path(self, path: str) -> str:
+        """Normalize and resolve path to prevent directory traversal."""
+        try:
+            # Convert to absolute path and resolve symlinks
+            normalized = os.path.abspath(os.path.realpath(path))
+            
+            # Additional security: ensure no null bytes or control characters
+            if '\x00' in normalized or any(ord(c) < 32 for c in normalized if c not in '\t\n\r'):
+                raise ValueError("Path contains invalid characters")
+            
+            return normalized
+        except (OSError, ValueError) as e:
+            raise ValueError(f"Invalid path: {path} - {str(e)}")
+    
+    def _is_path_allowed(self, path: str, operation: str = 'read') -> Tuple[bool, str]:
+        """
+        Check if a path is allowed for the specified operation.
+        
+        Args:
+            path: The path to check
+            operation: 'read', 'write', or 'execute'
+            
+        Returns:
+            (is_allowed, reason)
+        """
+        try:
+            normalized_path = self._normalize_path(path)
+        except ValueError as e:
+            # Log security violation
+            self._log_security_event('path_validation_failed', {
+                'original_path': path,
+                'operation': operation,
+                'error': str(e)
+            })
+            return False, str(e)
+        
+        # Check blocked paths first (highest priority)
+        for blocked_path in self.filesystem_restrictions.blocked_paths:
+            try:
+                blocked_normalized = self._normalize_path(blocked_path)
+                if normalized_path.startswith(blocked_normalized):
+                    # Log security violation
+                    self._log_security_event('blocked_path_access', {
+                        'path': normalized_path,
+                        'operation': operation,
+                        'blocked_pattern': blocked_path
+                    })
+                    return False, f"Path is in blocked directory: {blocked_path}"
+            except ValueError:
+                continue
+        
+        # Check allowed paths based on operation
+        if operation == 'read':
+            allowed_paths = self.filesystem_restrictions.allowed_read_paths
+        elif operation == 'write':
+            allowed_paths = self.filesystem_restrictions.allowed_write_paths
+        else:
+            return False, f"Unknown operation: {operation}"
+        
+        # Check if path is in allowed directories
+        for allowed_path in allowed_paths:
+            try:
+                # Handle glob patterns in allowed paths
+                if '*' in allowed_path:
+                    import glob
+                    expanded_paths = glob.glob(allowed_path)
+                    for expanded_path in expanded_paths:
+                        expanded_normalized = self._normalize_path(expanded_path)
+                        if normalized_path.startswith(expanded_normalized):
+                            return True, ""
+                else:
+                    allowed_normalized = self._normalize_path(allowed_path)
+                    if normalized_path.startswith(allowed_normalized):
+                        return True, ""
+            except (ValueError, OSError):
+                continue
+        
+        # Log unauthorized access attempt
+        self._log_security_event('unauthorized_path_access', {
+            'path': normalized_path,
+            'operation': operation,
+            'allowed_paths': allowed_paths
+        })
+        
+        return False, f"Path not in allowed directories for {operation}"
+    
+    def _validate_file_size(self, file_path: str) -> Tuple[bool, str]:
+        """Validate file size against restrictions."""
+        try:
+            file_size = os.path.getsize(file_path)
+            max_size_bytes = self.filesystem_restrictions.max_file_size_mb * 1024 * 1024
+            
+            if file_size > max_size_bytes:
+                return False, f"File size ({file_size} bytes) exceeds maximum ({max_size_bytes} bytes)"
+            
+            return True, ""
+        except OSError as e:
+            return False, f"Cannot access file: {str(e)}"
+    
+    def _enforce_file_permissions(self, file_path: str, mode: int = 0o600):
+        """Enforce secure file permissions."""
+        if self.filesystem_restrictions.enforce_permissions:
+            try:
+                os.chmod(file_path, mode)
+            except OSError:
+                # Don't fail if we can't set permissions, but log in production
+                pass
+    
+    def create_secure_temp_directory(self, prefix: Optional[str] = None) -> str:
+        """
+        Create a secure temporary directory with proper isolation.
+        
+        Args:
+            prefix: Optional prefix for the directory name
+            
+        Returns:
+            Path to the created directory
+        """
+        if prefix is None:
+            prefix = self.filesystem_restrictions.temp_dir_prefix
+        
+        # Create secure temporary directory
+        temp_dir = tempfile.mkdtemp(
+            prefix=prefix,
+            dir='/tmp',  # Ensure it's in allowed write path
+            suffix=f'_{uuid.uuid4().hex[:8]}'
+        )
+        
+        # Set restrictive permissions (owner only)
+        self._enforce_file_permissions(temp_dir, 0o700)
+        
+        # Track for cleanup
+        self._created_dirs.add(temp_dir)
+        
+        return temp_dir
+    
+    def create_secure_temp_file(self, content: str, suffix: str = '.tmp', 
+                               prefix: Optional[str] = None) -> str:
+        """
+        Create a secure temporary file with proper permissions and isolation.
+        
+        Args:
+            content: Content to write to the file
+            suffix: File suffix
+            prefix: Optional prefix for the file name
+            
+        Returns:
+            Path to the created file
+        """
+        # Create secure temporary directory first
+        temp_dir = self.create_secure_temp_directory(prefix)
+        
+        # Generate secure filename
+        if prefix is None:
+            prefix = 'secure_file_'
+        
+        filename = f"{prefix}{uuid.uuid4().hex[:8]}{suffix}"
+        temp_file = os.path.join(temp_dir, filename)
+        
+        # Validate content size
+        content_size = len(content.encode('utf-8'))
+        max_size_bytes = self.filesystem_restrictions.max_file_size_mb * 1024 * 1024
+        if content_size > max_size_bytes:
+            raise ValueError(f"Content size ({content_size} bytes) exceeds maximum ({max_size_bytes} bytes)")
+        
+        # Write content securely
+        with open(temp_file, 'w', encoding='utf-8') as f:
+            f.write(content)
+        
+        # Set secure permissions (read-only for owner)
+        self._enforce_file_permissions(temp_file, 0o400)
+        
+        # Track for cleanup
+        self._created_files.add(temp_file)
+        
+        return temp_file
+    
+    def read_file_safely(self, file_path: str, max_size_mb: Optional[int] = None) -> Tuple[bool, str, str]:
+        """
+        Safely read a file with security checks.
+        
+        Args:
+            file_path: Path to the file to read
+            max_size_mb: Maximum file size in MB (defaults to restriction setting)
+            
+        Returns:
+            (success, content_or_error, error_message)
+        """
+        # Validate path
+        is_allowed, reason = self._is_path_allowed(file_path, 'read')
+        if not is_allowed:
+            return False, "", f"File read blocked: {reason}"
+        
+        # Validate file size
+        if max_size_mb is None:
+            max_size_mb = self.filesystem_restrictions.max_file_size_mb
+        
+        try:
+            file_size = os.path.getsize(file_path)
+            max_size_bytes = max_size_mb * 1024 * 1024
+            
+            if file_size > max_size_bytes:
+                return False, "", f"File too large: {file_size} bytes (max: {max_size_bytes} bytes)"
+            
+            # Read file content
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            return True, content, ""
+            
+        except (OSError, UnicodeDecodeError) as e:
+            return False, "", f"Failed to read file: {str(e)}"
+    
+    def write_file_safely(self, file_path: str, content: str, 
+                         create_dirs: bool = False) -> Tuple[bool, str]:
+        """
+        Safely write a file with security checks.
+        
+        Args:
+            file_path: Path to the file to write
+            content: Content to write
+            create_dirs: Whether to create parent directories
+            
+        Returns:
+            (success, error_message)
+        """
+        # Validate path
+        is_allowed, reason = self._is_path_allowed(file_path, 'write')
+        if not is_allowed:
+            return False, f"File write blocked: {reason}"
+        
+        # Validate content size
+        content_size = len(content.encode('utf-8'))
+        max_size_bytes = self.filesystem_restrictions.max_file_size_mb * 1024 * 1024
+        if content_size > max_size_bytes:
+            return False, f"Content too large: {content_size} bytes (max: {max_size_bytes} bytes)"
+        
+        try:
+            # Create parent directories if requested
+            if create_dirs:
+                parent_dir = os.path.dirname(file_path)
+                if parent_dir and not os.path.exists(parent_dir):
+                    os.makedirs(parent_dir, mode=0o700)
+                    self._created_dirs.add(parent_dir)
+            
+            # Write file content
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+            
+            # Set secure permissions
+            self._enforce_file_permissions(file_path, 0o600)
+            
+            # Track for cleanup
+            self._created_files.add(file_path)
+            
+            return True, ""
+            
+        except OSError as e:
+            return False, f"Failed to write file: {str(e)}"
+    
+    def list_directory_safely(self, dir_path: str, max_entries: int = 1000) -> Tuple[bool, List[str], str]:
+        """
+        Safely list directory contents with security checks.
+        
+        Args:
+            dir_path: Path to the directory
+            max_entries: Maximum number of entries to return
+            
+        Returns:
+            (success, entries, error_message)
+        """
+        # Validate path
+        is_allowed, reason = self._is_path_allowed(dir_path, 'read')
+        if not is_allowed:
+            return False, [], f"Directory access blocked: {reason}"
+        
+        try:
+            entries = []
+            count = 0
+            
+            for entry in os.listdir(dir_path):
+                if count >= max_entries:
+                    break
+                
+                # Filter out hidden files and dangerous entries
+                if not entry.startswith('.') and entry.isalnum() or entry.replace('_', '').replace('-', '').replace('.', '').isalnum():
+                    entries.append(entry)
+                    count += 1
+            
+            return True, entries, ""
+            
+        except OSError as e:
+            return False, [], f"Failed to list directory: {str(e)}"
+    
+    def get_file_info_safely(self, file_path: str) -> Tuple[bool, Dict[str, Any], str]:
+        """
+        Safely get file information with security checks.
+        
+        Args:
+            file_path: Path to the file
+            
+        Returns:
+            (success, file_info, error_message)
+        """
+        # Validate path
+        is_allowed, reason = self._is_path_allowed(file_path, 'read')
+        if not is_allowed:
+            return False, {}, f"File access blocked: {reason}"
+        
+        try:
+            stat_info = os.stat(file_path)
+            
+            file_info = {
+                'size': stat_info.st_size,
+                'modified': stat_info.st_mtime,
+                'created': stat_info.st_ctime,
+                'is_file': stat.S_ISREG(stat_info.st_mode),
+                'is_dir': stat.S_ISDIR(stat_info.st_mode),
+                'permissions': oct(stat_info.st_mode)[-3:],
+                'owner_readable': bool(stat_info.st_mode & stat.S_IRUSR),
+                'owner_writable': bool(stat_info.st_mode & stat.S_IWUSR),
+                'owner_executable': bool(stat_info.st_mode & stat.S_IXUSR)
+            }
+            
+            return True, file_info, ""
+            
+        except OSError as e:
+            return False, {}, f"Failed to get file info: {str(e)}"
+    
+    def cleanup_temp_file(self, file_path: str):
+        """Securely cleanup temporary files and directories."""
+        try:
+            if os.path.exists(file_path):
+                # Remove from tracking sets
+                self._created_files.discard(file_path)
+                
+                # Get the directory
+                temp_dir = os.path.dirname(file_path)
+                
+                # Remove the entire temporary directory
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                
+                # Remove from tracking sets
+                self._created_dirs.discard(temp_dir)
+                
+        except Exception:
+            # Ignore cleanup errors - but log them in production
+            pass
+    
+    def cleanup_all_temp_files(self):
+        """Clean up all tracked temporary files and directories."""
+        # Clean up files first
+        for file_path in list(self._created_files):
+            try:
+                if os.path.exists(file_path):
+                    os.unlink(file_path)
+                self._created_files.discard(file_path)
+            except Exception:
+                pass
+        
+        # Clean up directories
+        for dir_path in list(self._created_dirs):
+            try:
+                if os.path.exists(dir_path):
+                    shutil.rmtree(dir_path, ignore_errors=True)
+                self._created_dirs.discard(dir_path)
+            except Exception:
+                pass
+    
+    @contextmanager
+    def secure_filesystem_context(self, temp_dir_prefix: str = None):
+        """
+        Context manager for secure filesystem operations with automatic cleanup.
+        
+        Args:
+            temp_dir_prefix: Optional prefix for temporary directories
+            
+        Yields:
+            SecuritySandbox instance configured for filesystem operations
+        """
+        # Store original prefix
+        original_prefix = self.filesystem_restrictions.temp_dir_prefix
+        
+        try:
+            # Set custom prefix if provided
+            if temp_dir_prefix:
+                self.filesystem_restrictions.temp_dir_prefix = temp_dir_prefix
+            
+            yield self
+            
+        finally:
+            # Restore original prefix
+            self.filesystem_restrictions.temp_dir_prefix = original_prefix
+            
+            # Clean up all temporary files and directories
+            self.cleanup_all_temp_files()
     
     def validate_notebook_structure(self, content: str) -> Tuple[bool, str, Optional[Dict]]:
         """
@@ -233,10 +656,13 @@ class SecuritySandbox:
             'ftp.', 'ssh.', 'telnet.', 'smtp.'
         ]
         
-        # File system patterns
+        # File system patterns - enhanced with filesystem restrictions
         dangerous_file_patterns = [
             'open(', 'file(', 'with open', 'os.path.',
-            'pathlib.', 'shutil.', 'tempfile.'
+            'pathlib.', 'shutil.', 'tempfile.',
+            '/etc/', '/root/', '/home/', '/var/log/',
+            '../', '..\\', 'file://', 'file:\\',
+            'symlink', 'hardlink', 'mount', 'umount'
         ]
         
         violations = []
@@ -258,40 +684,6 @@ class SecuritySandbox:
         
         return True, ""
     
-    def create_secure_temp_file(self, content: str, suffix: str = '.tmp') -> str:
-        """
-        Create a secure temporary file with proper permissions and cleanup.
-        """
-        # Create a secure temporary directory
-        temp_dir = tempfile.mkdtemp(prefix='notebook_sandbox_')
-        
-        # Set restrictive permissions
-        os.chmod(temp_dir, 0o700)
-        
-        # Create file with secure permissions
-        temp_file = os.path.join(temp_dir, f'secure_file{suffix}')
-        with open(temp_file, 'w', encoding='utf-8') as f:
-            f.write(content)
-        
-        # Set file to read-only
-        os.chmod(temp_file, 0o400)
-        
-        return temp_file
-    
-    def cleanup_temp_file(self, file_path: str):
-        """Securely cleanup temporary files and directories."""
-        try:
-            if os.path.exists(file_path):
-                # Get the directory
-                temp_dir = os.path.dirname(file_path)
-                
-                # Remove the entire temporary directory
-                shutil.rmtree(temp_dir, ignore_errors=True)
-                
-        except Exception:
-            # Ignore cleanup errors - but log them in production
-            pass
-    
     def set_resource_limits(self):
         """Set resource limits to prevent resource exhaustion attacks."""
         try:
@@ -306,8 +698,12 @@ class SecuritySandbox:
             resource.setrlimit(resource.RLIMIT_NPROC, (10, 10))
             
             # Limit file size
-            max_file_size = 100 * 1024 * 1024  # 100MB
+            max_file_size = self.filesystem_restrictions.max_file_size_mb * 1024 * 1024
             resource.setrlimit(resource.RLIMIT_FSIZE, (max_file_size, max_file_size))
+            
+            # Limit number of open files
+            resource.setrlimit(resource.RLIMIT_NOFILE, (self.filesystem_restrictions.max_total_files, 
+                                                       self.filesystem_restrictions.max_total_files))
             
         except Exception:
             # Resource limits may not be available on all systems
@@ -344,6 +740,12 @@ class SecuritySandbox:
         Returns:
             subprocess.Popen object with enhanced isolation
         """
+        # Validate working directory
+        if working_dir:
+            is_allowed, reason = self._is_path_allowed(working_dir, 'read')
+            if not is_allowed:
+                raise ValueError(f"Working directory not allowed: {reason}")
+        
         # Create a restricted environment
         safe_env = {
             'PATH': '/usr/bin:/bin',
@@ -423,6 +825,9 @@ class SecuritySandbox:
         
         try:
             # Get process info using psutil
+            if psutil is None:
+                raise ImportError("psutil not available")
+            
             ps_process = psutil.Process(process.pid)
             
             # Get resource usage
@@ -598,3 +1003,20 @@ class SecuritySandbox:
             if monitor_thread and monitor_thread.is_alive():
                 # Give monitoring thread time to finish
                 monitor_thread.join(timeout=1.0)
+    
+    def _log_security_event(self, event_type: str, details: Dict[str, Any]):
+        """Log security events if security logger is available."""
+        try:
+            from .security_logger import get_security_logger
+            logger = get_security_logger()
+            logger.log_security_violation(
+                violation_type=event_type,
+                details=details,
+                severity=logger.SecurityEventSeverity.WARNING
+            )
+        except ImportError:
+            # Security logger not available - continue without logging
+            pass
+        except Exception:
+            # Don't let logging errors affect security operations
+            pass
