@@ -623,8 +623,22 @@ document.addEventListener('DOMContentLoaded', function() {
         const llmProgressLog = document.getElementById('llmProgressLog');
         
         if (data.type === 'progress') {
-            // Update progress bar (estimate based on step count)
-            const progress = Math.min(90, step * 15);
+            // Update progress bar with more realistic progression
+            // Based on typical analysis having 15-20 steps total
+            let progress;
+            if (step <= 3) {
+                // Initial loading and setup: 0-25%
+                progress = step * 8;
+            } else if (step <= 8) {
+                // Static analysis and LLM phases: 25-65%
+                progress = 25 + (step - 3) * 8;
+            } else if (step <= 12) {
+                // Self-review and compliance: 65-85%
+                progress = 65 + (step - 8) * 5;
+            } else {
+                // Final phases: 85-95%
+                progress = Math.min(95, 85 + (step - 12) * 2);
+            }
             progressBar.style.width = progress + '%';
             
             // Update current status
