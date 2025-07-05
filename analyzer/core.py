@@ -1341,18 +1341,39 @@ For runtime estimation:
             if self.env_config.get('smart_self_review', False):
                 confidence = preliminary_analysis.get('confidence', 0)
                 complexity = preliminary_analysis.get('complexity', 'unknown')
+                workload_type = preliminary_analysis.get('workload_type', 'unknown')
+                min_vram = preliminary_analysis.get('min_vram_gb', 0)
                 
-                # Skip self-review for high-confidence, simple analyses to save time
-                if confidence >= 0.85 and complexity in ['simple', 'basic']:
+                # Enhanced skip conditions for production efficiency
+                skip_conditions = [
+                    # Original condition: High confidence + simple complexity
+                    confidence >= 0.85 and complexity in ['simple', 'basic'],
+                    # New condition: CPU-only workloads with decent confidence
+                    min_vram == 0 and confidence >= 0.7,
+                    # New condition: Very high confidence regardless of complexity
+                    confidence >= 0.9,
+                    # New condition: Demonstration/tutorial workloads
+                    workload_type in ['demonstration', 'tutorial'] and confidence >= 0.6,
+                    # New condition: Basic workloads with moderate confidence
+                    workload_type == 'basic' and confidence >= 0.75
+                ]
+                
+                if any(skip_conditions):
+                    skip_reason = "High confidence analysis" if confidence >= 0.9 else \
+                                 "CPU-only workload" if min_vram == 0 else \
+                                 "Simple workload pattern" if complexity in ['simple', 'basic'] else \
+                                 "Demonstration content" if workload_type in ['demonstration', 'tutorial'] else \
+                                 "Basic workload"
+                    
                     if progress_callback:
-                        progress_callback("🎓 Self-review skipped: High confidence simple analysis")
+                        progress_callback(f"🎓 Self-review skipped: {skip_reason}")
                     return {
                         "review_passed": True,
                         "consistency_issues": [],
                         "recommended_corrections": {},
-                        "unified_reasoning": ["Self-review skipped due to high confidence and simple complexity"],
-                        "confidence_explanation": f"Analysis confidence {confidence*100:.0f}% deemed sufficient",
-                        "overall_assessment": "Self-review bypassed for efficiency"
+                        "unified_reasoning": [f"Self-review skipped - {skip_reason.lower()} with {confidence*100:.0f}% confidence"],
+                        "confidence_explanation": f"Analysis confidence {confidence*100:.0f}% deemed sufficient for {skip_reason.lower()}",
+                        "overall_assessment": f"Self-review bypassed for efficiency - {skip_reason.lower()}"
                     }
             
             if progress_callback:
@@ -1950,10 +1971,13 @@ Respond in JSON format:
     }}
 }}"""
 
-            response = requests.post(
-                f"{self.base_url}/v1/chat/completions",
+            # Use robust retry mechanism for API requests (consistent with other LLM calls)
+            session = get_http_session()
+            response = make_api_request_with_retry(
+                session=session,
+                url=f"{self.base_url}/v1/chat/completions",
                 headers=self.headers,
-                json={
+                json_data={
                     "model": self.model,
                     "messages": [
                         {"role": "system", "content": "You are an expert in technical documentation and NVIDIA's comprehensive content standards. Evaluate notebooks thoroughly against official best practices."},
@@ -1962,8 +1986,15 @@ Respond in JSON format:
                     "temperature": 0.1,
                     "max_tokens": 1500
                 },
-                timeout=30
+                timeout=self.env_config['llm_timeout'],
+                max_retries=3,
+                progress_callback=None  # No progress callback for compliance check to avoid UI spam
             )
+            
+            # Handle response or fallback (consistent with other LLM calls)
+            if response is None:
+                # All retries failed - return None to skip compliance evaluation
+                return None
             
             if response.status_code == 200:
                 result = response.json()
