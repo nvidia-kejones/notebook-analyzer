@@ -1837,7 +1837,8 @@ Respond in JSON format:
                 analysis['consumer_gpu_type'] = 'RTX 4090'
                 analysis['consumer_vram_gb'] = recommended_specs['vram']
                 analysis['consumer_quantity'] = 1
-                analysis['consumer_runtime_estimate'] = '15-30 minutes'
+                # CRITICAL FIX: Use same runtime as minimum when same GPU
+                analysis['consumer_runtime_estimate'] = analysis.get('min_runtime_estimate', '30-60 minutes')
             
             # Optimal tier: A100 PCIe
             if 'A100 PCIe 80G' in self.gpu_specs:
@@ -1850,6 +1851,29 @@ Respond in JSON format:
             # Enterprise minimum - consumer might not be viable
             analysis['consumer_viable'] = False
             analysis['consumer_limitation'] = "Workload requires enterprise-grade hardware"
+        
+        # FINAL CONSISTENCY CHECK: Ensure same hardware has same runtime across all tiers
+        min_gpu_type = analysis.get('min_gpu_type', '')
+        min_quantity = analysis.get('min_quantity', 1)
+        consumer_gpu_type = analysis.get('consumer_gpu_type')
+        consumer_quantity = analysis.get('consumer_quantity', 1)
+        enterprise_gpu_type = analysis.get('enterprise_gpu_type')
+        enterprise_quantity = analysis.get('enterprise_quantity', 1)
+        
+        # If consumer uses same hardware as minimum, ensure runtime consistency
+        if (consumer_gpu_type == min_gpu_type and consumer_quantity == min_quantity and 
+            analysis.get('min_runtime_estimate')):
+            analysis['consumer_runtime_estimate'] = analysis['min_runtime_estimate']
+        
+        # If enterprise uses same hardware as minimum, ensure runtime consistency
+        if (enterprise_gpu_type == min_gpu_type and enterprise_quantity == min_quantity and 
+            analysis.get('min_runtime_estimate')):
+            analysis['enterprise_runtime_estimate'] = analysis['min_runtime_estimate']
+        
+        # If enterprise uses same hardware as consumer, ensure runtime consistency
+        if (enterprise_gpu_type == consumer_gpu_type and enterprise_quantity == consumer_quantity and 
+            analysis.get('consumer_runtime_estimate')):
+            analysis['enterprise_runtime_estimate'] = analysis['consumer_runtime_estimate']
     
     def evaluate_notebook_compliance(self, code_cells: List[str], markdown_cells: List[str]) -> Optional[Dict]:
         """Evaluate notebook compliance with NVIDIA best practices using LLM and comprehensive guidelines."""
