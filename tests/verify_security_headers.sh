@@ -111,9 +111,17 @@ CSP_HEADER=$(echo "$RESPONSE" | sed -n '/^[Cc]ontent-[Ss]ecurity-[Pp]olicy:/,/^[
 FRAME_HEADER=$(echo "$RESPONSE" | grep -i "x-frame-options:" | cut -d: -f2- | sed 's/^[[:space:]]*//' | tr -d '\r')
 CONTENT_TYPE_HEADER=$(echo "$RESPONSE" | grep -i "x-content-type-options:" | cut -d: -f2- | sed 's/^[[:space:]]*//' | tr -d '\r')
 
+# Phase 2 Security Headers
+REFERRER_HEADER=$(echo "$RESPONSE" | grep -i "referrer-policy:" | cut -d: -f2- | sed 's/^[[:space:]]*//' | tr -d '\r')
+PERMISSIONS_HEADER=$(echo "$RESPONSE" | grep -i "permissions-policy:" | cut -d: -f2- | sed 's/^[[:space:]]*//' | tr -d '\r')
+XSS_HEADER=$(echo "$RESPONSE" | grep -i "x-xss-protection:" | cut -d: -f2- | sed 's/^[[:space:]]*//' | tr -d '\r')
+COOP_HEADER=$(echo "$RESPONSE" | grep -i "cross-origin-opener-policy:" | cut -d: -f2- | sed 's/^[[:space:]]*//' | tr -d '\r')
+CORP_HEADER=$(echo "$RESPONSE" | grep -i "cross-origin-resource-policy:" | cut -d: -f2- | sed 's/^[[:space:]]*//' | tr -d '\r')
+COEP_HEADER=$(echo "$RESPONSE" | grep -i "cross-origin-embedder-policy:" | cut -d: -f2- | sed 's/^[[:space:]]*//' | tr -d '\r')
+
 echo ""
-echo "📋 Security Headers Analysis:"
-echo "----------------------------"
+echo "📋 Phase 1 Security Headers Analysis:"
+echo "------------------------------------"
 
 # Check Content Security Policy
 check_header "Content-Security-Policy" "default-src 'self'" "$CSP_HEADER"
@@ -126,6 +134,34 @@ FRAME_SUCCESS=$?
 # Check X-Content-Type-Options
 check_header "X-Content-Type-Options" "nosniff" "$CONTENT_TYPE_HEADER"
 CONTENT_TYPE_SUCCESS=$?
+
+echo ""
+echo "📋 Phase 2 Security Headers Analysis:"
+echo "------------------------------------"
+
+# Check Referrer Policy
+check_header "Referrer-Policy" "strict-origin-when-cross-origin" "$REFERRER_HEADER"
+REFERRER_SUCCESS=$?
+
+# Check Permissions Policy
+check_header "Permissions-Policy" "geolocation=()" "$PERMISSIONS_HEADER"
+PERMISSIONS_SUCCESS=$?
+
+# Check X-XSS-Protection
+check_header "X-XSS-Protection" "1; mode=block" "$XSS_HEADER"
+XSS_SUCCESS=$?
+
+# Check Cross-Origin-Opener-Policy
+check_header "Cross-Origin-Opener-Policy" "same-origin" "$COOP_HEADER"
+COOP_SUCCESS=$?
+
+# Check Cross-Origin-Resource-Policy
+check_header "Cross-Origin-Resource-Policy" "same-origin" "$CORP_HEADER"
+CORP_SUCCESS=$?
+
+# Check Cross-Origin-Embedder-Policy
+check_header "Cross-Origin-Embedder-Policy" "require-corp" "$COEP_HEADER"
+COEP_SUCCESS=$?
 
 # Test API endpoint if available
 echo ""
@@ -192,20 +228,35 @@ echo ""
 echo "📊 Security Headers Test Summary:"
 echo "================================"
 
-# Count successful headers
-SUCCESS_COUNT=$((3 - CSP_SUCCESS - FRAME_SUCCESS - CONTENT_TYPE_SUCCESS))
-TOTAL_COUNT=3
+# Count successful headers (Phase 1 + Phase 2)
+PHASE1_SUCCESS=$((3 - CSP_SUCCESS - FRAME_SUCCESS - CONTENT_TYPE_SUCCESS))
+PHASE2_SUCCESS=$((6 - REFERRER_SUCCESS - PERMISSIONS_SUCCESS - XSS_SUCCESS - COOP_SUCCESS - CORP_SUCCESS - COEP_SUCCESS))
+TOTAL_SUCCESS=$((PHASE1_SUCCESS + PHASE2_SUCCESS))
+TOTAL_COUNT=9
 
-echo "✅ Headers implemented: $SUCCESS_COUNT/$TOTAL_COUNT"
+echo "✅ Phase 1 headers implemented: $PHASE1_SUCCESS/3"
+echo "✅ Phase 2 headers implemented: $PHASE2_SUCCESS/6"
+echo "✅ Total headers implemented: $TOTAL_SUCCESS/$TOTAL_COUNT"
 
-if [[ $SUCCESS_COUNT -eq $TOTAL_COUNT ]]; then
-    echo -e "${GREEN}🎉 All Phase 1 security headers are properly implemented!${NC}"
+if [[ $PHASE1_SUCCESS -eq 3 && $PHASE2_SUCCESS -eq 6 ]]; then
+    echo -e "${GREEN}🎉 All Phase 1 & Phase 2 security headers are properly implemented!${NC}"
     echo ""
-    echo "🛡️  Protection Summary:"
+    echo "🛡️  Phase 1 Protection Summary:"
     echo "   • XSS attacks blocked by CSP"
     echo "   • Clickjacking prevented by X-Frame-Options"
     echo "   • MIME confusion attacks blocked by X-Content-Type-Options"
+    echo ""
+    echo "🛡️  Phase 2 Protection Summary:"
+    echo "   • Referrer information controlled by Referrer-Policy"
+    echo "   • Browser features restricted by Permissions-Policy"
+    echo "   • XSS filtering enabled by X-XSS-Protection"
+    echo "   • Cross-origin isolation by COOP/CORP/COEP headers"
+    echo "   • Enhanced security for modern browsers"
     exit 0
+elif [[ $PHASE1_SUCCESS -eq 3 ]]; then
+    echo -e "${YELLOW}⚠️  Phase 1 headers complete, but Phase 2 headers missing${NC}"
+    echo "   Phase 2 headers provide enhanced security for modern browsers."
+    exit 1
 else
     echo -e "${RED}⚠️  Some security headers are missing or incorrect${NC}"
     echo "   Please check the Flask application security configuration."

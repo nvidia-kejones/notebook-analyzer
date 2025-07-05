@@ -1473,7 +1473,7 @@ def mcp_endpoint():
 # Security headers middleware
 @app.after_request
 def add_security_headers_and_compression(response):
-    """Add essential security headers and compression to all responses."""
+    """Add comprehensive security headers and compression to all responses."""
     
     # Content Security Policy - prevents XSS attacks
     # Allow Bootstrap CSS/JS from CDN, inline styles for UI components
@@ -1494,6 +1494,53 @@ def add_security_headers_and_compression(response):
     
     # Prevent MIME type confusion attacks
     response.headers['X-Content-Type-Options'] = 'nosniff'
+    
+    # HSTS - Enforce HTTPS connections (Phase 2 Security Enhancement)
+    # Only add HSTS header if request is over HTTPS
+    from flask import has_request_context
+    if has_request_context() and (request.is_secure or request.headers.get('X-Forwarded-Proto') == 'https'):
+        # 1 year max-age, include subdomains, allow preload
+        response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains; preload'
+    
+    # Referrer Policy - Control referrer information leakage
+    response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+    
+    # Permissions Policy - Control browser features and APIs
+    response.headers['Permissions-Policy'] = (
+        "geolocation=(), "
+        "microphone=(), "
+        "camera=(), "
+        "payment=(), "
+        "usb=(), "
+        "bluetooth=(), "
+        "accelerometer=(), "
+        "gyroscope=(), "
+        "magnetometer=(), "
+        "ambient-light-sensor=(), "
+        "encrypted-media=(), "
+        "autoplay=(), "
+        "picture-in-picture=(), "
+        "display-capture=(), "
+        "fullscreen=(self)"
+    )
+    
+    # X-XSS-Protection - Enable XSS filtering (legacy browsers)
+    response.headers['X-XSS-Protection'] = '1; mode=block'
+    
+    # Cross-Origin-Opener-Policy - Isolate browsing context
+    response.headers['Cross-Origin-Opener-Policy'] = 'same-origin'
+    
+    # Cross-Origin-Resource-Policy - Control cross-origin resource sharing
+    response.headers['Cross-Origin-Resource-Policy'] = 'same-origin'
+    
+    # Cross-Origin-Embedder-Policy - Require opt-in for cross-origin resources
+    response.headers['Cross-Origin-Embedder-Policy'] = 'require-corp'
+    
+    # Cache-Control for security-sensitive responses
+    if has_request_context() and request.endpoint in ['analyze', 'api_analyze', 'debug_analysis']:
+        response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
     
     # Apply response compression for performance
     response = compress_response(response)
