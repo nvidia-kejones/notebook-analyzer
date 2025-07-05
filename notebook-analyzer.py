@@ -117,7 +117,7 @@ Examples:
     print("🎯 WITH NVIDIA BEST PRACTICES COMPLIANCE")
     print("="*70)
     
-    print("\n📊 MINIMUM REQUIREMENTS:")
+    print("\n📊 MINIMUM Configuration:")
     print(f"   GPU Type: {result.min_gpu_type}")
     print(f"   Quantity: {result.min_quantity}")
     print(f"   VRAM: {result.min_vram_gb} GB")

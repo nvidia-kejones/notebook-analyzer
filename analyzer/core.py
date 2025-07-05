@@ -8,12 +8,15 @@ for evaluating Jupyter notebooks and determining GPU requirements.
 
 import requests
 from requests.adapters import HTTPAdapter
+from requests.exceptions import RequestException, ConnectionError, Timeout, HTTPError
 import json
 import re
 import ast
 import os
 import sys
 import ipaddress
+import time
+import random
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional, Any, Union
 from dataclasses import dataclass, field
@@ -28,23 +31,98 @@ _http_session = None
 _session_lock = threading.Lock()
 
 def get_http_session() -> requests.Session:
-    """Get a shared HTTP session with connection pooling."""
+    """Get a shared HTTP session with connection pooling and retry configuration."""
     global _http_session
     
     if _http_session is None:
         with _session_lock:
             if _http_session is None:
                 _http_session = requests.Session()
-                # Configure connection pooling
+                # Configure connection pooling with retry logic
+                from urllib3.util.retry import Retry
+                retry_strategy = Retry(
+                    total=3,
+                    status_forcelist=[429, 500, 502, 503, 504],
+                    allowed_methods=["HEAD", "GET", "OPTIONS", "POST"],  # Updated parameter name
+                    backoff_factor=1
+                )
                 adapter = HTTPAdapter(
                     pool_connections=10,
                     pool_maxsize=20,
-                    max_retries=3
+                    max_retries=retry_strategy
                 )
                 _http_session.mount('http://', adapter)
                 _http_session.mount('https://', adapter)
     
     return _http_session
+
+def make_api_request_with_retry(session, url, headers, json_data, timeout, max_retries=3, progress_callback=None):
+    """
+    Make API request with exponential backoff retry logic for network issues.
+    
+    Args:
+        session: requests.Session object
+        url: API endpoint URL
+        headers: Request headers
+        json_data: JSON payload
+        timeout: Request timeout
+        max_retries: Maximum number of retry attempts
+        progress_callback: Optional callback for progress updates
+    
+    Returns:
+        requests.Response object or None if all retries failed
+    """
+    for attempt in range(max_retries + 1):
+        try:
+            if attempt > 0:
+                # Exponential backoff with jitter
+                delay = (2 ** attempt) + random.uniform(0, 1)
+                if progress_callback:
+                    progress_callback(f"🔄 Retrying API request (attempt {attempt + 1}/{max_retries + 1}) in {delay:.1f}s...")
+                time.sleep(delay)
+            
+            response = session.post(url, headers=headers, json=json_data, timeout=timeout)
+            
+            # Check for rate limiting
+            if response.status_code == 429:
+                retry_after = response.headers.get('Retry-After', '60')
+                try:
+                    retry_delay = int(retry_after)
+                except ValueError:
+                    retry_delay = 60
+                
+                if progress_callback:
+                    progress_callback(f"⏳ Rate limited. Waiting {retry_delay}s before retry...")
+                time.sleep(retry_delay)
+                continue
+            
+            # Success or non-retryable error
+            return response
+            
+        except ConnectionError as e:
+            if progress_callback:
+                progress_callback(f"🌐 Connection error (attempt {attempt + 1}): {str(e)[:50]}...")
+        except Timeout as e:
+            if progress_callback:
+                progress_callback(f"⏱️ Request timeout (attempt {attempt + 1}): {str(e)[:50]}...")
+        except HTTPError as e:
+            if progress_callback:
+                progress_callback(f"🚫 HTTP error (attempt {attempt + 1}): {str(e)[:50]}...")
+        except RequestException as e:
+            if progress_callback:
+                progress_callback(f"📡 Request error (attempt {attempt + 1}): {str(e)[:50]}...")
+        except Exception as e:
+            if progress_callback:
+                progress_callback(f"❌ Unexpected error (attempt {attempt + 1}): {str(e)[:50]}...")
+        
+        # If this was the last attempt, break
+        if attempt == max_retries:
+            break
+    
+    # All retries failed
+    if progress_callback:
+        progress_callback("❌ All API retry attempts failed - falling back to static analysis")
+    return None
 
 # Performance optimization: Pre-compiled regex patterns
 _compiled_patterns = {}
@@ -76,31 +154,27 @@ def parallel_pattern_search(text: str, patterns: List[str], flags: int = re.IGNO
 
 @dataclass
 class GPURequirement:
-    # Minimum requirements (entry-level viable option)
+    # Minimum (entry-level viable option)
     min_gpu_type: str
     min_quantity: int
     min_vram_gb: int
     min_runtime_estimate: str
     
-    # Consumer optimal (best RTX/GeForce option)
-    consumer_gpu_type: Optional[str] = None
-    consumer_quantity: Optional[int] = None
-    consumer_vram_gb: Optional[int] = None
-    consumer_runtime_estimate: Optional[str] = None
-    consumer_viable: bool = True
-    consumer_limitation: Optional[str] = None  # Why not viable if consumer_viable is False
+    # Recommended (balanced price/performance option)
+    recommended_gpu_type: Optional[str] = None
+    recommended_quantity: Optional[int] = None
+    recommended_vram_gb: Optional[int] = None
+    recommended_runtime_estimate: Optional[str] = None
+    recommended_viable: bool = True
+    recommended_limitation: Optional[str] = None  # Why not viable if recommended_viable is False
     
-    # Enterprise optimal (best data center option)
-    enterprise_gpu_type: str = ""
-    enterprise_quantity: int = 1
-    enterprise_vram_gb: int = 0
-    enterprise_runtime_estimate: str = ""
-    
-    # Backward compatibility - optimal will be consumer if viable, else enterprise
+    # Optimal (high performance option)
     optimal_gpu_type: str = ""
     optimal_quantity: int = 1
     optimal_vram_gb: int = 0
     optimal_runtime_estimate: str = ""
+    
+    # Backward compatibility - these will be populated from recommended/optimal above
     
     # Existing fields
     sxm_required: bool = False
@@ -131,6 +205,47 @@ class GPURequirement:
             self.technical_recommendations = []
         if self.confidence_factors is None:
             self.confidence_factors = []
+    
+    # Backward compatibility properties
+    @property
+    def consumer_gpu_type(self):
+        return self.recommended_gpu_type
+    
+    @property
+    def consumer_quantity(self):
+        return self.recommended_quantity
+        
+    @property
+    def consumer_vram_gb(self):
+        return self.recommended_vram_gb
+        
+    @property
+    def consumer_runtime_estimate(self):
+        return self.recommended_runtime_estimate
+        
+    @property
+    def consumer_viable(self):
+        return self.recommended_viable
+        
+    @property
+    def consumer_limitation(self):
+        return self.recommended_limitation
+        
+    @property
+    def enterprise_gpu_type(self):
+        return self.optimal_gpu_type
+        
+    @property
+    def enterprise_quantity(self):
+        return self.optimal_quantity
+        
+    @property
+    def enterprise_vram_gb(self):
+        return self.optimal_vram_gb
+        
+    @property
+    def enterprise_runtime_estimate(self):
+        return self.optimal_runtime_estimate
 
 
 class NVIDIABestPracticesLoader:
@@ -301,11 +416,23 @@ class LLMAnalyzer:
             vercel_plan = os.getenv('VERCEL_PLAN', 'not_set')
             vercel_pro_features = os.getenv('VERCEL_PRO_FEATURES', 'not_set')
             enable_self_review = os.getenv('ENABLE_SELF_REVIEW', 'not_set')
-            print(f"🔍 Environment debug: VERCEL_ENV={vercel_env}, VERCEL_PLAN={vercel_plan}, VERCEL_PRO_FEATURES={vercel_pro_features}, ENABLE_SELF_REVIEW={enable_self_review}")
+            enhanced_features = os.getenv('ENHANCED_FEATURES', 'not_set')
+            full_transparency = os.getenv('FULL_TRANSPARENCY', 'not_set')
+            debug_detailed_phases = os.getenv('DEBUG_DETAILED_PHASES', 'not_set')
+            print(f"🔍 Environment debug: VERCEL_ENV={vercel_env}, VERCEL_PLAN={vercel_plan}")
+            print(f"🔍 Pro features: VERCEL_PRO_FEATURES={vercel_pro_features}, ENABLE_SELF_REVIEW={enable_self_review}")
+            print(f"🔍 Enhanced features: ENHANCED_FEATURES={enhanced_features}, FULL_TRANSPARENCY={full_transparency}")
+            print(f"🔍 Debug override: DEBUG_DETAILED_PHASES={debug_detailed_phases}")
+        
+        # Show final configuration
+        print(f"🔧 Configuration: detailed_phases={self.env_config.get('detailed_phases', False)}, self_review_enabled={self.env_config.get('self_review_enabled', False)}")
         
         if env_type == 'vercel_pro':
             print("🚀 Vercel Pro features enabled: Full transparency + Smart self-review")
             print(f"🎓 Self-review enabled: {self.env_config.get('self_review_enabled', False)}")
+        elif env_type == 'vercel_free':
+            print("⚡ Vercel Free plan detected: Simplified progress + Self-review disabled")
+            print(f"💡 Tip: Set DEBUG_DETAILED_PHASES=true to see detailed progress for debugging")
         else:
             print(f"⚡ Self-review enabled: {self.env_config.get('self_review_enabled', False)}")
     
@@ -360,6 +487,43 @@ class LLMAnalyzer:
         except:
             # If parsing fails, return the original string
             return runtime_str
+
+    def _clean_json_response(self, json_str: str) -> str:
+        """Clean JSON response by removing comments and fixing common issues."""
+        import re
+        
+        # Remove // comments (but preserve URLs like https://)
+        # This regex looks for // that are not preceded by http: or https:
+        json_str = re.sub(r'(?<!https:)(?<!http:)//.*?(?=\n|$)', '', json_str)
+        
+        # Remove /* */ style comments
+        json_str = re.sub(r'/\*.*?\*/', '', json_str, flags=re.DOTALL)
+        
+        # Remove trailing non-JSON characters
+        json_str = json_str.rstrip('%').rstrip()
+        
+        # Fix common JSON issues
+        # Remove trailing commas before closing braces/brackets
+        json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
+        
+        return json_str
+    
+    def _get_self_review_max_tokens(self) -> int:
+        """Get appropriate max tokens for self-review based on environment."""
+        env_type = self.env_config.get('environment_type', 'local_development')
+        
+        if env_type == 'local_development':
+            # Local development: Allow generous token limit for complete self-review
+            return 1500
+        elif env_type == 'vercel_pro':
+            # Vercel Pro: Balanced token limit
+            return 1200
+        elif self.env_config.get('smart_self_review', False):
+            # Smart self-review: Reduced tokens for efficiency
+            return 800
+        else:
+            # Default/Vercel Free: Standard limit
+            return 1000
     
     def analyze_notebook_context(self, code_cells: List[str], markdown_cells: List[str], progress_callback=None) -> Optional[Dict]:
         """Send notebook to LLM for contextual analysis."""
@@ -472,8 +636,20 @@ class LLMAnalyzer:
             elif progress_callback:
                 progress_callback("🧠 Preparing AI analysis request...")
             
-            prompt = f"""Analyze this Jupyter notebook for GPU requirements. Focus on:
+            prompt = f"""Analyze this Jupyter notebook for GPU requirements using the 3-tier recommendation system (minimum/recommended/optimal). 
 
+**CRITICAL FIRST STEP**: Determine if this workload actually needs a GPU at all.
+
+**CPU-Only Workloads** (no GPU needed):
+- Basic Python operations (print, variables, loops, functions)
+- Simple data manipulation (small lists, dictionaries, basic math)
+- File operations (reading files, environment variables)
+- Pure data analysis with pandas/numpy on small datasets
+- Basic visualization with matplotlib/seaborn
+- Simple string processing
+- Tutorial/educational content with no computational workload
+
+**GPU-Beneficial Workloads**:
 1. **Workload Type**: Is this inference, fine-tuning, training from scratch, GPU computing, or other?
 2. **Model Details**: What models are being used? What are their memory requirements?
 3. **Batch Sizes**: What batch sizes are used and are they for experimentation or production?
@@ -483,25 +659,38 @@ class LLMAnalyzer:
 7. **GPU Computing**: Look for CUDA kernels, Numba CUDA (@cuda.jit), PyCUDA, or other GPU acceleration
 8. **Runtime Estimation**: Based on workload complexity, model size, optimizations, and typical convergence
 9. **Performance Considerations**: Consider GPU performance differences when recommending hardware
+10. **Tutorial Detection**: Identify if this is a tutorial/demo with small datasets vs production workload
 
 **IMPORTANT**: Pay special attention to:
+- **CPU-only indicators**: Basic Python, simple math, small data, no ML/AI libraries
 - Numba CUDA patterns (@cuda.jit, cuda.grid, cuda.device_array)
 - Direct CUDA programming (PyCUDA, CuPy)
 - GPU-accelerated computing (not just ML/AI)
 - Scientific computing that uses GPU acceleration
+- Small dataset indicators (sample sizes, tutorial mentions, example data)
+- Context clues that suggest demo/tutorial vs production use
 
-GPU Performance Context:
-- Consumer GPUs: RTX 4060 (0.35×), RTX 4070 (0.50×), RTX 4080 (0.70×), RTX 4090 (1.0× baseline)
-- Enterprise GPUs: L4 (0.25×), L40S (0.75×), A100 PCIe (1.0×), H100 PCIe (2.2×)
+**3-Tier System Context**:
+- **Minimum**: Entry-level viable option (lowest cost that works)
+- **Recommended**: Balanced price/performance (best value for most users)
+- **Optimal**: High performance option (best performance regardless of cost)
+
+**GPU Performance Context** (relative performance factors):
+- **Consumer GPUs**: RTX 4060 (0.35×), RTX 4070 (0.50×), RTX 4080 (0.70×), RTX 4090 (1.0× baseline), RTX 5080 (1.15×), RTX 5090 (1.4×)
+- **Enterprise GPUs**: L4 (0.25×), L40 (0.60×), L40S (0.75×), A100 PCIe (1.0×), A100 SXM (1.05×), H100 PCIe (2.2×), H100 SXM (2.4×), H200 SXM (2.8×), B200 SXM (4.0×)
 - Performance factors relative to RTX 4090. Higher = faster execution.
-- Enterprise GPUs should provide equal or better performance than consumer alternatives.
+- Enterprise GPUs provide better reliability, ECC memory, and professional support.
+
+**Valid GPU Options** (use ONLY these):
+- Consumer: RTX 4060, RTX 4070, RTX 4080, RTX 4090, RTX 5080, RTX 5090
+- Enterprise: L4, L40, L40S, A100 PCIe 40G, A100 PCIe 80G, A100 SXM 40G, A100 SXM 80G, H100 PCIe, H100 SXM, H200 SXM, B200 SXM
 
 Notebook Content:
 {notebook_content}
 
 Respond in JSON format with:
 {{
-    "workload_type": "inference|fine-tuning|training|gpu-computing|other",
+    "workload_type": "cpu-only|inference|fine-tuning|training|gpu-computing|other",
     "complexity": "simple|moderate|complex|extreme",
     "models_detected": ["model1", "model2"],
     "estimated_vram_gb": number,
@@ -513,10 +702,21 @@ Respond in JSON format with:
     "baseline_reference_gpu": "RTX 4090",
     "optimization_speedup_factor": 0.7,
     "performance_considerations": ["Consider enterprise GPU performance vs consumer options"],
+    "tutorial_indicators": ["indicator1", "indicator2"],
+    "dataset_scale": "small|medium|large|enterprise",
     "confidence": 0.0-1.0,
     "reasoning": ["reason1", "reason2"],
     "runtime_reasoning": ["runtime factor1", "runtime factor2"]
 }}
+
+**Critical Analysis Guidelines**:
+- **CPU-Only First**: If the notebook contains only basic Python operations, simple data manipulation, or educational content with no computational workload, classify as "cpu-only" with estimated_vram_gb: 0
+- For tutorials/demos with small datasets: Recommend consumer GPUs even if enterprise tools are mentioned
+- For production workloads: Consider enterprise GPUs for reliability and support
+- For GPU computing: Assess actual computational complexity, not just tool mentions
+- For VRAM estimation: Consider batch sizes, model parameters, and optimization techniques (set to 0 for CPU-only workloads)
+- For runtime estimation: Account for GPU performance differences and optimization speedups
+- Always provide realistic, evidence-based recommendations
 
 For runtime estimation:
 - baseline_runtime_hours: Estimated time on baseline_reference_gpu (single GPU)
@@ -531,12 +731,13 @@ For runtime estimation:
             elif progress_callback:
                 progress_callback("🚀 Sending analysis to AI...")
             
-            # Use connection pooling for better performance
+            # Use robust retry mechanism for API requests
             session = get_http_session()
-            response = session.post(
-                f"{self.base_url}/v1/chat/completions",
+            response = make_api_request_with_retry(
+                session=session,
+                url=f"{self.base_url}/v1/chat/completions",
                 headers=self.headers,
-                json={
+                json_data={
                     "model": self.model,
                     "messages": [
                         {"role": "system", "content": "You are an expert in GPU computing and machine learning workloads. Analyze notebooks for accurate GPU requirements."},
@@ -545,8 +746,28 @@ For runtime estimation:
                     "temperature": 0.1,
                     "max_tokens": 1000
                 },
-                timeout=self.env_config['llm_timeout']  # Environment-specific timeout
+                timeout=self.env_config['llm_timeout'],
+                max_retries=3,
+                progress_callback=progress_callback
             )
+            
+            # Handle response or fallback
+            if response is None:
+                # All retries failed - return fallback analysis
+                if progress_callback:
+                    progress_callback("🔄 Using fallback analysis due to API connectivity issues...")
+                return {
+                    "workload_type": "unknown",
+                    "complexity": "moderate",
+                    "models_detected": [],
+                    "estimated_vram_gb": 16,
+                    "multi_gpu_required": False,
+                    "memory_optimizations": [],
+                    "batch_size_analysis": "Could not analyze",
+                    "runtime_factors": [],
+                    "confidence": 0.3,
+                    "reasoning": ["API connectivity issues - using fallback analysis"]
+                }
             
             # Phase 6: Response Processing (simplified in production)
             if progress_callback and self.env_config['detailed_phases']:
@@ -572,11 +793,11 @@ For runtime estimation:
                         json_str = content[json_start:json_end]
                         analysis_result = json.loads(json_str)
                         
-                        # Phase 8: Results Analysis and Insights (detailed only in development)
+                                                # Phase 8: Results Analysis and Insights (detailed only in development)
                         if progress_callback:
+                            progress_callback("🎯 Phase 8: Extracting key insights...")
+                            
                             if self.env_config['detailed_phases']:
-                                progress_callback("🎯 Phase 8: Extracting key insights...")
-                                
                                 # Show detailed insights from the analysis
                                 workload_type = analysis_result.get('workload_type', 'unknown')
                                 complexity = analysis_result.get('complexity', 'unknown')
@@ -606,9 +827,7 @@ For runtime estimation:
                                 
                                 # Optimization insights
                                 if optimizations:
-                                    progress_callback(f"⚡ Optimizations detected: {', '.join(optimizations[:2])}")
-                                    if len(optimizations) > 2:
-                                        progress_callback(f"⚡ Plus {len(optimizations)-2} more optimizations")
+                                    progress_callback(f"⚡ Optimizations detected: {', '.join(optimizations)}")
                                 else:
                                     progress_callback("⚡ No memory optimizations detected")
                                 
@@ -678,8 +897,24 @@ For runtime estimation:
         llm_complexity = llm_context.get('complexity', '').lower()
         llm_workload_type = llm_context.get('workload_type', '').lower()
         
-        # CRITICAL FIX: Don't override GPU workloads that are detected as GPU computing
-        if llm_workload_type in ['gpu-computing', 'gpu_computing']:
+        # CRITICAL FIX: Handle CPU-only workloads detected by LLM
+        if llm_workload_type == 'cpu-only':
+            # LLM explicitly detected CPU-only workload - override with CPU-only
+            enhanced_analysis.update({
+                'min_gpu_type': 'CPU-only',
+                'min_quantity': 0,
+                'min_vram_gb': 0,
+                'optimal_gpu_type': 'CPU-only',
+                'optimal_quantity': 0,
+                'optimal_vram_gb': 0,
+                'min_runtime_estimate': 'CPU execution',
+                'optimal_runtime_estimate': 'CPU execution',
+                'workload_detected': False,
+                'workload_type': 'cpu-only'
+            })
+            llm_reasoning.append("LLM analysis confirms CPU-only workload - no GPU needed")
+            return enhanced_analysis, llm_reasoning
+        elif llm_workload_type in ['gpu-computing', 'gpu_computing']:
             # This is a GPU computing workload (like Numba CUDA) - don't override
             llm_reasoning.append("LLM detected GPU computing workload - maintaining GPU recommendation")
         elif llm_complexity in ['simple', 'none', 'basic']:
@@ -717,9 +952,9 @@ For runtime estimation:
                 llm_reasoning.append("LLM analysis confirms no GPU workload detected - CPU-only recommended")
                 return enhanced_analysis, llm_reasoning
         
-        # Only proceed with GPU enhancement if workload was detected
-        if not static_analysis.get('workload_detected', True):
-            llm_reasoning.append("No GPU workload detected - maintaining CPU-only recommendation")
+        # Respect the CPU-first analysis from static analysis
+        if static_analysis.get('min_gpu_type') == 'CPU-only':
+            llm_reasoning.append("Static analysis determined CPU-only workload - maintaining recommendation")
             return enhanced_analysis, llm_reasoning
         
         # Enhance VRAM estimate with LLM insights
@@ -816,35 +1051,35 @@ For runtime estimation:
                 if updated_vram <= 8:
                     # Entry-level workload
                     enhanced_analysis['min_gpu_type'] = 'RTX 4060'
-                    enhanced_analysis['min_vram_gb'] = updated_vram
+                    enhanced_analysis['min_vram_gb'] = 8  # RTX 4060 actual VRAM
                     enhanced_analysis['optimal_gpu_type'] = 'RTX 4070'
-                    enhanced_analysis['optimal_vram_gb'] = max(updated_vram, 12)
-                    enhanced_analysis['min_runtime_estimate'] = self._convert_runtime_to_new_format('1.0-2.0')  # Will be recalculated
-                    enhanced_analysis['optimal_runtime_estimate'] = self._convert_runtime_to_new_format('1.0-2.0')  # Will be recalculated
+                    enhanced_analysis['optimal_vram_gb'] = 12  # RTX 4070 actual VRAM
+                    enhanced_analysis['min_runtime_estimate'] = self._convert_runtime_to_new_format('1.0-2.0')
+                    enhanced_analysis['optimal_runtime_estimate'] = self._convert_runtime_to_new_format('1.0-2.0')
                 elif updated_vram <= 16:
                     # Mid-tier workload  
                     enhanced_analysis['min_gpu_type'] = 'RTX 4070'
-                    enhanced_analysis['min_vram_gb'] = max(updated_vram, 12)
+                    enhanced_analysis['min_vram_gb'] = 12  # RTX 4070 actual VRAM
                     enhanced_analysis['optimal_gpu_type'] = 'RTX 4080'
-                    enhanced_analysis['optimal_vram_gb'] = max(updated_vram, 16)
-                    enhanced_analysis['min_runtime_estimate'] = self._convert_runtime_to_new_format('1.0-2.0')  # Will be recalculated
-                    enhanced_analysis['optimal_runtime_estimate'] = self._convert_runtime_to_new_format('1.0-2.0')  # Will be recalculated
+                    enhanced_analysis['optimal_vram_gb'] = 16  # RTX 4080 actual VRAM
+                    enhanced_analysis['min_runtime_estimate'] = self._convert_runtime_to_new_format('1.0-2.0')
+                    enhanced_analysis['optimal_runtime_estimate'] = self._convert_runtime_to_new_format('1.0-2.0')
                 elif updated_vram <= 24:
                     # High-end workload
                     enhanced_analysis['min_gpu_type'] = 'RTX 4090'
-                    enhanced_analysis['min_vram_gb'] = max(updated_vram, 24)
+                    enhanced_analysis['min_vram_gb'] = 24  # RTX 4090 actual VRAM
                     enhanced_analysis['optimal_gpu_type'] = 'L4'
-                    enhanced_analysis['optimal_vram_gb'] = max(updated_vram, 24)
-                    enhanced_analysis['min_runtime_estimate'] = self._convert_runtime_to_new_format('1.0-2.0')  # Will be recalculated
-                    enhanced_analysis['optimal_runtime_estimate'] = self._convert_runtime_to_new_format('1.0-2.0')  # Will be recalculated
+                    enhanced_analysis['optimal_vram_gb'] = 24  # L4 actual VRAM
+                    enhanced_analysis['min_runtime_estimate'] = self._convert_runtime_to_new_format('1.0-2.0')
+                    enhanced_analysis['optimal_runtime_estimate'] = self._convert_runtime_to_new_format('1.0-2.0')
                 else:
                     # Enterprise workload - use PCIe GPUs for single-GPU high-VRAM needs
                     enhanced_analysis['min_gpu_type'] = 'L40S'
-                    enhanced_analysis['min_vram_gb'] = max(updated_vram, 48)
+                    enhanced_analysis['min_vram_gb'] = 48  # L40S actual VRAM
                     enhanced_analysis['optimal_gpu_type'] = 'A100 PCIe 80G'
-                    enhanced_analysis['optimal_vram_gb'] = max(updated_vram, 80)
-                    enhanced_analysis['min_runtime_estimate'] = self._convert_runtime_to_new_format('1.0-2.0')  # Will be recalculated
-                    enhanced_analysis['optimal_runtime_estimate'] = self._convert_runtime_to_new_format('1.0-2.0')  # Will be recalculated
+                    enhanced_analysis['optimal_vram_gb'] = 80  # A100 PCIe 80G actual VRAM
+                    enhanced_analysis['min_runtime_estimate'] = self._convert_runtime_to_new_format('1.0-2.0')
+                    enhanced_analysis['optimal_runtime_estimate'] = self._convert_runtime_to_new_format('1.0-2.0')
                 
                 llm_reasoning.append(f"Updated GPU recommendations: {enhanced_analysis['min_gpu_type']} (min) -> {enhanced_analysis['optimal_gpu_type']} (optimal)")
         
@@ -928,14 +1163,14 @@ WORKLOAD ANALYSIS:
 
 GPU RECOMMENDATIONS:
 - Minimum: {preliminary_analysis.get('min_gpu_type', 'N/A')} ({preliminary_analysis.get('min_quantity', 0)}x, {preliminary_analysis.get('min_vram_gb', 0)}GB)
-- Consumer: {preliminary_analysis.get('consumer_gpu_type', 'N/A')} ({preliminary_analysis.get('consumer_quantity', 0)}x, {preliminary_analysis.get('consumer_vram_gb', 0)}GB)
-- Enterprise: {preliminary_analysis.get('enterprise_gpu_type', 'N/A')} ({preliminary_analysis.get('enterprise_quantity', 0)}x, {preliminary_analysis.get('enterprise_vram_gb', 0)}GB)
-- Consumer Viable: {preliminary_analysis.get('consumer_viable', True)}
+        - Recommended: {preliminary_analysis.get('consumer_gpu_type', 'N/A')} ({preliminary_analysis.get('consumer_quantity', 0)}x, {preliminary_analysis.get('consumer_vram_gb', 0)}GB)
+        - Optimal: {preliminary_analysis.get('enterprise_gpu_type', 'N/A')} ({preliminary_analysis.get('enterprise_quantity', 0)}x, {preliminary_analysis.get('enterprise_vram_gb', 0)}GB)
+        - Recommended Viable: {preliminary_analysis.get('consumer_viable', True)}
 
 TECHNICAL DETAILS:
 - SXM Required: {preliminary_analysis.get('sxm_required', False)}
 - ARM Compatibility: {preliminary_analysis.get('arm_compatibility', 'Unknown')}
-- Confidence: {preliminary_analysis.get('confidence', 0)}%
+- Confidence: {preliminary_analysis.get('confidence', 0)*100:.0f}%
 
 STATIC ANALYSIS REASONING:
 {chr(10).join(f"• {reason}" for reason in static_reasoning[:5])}
@@ -944,7 +1179,7 @@ LLM REASONING:
 {chr(10).join(f"• {reason}" for reason in llm_reasoning[:5])}
 """
 
-            prompt = f"""You are an expert reviewer evaluating your own GPU analysis. Act as a "teacher grading your work."
+            prompt = f"""You are an expert reviewer evaluating GPU analysis for the 3-tier recommendation system. Act as a "teacher grading your work."
 
 NOTEBOOK CODE SAMPLE:
 {notebook_sample}
@@ -952,27 +1187,55 @@ NOTEBOOK CODE SAMPLE:
 YOUR ANALYSIS RESULTS:
 {analysis_summary}
 
-CRITICAL REVIEW QUESTIONS:
-1. **Logical Consistency**: Do the GPU recommendations match the detected workload complexity?
-2. **Reasoning Alignment**: Are static analysis and LLM insights properly unified, or do they contradict?
-3. **Recommendation Appropriateness**: Are the GPU tiers (minimum/consumer/enterprise) logically ordered?
-4. **Confidence Calibration**: Does the confidence percentage match the certainty of evidence?
-5. **Workload Classification**: Is the workload type correctly identified based on the code patterns?
-6. **Consumer Viability Logic**: If consumer GPUs are marked as not viable, is the minimum recommendation still a consumer card?
+**3-TIER SYSTEM REQUIREMENTS**:
+- **CPU-Only Workloads**: If the workload is truly CPU-only (basic Python, simple data analysis, no ML/AI), all GPU fields should be "CPU-only" or null - this is CORRECT and should NOT be changed
+- **GPU Workloads**: When GPU workload is detected, all three tiers must show actual GPU recommendations
+- **Minimum**: Entry-level viable option (lowest cost that works)
+- **Recommended**: Balanced price/performance (best value for most users)  
+- **Optimal**: High performance option (best performance regardless of cost)
+- **CRITICAL RULE**: For GPU workloads, all three tiers must show actual GPU recommendations
+- **CRITICAL RULE**: For GPU workloads, never set recommended_viable=false - instead populate recommended tier with appropriate enterprise GPU
 
-SPECIFIC CHECKS:
-- If workload is "simple" or "basic", why recommend high-end GPUs?
-- If static says "GPU workload" but LLM says "no GPU needed", which is correct?
-- Do VRAM estimates make sense for the detected models/operations?
-- Are runtime estimates realistic for the recommended hardware?
-- **CRITICAL**: If consumer_viable=false, then min_gpu_type should NOT be RTX 4060/4070/4080/4090/5080/5090
-- **CRITICAL**: If consumer GPUs can't handle the workload, minimum should start with enterprise cards (L4, L40, A100, etc.)
-- **CRITICAL**: Check GPU tier logic: minimum ≤ consumer ≤ enterprise in terms of capability
+**CRITICAL REVIEW QUESTIONS**:
+1. **CPU-Only vs GPU Workload**: Is this truly a CPU-only workload (basic Python, simple data analysis) or does it need GPU acceleration?
+2. **3-Tier Logic**: For GPU workloads, are all three tiers properly populated with actual GPUs? For CPU-only workloads, should all tiers show "CPU-only"?
+3. **Tier Progression**: Do the tiers follow logical progression (minimum ≤ recommended ≤ optimal in capability)?
+4. **Workload Alignment**: Do the GPU recommendations match the detected workload complexity and requirements?
+5. **Reasoning Consistency**: Are static analysis and LLM insights properly unified without contradictions?
+6. **Confidence Calibration**: Does the confidence percentage match the certainty of evidence?
+7. **Tutorial vs Production**: Is the workload correctly classified as tutorial/demo vs production use?
 
-IMPORTANT CONSTRAINTS:
-- Confidence must be between 0-100 (as integer percentage)
-- GPU recommendations must only use these valid options: RTX 4060, RTX 4070, RTX 4080, RTX 4090, RTX 5080, RTX 5090, L4, L40, L40S, A100 PCIe 40G, A100 PCIe 80G, A100 SXM 40G, A100 SXM 80G, H100 PCIe, H100 SXM, H200 SXM, B200 SXM
-- Do NOT recommend GPUs outside this list (no GT 1030, GTX series, etc.)
+**SPECIFIC VALIDATION CHECKS**:
+- **Tutorial Detection**: Small datasets (10 samples, example data) should get consumer GPU recommendations
+- **Production Workloads**: Large-scale training/inference should get enterprise GPU recommendations
+- **GPU Computing**: CUDA/scientific computing should be assessed for actual computational complexity
+- **VRAM Logic**: Do VRAM estimates make sense for detected models/operations/batch sizes?
+- **Runtime Realism**: Are runtime estimates realistic for the recommended hardware?
+- **Performance Scaling**: Do higher tiers provide meaningful performance improvements?
+
+**FORBIDDEN SCENARIOS FOR GPU WORKLOADS**:
+- ❌ Recommended tier showing "N/A" or "Not Recommended" when GPU is needed
+- ❌ Setting recommended_viable=false instead of showing enterprise GPU
+- ❌ Identical GPUs across all three tiers
+- ❌ Tier regression (optimal worse than recommended)
+- ❌ Overestimating simple tutorials as enterprise workloads
+- ❌ Underestimating production workloads as consumer-only
+
+**ALLOWED FOR CPU-ONLY WORKLOADS**:
+- ✅ All GPU tiers showing "CPU-only" or null values
+- ✅ No GPU recommendations for basic Python operations
+- ✅ Simple data analysis without ML/AI libraries
+
+**VALID GPU OPTIONS** (use ONLY these):
+- Consumer: RTX 4060, RTX 4070, RTX 4080, RTX 4090, RTX 5080, RTX 5090
+- Enterprise: L4, L40, L40S, A100 PCIe 40G, A100 PCIe 80G, A100 SXM 40G, A100 SXM 80G, H100 PCIe, H100 SXM, H200 SXM, B200 SXM
+
+**EXAMPLE CORRECT 3-TIER PATTERNS**:
+- CPU-Only Workload: CPU-only → CPU-only → CPU-only
+- Tutorial/Demo: RTX 4060 → RTX 4070 → RTX 4080
+- Mid-scale Training: RTX 4080 → RTX 4090 → L40S
+- Large-scale Training: RTX 4090 → L40S → A100 PCIe 80G
+- Enterprise Production: L40S → A100 PCIe 80G → H100 PCIe
 
 Respond in JSON format:
 {{
@@ -982,36 +1245,59 @@ Respond in JSON format:
         "workload_type": "corrected_type_if_needed",
         "confidence": integer_between_0_and_100,
         "min_gpu_type": "valid_gpu_from_list_above_if_needed",
-        "consumer_viable": true_or_false_if_correction_needed,
-        "consumer_limitation": "reason_if_consumer_not_viable",
+        "recommended_gpu_type": "valid_gpu_for_recommended_tier",
+        "optimal_gpu_type": "valid_gpu_for_optimal_tier",
+        "recommended_viable": true,
         "reasoning_updates": ["updated reasoning point 1", "updated reasoning point 2"]
     }},
     "unified_reasoning": ["clear unified reasoning point 1", "clear unified reasoning point 2"],
     "confidence_explanation": "why this confidence level is appropriate",
+    "tier_validation": "assessment of 3-tier system compliance",
     "overall_assessment": "brief summary of analysis quality"
 }}
 
-Focus on accuracy, consistency, and providing clear, unified recommendations that make logical sense."""
+**PRIORITY**: 
+1. **First determine if this is truly CPU-only** (basic Python, simple data analysis, no ML/AI libraries)
+2. **For CPU-only workloads**: Keep all GPU recommendations as "CPU-only" - DO NOT force GPU recommendations
+3. **For GPU workloads**: Ensure all three tiers show actual GPU recommendations
+4. **Fix any "Not Recommended" scenarios** by selecting appropriate enterprise GPUs for the recommended tier (only for GPU workloads)"""
 
             if progress_callback:
                 progress_callback("🧠 Phase 3: Sending self-review request to AI...")
             
-            # Use connection pooling for better performance
+            # Use robust retry mechanism for API requests
             session = get_http_session()
-            response = session.post(
-                f"{self.base_url}/v1/chat/completions",
+            response = make_api_request_with_retry(
+                session=session,
+                url=f"{self.base_url}/v1/chat/completions",
                 headers=self.headers,
-                json={
+                json_data={
                     "model": self.model,
                     "messages": [
                         {"role": "system", "content": "You are an expert reviewer specializing in GPU computing and machine learning workloads. Your job is to critically evaluate analysis results for accuracy and consistency."},
                         {"role": "user", "content": prompt}
                     ],
                     "temperature": 0.1,
-                    "max_tokens": 800 if self.env_config.get('smart_self_review', False) else 1000
+                    "max_tokens": self._get_self_review_max_tokens()
                 },
-                timeout=self.env_config['llm_timeout']
+                timeout=self.env_config['llm_timeout'],
+                max_retries=3,
+                progress_callback=progress_callback
             )
+            
+            # Handle response or fallback
+            if response is None:
+                # All retries failed - return fallback self-review
+                if progress_callback:
+                    progress_callback("🔄 Self-review unavailable due to API connectivity issues")
+                return {
+                    "review_passed": True,
+                    "consistency_issues": [],
+                    "recommended_corrections": {},
+                    "unified_reasoning": ["Self-review unavailable due to connectivity issues - using original analysis"],
+                    "confidence_explanation": "API connectivity issues prevented self-review",
+                    "overall_assessment": "Self-review skipped due to network issues"
+                }
             
             if progress_callback:
                 progress_callback("📥 Phase 4: Processing self-review response...")
@@ -1019,6 +1305,16 @@ Focus on accuracy, consistency, and providing clear, unified recommendations tha
             if response.status_code == 200:
                 result = response.json()
                 content = result['choices'][0]['message']['content']
+                
+                # Enhanced debug logging for parsing issues
+                print(f"🔍 DEBUG: Self-review response length: {len(content)}")
+                # Save the problematic response to a file for analysis
+                try:
+                    with open('/tmp/self_review_response.txt', 'w') as f:
+                        f.write(content)
+                    print("🔍 DEBUG: Saved response to /tmp/self_review_response.txt")
+                except:
+                    pass
                 
                 if progress_callback:
                     progress_callback("🔍 Phase 5: Parsing self-review results...")
@@ -1029,6 +1325,10 @@ Focus on accuracy, consistency, and providing clear, unified recommendations tha
                     json_end = content.rfind('}') + 1
                     if json_start != -1 and json_end > json_start:
                         json_str = content[json_start:json_end]
+                        
+                        # Clean JSON by removing comments and trailing characters
+                        json_str = self._clean_json_response(json_str)
+                        
                         review_result = json.loads(json_str)
                         
                         if progress_callback:
@@ -1039,31 +1339,48 @@ Focus on accuracy, consistency, and providing clear, unified recommendations tha
                             consistency_issues = review_result.get('consistency_issues', [])
                             corrections = review_result.get('recommended_corrections', {})
                             
+                            # Debug: Log what we got from self-review
+                            print(f"🔍 DEBUG: Self-review results - passed: {review_passed}, issues: {len(consistency_issues)}, corrections: {len(corrections)}")
+                            if consistency_issues:
+                                print(f"🔍 DEBUG: Issues found: {consistency_issues}")
+                            
                             if review_passed:
                                 progress_callback("✅ Self-review passed - analysis is consistent")
                             else:
                                 progress_callback("🔧 Self-review found issues requiring correction")
                                 
-                            # Show specific issues found
-                            if consistency_issues:
-                                for issue in consistency_issues[:2]:  # Show first 2 issues
-                                    progress_callback(f"⚠️ Issue identified: {issue}")
-                                if len(consistency_issues) > 2:
-                                    progress_callback(f"⚠️ Plus {len(consistency_issues)-2} more issues")
+                                # Show all specific issues found
+                                print(f"🔍 DEBUG: About to display issues - consistency_issues type: {type(consistency_issues)}, length: {len(consistency_issues)}")
+                                if consistency_issues:
+                                    print(f"🔍 DEBUG: Displaying {len(consistency_issues)} issues via progress callback")
+                                    progress_callback(f"📋 Found {len(consistency_issues)} specific issues:")
+                                    for i, issue in enumerate(consistency_issues, 1):
+                                        print(f"🔍 DEBUG: Displaying issue {i}: {issue}")
+                                        progress_callback(f"⚠️ Issue {i}: {issue}")
+                                else:
+                                    print(f"🔍 DEBUG: No issues to display - consistency_issues is empty or falsy")
+                                    progress_callback("⚠️ Self-review indicated issues but no specific issues were listed")
                             
                             # Show corrections being applied
                             if corrections:
+                                progress_callback(f"🔧 Applying {len(corrections)} corrections:")
                                 if 'workload_type' in corrections:
                                     progress_callback(f"🔧 Correcting workload type: {corrections['workload_type']}")
                                 if 'confidence' in corrections:
                                     progress_callback(f"🔧 Adjusting confidence: {corrections['confidence']}%")
                                 if 'min_gpu_type' in corrections:
                                     progress_callback(f"🔧 Updating GPU recommendation: {corrections['min_gpu_type']}")
+                                if 'recommended_viable' in corrections:
+                                    viable_status = "viable" if corrections['recommended_viable'] else "not viable"
+                                    progress_callback(f"🔧 Correcting recommended GPU viability: {viable_status}")
+                                if 'recommended_limitation' in corrections:
+                                    progress_callback(f"🔧 Recommended GPU limitation: {corrections['recommended_limitation']}")
+                                # Backward compatibility
                                 if 'consumer_viable' in corrections:
                                     viable_status = "viable" if corrections['consumer_viable'] else "not viable"
-                                    progress_callback(f"🔧 Correcting consumer GPU viability: {viable_status}")
+                                    progress_callback(f"🔧 Correcting recommended GPU viability: {viable_status}")
                                 if 'consumer_limitation' in corrections:
-                                    progress_callback(f"🔧 Consumer limitation: {corrections['consumer_limitation']}")
+                                    progress_callback(f"🔧 Recommended GPU limitation: {corrections['consumer_limitation']}")
                                 if corrections.get('reasoning_updates'):
                                     progress_callback(f"🔧 Updating reasoning with {len(corrections['reasoning_updates'])} points")
                             
@@ -1076,7 +1393,46 @@ Focus on accuracy, consistency, and providing clear, unified recommendations tha
                 except Exception as parse_error:
                     if progress_callback:
                         progress_callback("⚠️ Self-review parsing failed")
-                    pass
+                    
+                    # Enhanced error logging for debugging
+                    print(f"🔍 Self-review parsing error: {parse_error}")
+                    print(f"🔍 Raw response content (first 500 chars): {content[:500]}")
+                    print(f"🔍 JSON extraction attempt - start: {json_start}, end: {json_end}")
+                    if json_start != -1 and json_end > json_start:
+                        extracted_json = content[json_start:json_end]
+                        print(f"🔍 Extracted JSON (first 300 chars): {extracted_json[:300]}")
+                    
+                    # Try alternative JSON extraction methods
+                    try:
+                        # Method 1: Look for JSON blocks with backticks
+                        if '```json' in content.lower():
+                            start_marker = content.lower().find('```json')
+                            if start_marker != -1:
+                                json_block_start = start_marker + 7
+                                json_block_end = content.find('```', json_block_start)
+                                if json_block_end != -1:
+                                    json_str = content[json_block_start:json_block_end].strip()
+                                    review_result = json.loads(json_str)
+                                    print("🔍 Successfully parsed JSON from code block")
+                                    return review_result
+                        
+                        # Method 2: Try to find complete JSON anywhere in the response
+                        import re
+                        json_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
+                        json_matches = re.findall(json_pattern, content, re.DOTALL)
+                        for match in json_matches:
+                            try:
+                                review_result = json.loads(match)
+                                # Validate it has expected fields
+                                if 'review_passed' in review_result or 'unified_reasoning' in review_result:
+                                    print("🔍 Successfully parsed JSON using regex fallback")
+                                    return review_result
+                            except:
+                                continue
+                        
+                        print("🔍 All JSON parsing methods failed")
+                    except Exception as fallback_error:
+                        print(f"🔍 Fallback parsing also failed: {fallback_error}")
                 
                 # Fallback if JSON parsing fails
                 return {
@@ -1111,12 +1467,13 @@ Focus on accuracy, consistency, and providing clear, unified recommendations tha
             if 'workload_type' in corrections:
                 corrected_analysis['workload_type'] = corrections['workload_type']
             
-            # Apply consumer viability corrections
-            if 'consumer_viable' in corrections:
-                corrected_analysis['consumer_viable'] = corrections['consumer_viable']
+            # Apply recommended viability corrections (with backward compatibility)
+            recommended_viable_key = 'recommended_viable' if 'recommended_viable' in corrections else 'consumer_viable'
+            if recommended_viable_key in corrections:
+                corrected_analysis['consumer_viable'] = corrections[recommended_viable_key]
                 
-                # If consumer is now not viable, ensure minimum isn't a consumer card
-                if not corrections['consumer_viable']:
+                # If recommended GPUs are now not viable, ensure minimum isn't a consumer card
+                if not corrections[recommended_viable_key]:
                     current_min_gpu = corrected_analysis.get('min_gpu_type', '')
                     consumer_cards = ['RTX 4060', 'RTX 4070', 'RTX 4080', 'RTX 4090', 'RTX 5080', 'RTX 5090']
                     
@@ -1133,10 +1490,12 @@ Focus on accuracy, consistency, and providing clear, unified recommendations tha
                             corrected_analysis['min_gpu_type'] = 'A100 PCIe 80G'
                             corrected_analysis['min_vram_gb'] = 80
                         
-                        final_reasoning.append(f"Corrected minimum GPU from {current_min_gpu} to {corrected_analysis['min_gpu_type']} since consumer GPUs are not viable")
+                        final_reasoning.append(f"Corrected minimum GPU from {current_min_gpu} to {corrected_analysis['min_gpu_type']} since recommended GPUs are not viable")
             
-            if 'consumer_limitation' in corrections:
-                corrected_analysis['consumer_limitation'] = corrections['consumer_limitation']
+            # Apply recommended limitation corrections (with backward compatibility)
+            recommended_limitation_key = 'recommended_limitation' if 'recommended_limitation' in corrections else 'consumer_limitation'
+            if recommended_limitation_key in corrections:
+                corrected_analysis['consumer_limitation'] = corrections[recommended_limitation_key]
             
             # Apply confidence adjustment with validation
             if 'confidence' in corrections:
@@ -1187,27 +1546,85 @@ Focus on accuracy, consistency, and providing clear, unified recommendations tha
     def _update_gpu_recommendations_after_correction(self, analysis: Dict):
         """
         Update consumer and enterprise recommendations after minimum GPU correction.
-        This ensures logical hierarchy is maintained.
+        This ensures logical hierarchy is maintained and VRAM/quantity/runtime match actual GPU specs.
         """
         min_gpu = analysis.get('min_gpu_type', '')
-        min_vram = analysis.get('min_vram_gb', 8)
         
-        # Simple logic to maintain hierarchy
+        # Get actual GPU specs for the corrected minimum GPU
+        if min_gpu in self.gpu_specs:
+            min_gpu_specs = self.gpu_specs[min_gpu]
+            # Update minimum tier with actual GPU specs
+            analysis['min_vram_gb'] = min_gpu_specs['vram']
+            analysis['min_quantity'] = 1  # Default to 1 unless multi-GPU detected
+            
+            # Simple runtime estimation based on performance factor
+            baseline_runtime = analysis.get('min_runtime_estimate', '30-60 minutes')
+            performance_factor = min_gpu_specs.get('performance_factor', 1.0)
+            if performance_factor < 0.5:
+                analysis['min_runtime_estimate'] = '60-120 minutes'
+            elif performance_factor < 1.0:
+                analysis['min_runtime_estimate'] = '45-90 minutes'
+            else:
+                analysis['min_runtime_estimate'] = baseline_runtime
+        
+        # Update recommended and optimal tiers to maintain logical hierarchy
         if 'RTX 4060' in min_gpu:
-            analysis['consumer_gpu_type'] = 'RTX 4070'
-            analysis['consumer_vram_gb'] = max(min_vram, 12)
-            analysis['enterprise_gpu_type'] = 'L40S'
-            analysis['enterprise_vram_gb'] = max(min_vram, 48)
+            # Recommended tier: RTX 4070
+            if 'RTX 4070' in self.gpu_specs:
+                recommended_specs = self.gpu_specs['RTX 4070']
+                analysis['consumer_gpu_type'] = 'RTX 4070'
+                analysis['consumer_vram_gb'] = recommended_specs['vram']
+                analysis['consumer_quantity'] = 1
+                # Calculate runtime for RTX 4070
+                perf_factor = recommended_specs.get('performance_factor', 1.0)
+                if perf_factor < 0.5:
+                    analysis['consumer_runtime_estimate'] = '45-90 minutes'
+                elif perf_factor < 1.0:
+                    analysis['consumer_runtime_estimate'] = '30-60 minutes'
+                else:
+                    analysis['consumer_runtime_estimate'] = '15-30 minutes'
+            
+            # Optimal tier: L40S
+            if 'L40S' in self.gpu_specs:
+                optimal_specs = self.gpu_specs['L40S']
+                analysis['enterprise_gpu_type'] = 'L40S'
+                analysis['enterprise_vram_gb'] = optimal_specs['vram']
+                analysis['enterprise_quantity'] = 1
+                analysis['enterprise_runtime_estimate'] = '5-15 minutes'
+                
         elif 'RTX 4070' in min_gpu:
-            analysis['consumer_gpu_type'] = 'RTX 4080'
-            analysis['consumer_vram_gb'] = max(min_vram, 16)
-            analysis['enterprise_gpu_type'] = 'L40S'
-            analysis['enterprise_vram_gb'] = max(min_vram, 48)
+            # Recommended tier: RTX 4080
+            if 'RTX 4080' in self.gpu_specs:
+                recommended_specs = self.gpu_specs['RTX 4080']
+                analysis['consumer_gpu_type'] = 'RTX 4080'
+                analysis['consumer_vram_gb'] = recommended_specs['vram']
+                analysis['consumer_quantity'] = 1
+                analysis['consumer_runtime_estimate'] = '20-40 minutes'
+            
+            # Optimal tier: L40S
+            if 'L40S' in self.gpu_specs:
+                optimal_specs = self.gpu_specs['L40S']
+                analysis['enterprise_gpu_type'] = 'L40S'
+                analysis['enterprise_vram_gb'] = optimal_specs['vram']
+                analysis['enterprise_quantity'] = 1
+                analysis['enterprise_runtime_estimate'] = '5-15 minutes'
+                
         elif 'RTX 4090' in min_gpu:
-            analysis['consumer_gpu_type'] = 'RTX 4090'
-            analysis['consumer_vram_gb'] = max(min_vram, 24)
-            analysis['enterprise_gpu_type'] = 'A100 PCIe'
-            analysis['enterprise_vram_gb'] = max(min_vram, 80)
+            # Recommended tier: RTX 4090 (same as minimum)
+            if 'RTX 4090' in self.gpu_specs:
+                recommended_specs = self.gpu_specs['RTX 4090']
+                analysis['consumer_gpu_type'] = 'RTX 4090'
+                analysis['consumer_vram_gb'] = recommended_specs['vram']
+                analysis['consumer_quantity'] = 1
+                analysis['consumer_runtime_estimate'] = '15-30 minutes'
+            
+            # Optimal tier: A100 PCIe
+            if 'A100 PCIe 80G' in self.gpu_specs:
+                optimal_specs = self.gpu_specs['A100 PCIe 80G']
+                analysis['enterprise_gpu_type'] = 'A100 PCIe 80G'
+                analysis['enterprise_vram_gb'] = optimal_specs['vram']
+                analysis['enterprise_quantity'] = 1
+                analysis['enterprise_runtime_estimate'] = '5-10 minutes'
         else:
             # Enterprise minimum - consumer might not be viable
             analysis['consumer_viable'] = False
@@ -1337,93 +1754,110 @@ class GPUAnalyzer:
             'RTX 5090': {
                 'vram': 32, 'compute_capability': 9.0, 'form_factor': 'PCIe', 'nvlink': False,
                 'release_year': 2025, 'tier': 'flagship', 'tensor_cores': True,
-                'category': 'consumer', 'max_reasonable_quantity': 2, 'performance_factor': 1.7
+                'category': 'consumer', 'max_reasonable_quantity': 2, 'performance_factor': 1.7,
+                'cost_factor': 2.0  # ~$2000 (2x RTX 4060 baseline)
             },
             'RTX 5080': {
                 'vram': 16, 'compute_capability': 9.0, 'form_factor': 'PCIe', 'nvlink': False,
                 'release_year': 2025, 'tier': 'high', 'tensor_cores': True,
-                'category': 'consumer', 'max_reasonable_quantity': 2, 'performance_factor': 0.85
+                'category': 'consumer', 'max_reasonable_quantity': 2, 'performance_factor': 0.85,
+                'cost_factor': 1.2  # ~$1200 (1.2x RTX 4060 baseline)
             },
             
             # RTX 40 Series (Consumer)
             'RTX 4090': {
                 'vram': 24, 'compute_capability': 8.9, 'form_factor': 'PCIe', 'nvlink': False,
                 'release_year': 2022, 'tier': 'flagship', 'tensor_cores': True,
-                'category': 'consumer', 'max_reasonable_quantity': 2, 'performance_factor': 1.0
+                'category': 'consumer', 'max_reasonable_quantity': 2, 'performance_factor': 1.0,
+                'cost_factor': 1.6  # ~$1600 (baseline reference)
             },
             'RTX 4080': {
                 'vram': 16, 'compute_capability': 8.9, 'form_factor': 'PCIe', 'nvlink': False,
                 'release_year': 2022, 'tier': 'high', 'tensor_cores': True,
-                'category': 'consumer', 'max_reasonable_quantity': 2, 'performance_factor': 0.70
+                'category': 'consumer', 'max_reasonable_quantity': 2, 'performance_factor': 0.70,
+                'cost_factor': 1.2  # ~$1200
             },
             'RTX 4070': {
                 'vram': 12, 'compute_capability': 8.9, 'form_factor': 'PCIe', 'nvlink': False,
                 'release_year': 2023, 'tier': 'mid', 'tensor_cores': True,
-                'category': 'consumer', 'max_reasonable_quantity': 2, 'performance_factor': 0.50
+                'category': 'consumer', 'max_reasonable_quantity': 2, 'performance_factor': 0.50,
+                'cost_factor': 0.6  # ~$600
             },
             'RTX 4060': {
                 'vram': 8, 'compute_capability': 8.9, 'form_factor': 'PCIe', 'nvlink': False,
                 'release_year': 2023, 'tier': 'entry', 'tensor_cores': True,
-                'category': 'consumer', 'max_reasonable_quantity': 2, 'performance_factor': 0.35
+                'category': 'consumer', 'max_reasonable_quantity': 2, 'performance_factor': 0.35,
+                'cost_factor': 0.3  # ~$300 (cheapest baseline)
             },
             
             # Professional GPUs (Enterprise)
             'L4': {
                 'vram': 24, 'compute_capability': 8.9, 'form_factor': 'PCIe', 'nvlink': False,
                 'release_year': 2023, 'tier': 'mid', 'tensor_cores': True,
-                'category': 'enterprise', 'max_reasonable_quantity': 8, 'performance_factor': 0.25
+                'category': 'enterprise', 'max_reasonable_quantity': 8, 'performance_factor': 0.25,
+                'cost_factor': 2.5  # ~$2500
             },
             'L40': {
                 'vram': 48, 'compute_capability': 8.9, 'form_factor': 'PCIe', 'nvlink': False,
                 'release_year': 2023, 'tier': 'high', 'tensor_cores': True,
-                'category': 'enterprise', 'max_reasonable_quantity': 8, 'performance_factor': 0.65
+                'category': 'enterprise', 'max_reasonable_quantity': 8, 'performance_factor': 0.65,
+                'cost_factor': 7.0  # ~$7000
             },
             'L40S': {
                 'vram': 48, 'compute_capability': 8.9, 'form_factor': 'PCIe', 'nvlink': False,
                 'release_year': 2023, 'tier': 'high', 'tensor_cores': True,
-                'category': 'enterprise', 'max_reasonable_quantity': 8, 'performance_factor': 0.75
+                'category': 'enterprise', 'max_reasonable_quantity': 8, 'performance_factor': 0.75,
+                'cost_factor': 8.0  # ~$8000
             },
             
             # Data Center GPUs (Enterprise)
             'A100 SXM 40G': {
                 'vram': 40, 'compute_capability': 8.0, 'form_factor': 'SXM', 'nvlink': True,
                 'release_year': 2020, 'tier': 'enterprise', 'tensor_cores': True,
-                'category': 'enterprise', 'max_reasonable_quantity': 32, 'performance_factor': 1.2
+                'category': 'enterprise', 'max_reasonable_quantity': 32, 'performance_factor': 1.2,
+                'cost_factor': 10.0  # ~$10000
             },
             'A100 SXM 80G': {
                 'vram': 80, 'compute_capability': 8.0, 'form_factor': 'SXM', 'nvlink': True,
                 'release_year': 2020, 'tier': 'enterprise', 'tensor_cores': True,
-                'category': 'enterprise', 'max_reasonable_quantity': 32, 'performance_factor': 1.2
+                'category': 'enterprise', 'max_reasonable_quantity': 32, 'performance_factor': 1.2,
+                'cost_factor': 15.0  # ~$15000
             },
             'A100 PCIe 40G': {
                 'vram': 40, 'compute_capability': 8.0, 'form_factor': 'PCIe', 'nvlink': False,
                 'release_year': 2020, 'tier': 'enterprise', 'tensor_cores': True,
-                'category': 'enterprise', 'max_reasonable_quantity': 8, 'performance_factor': 1.0
+                'category': 'enterprise', 'max_reasonable_quantity': 8, 'performance_factor': 1.0,
+                'cost_factor': 8.0  # ~$8000
             },
             'A100 PCIe 80G': {
                 'vram': 80, 'compute_capability': 8.0, 'form_factor': 'PCIe', 'nvlink': False,
                 'release_year': 2020, 'tier': 'enterprise', 'tensor_cores': True,
-                'category': 'enterprise', 'max_reasonable_quantity': 8, 'performance_factor': 1.0
+                'category': 'enterprise', 'max_reasonable_quantity': 8, 'performance_factor': 1.0,
+                'cost_factor': 12.0  # ~$12000
             },
             'H100 SXM': {
                 'vram': 80, 'compute_capability': 9.0, 'form_factor': 'SXM', 'nvlink': True,
                 'release_year': 2022, 'tier': 'cutting_edge', 'tensor_cores': True,
-                'category': 'enterprise', 'max_reasonable_quantity': 32, 'performance_factor': 2.5
+                'category': 'enterprise', 'max_reasonable_quantity': 32, 'performance_factor': 2.5,
+                'cost_factor': 25.0  # ~$25000
             },
             'H100 PCIe': {
                 'vram': 80, 'compute_capability': 9.0, 'form_factor': 'PCIe', 'nvlink': False,
                 'release_year': 2022, 'tier': 'cutting_edge', 'tensor_cores': True,
-                'category': 'enterprise', 'max_reasonable_quantity': 8, 'performance_factor': 2.2
+                'category': 'enterprise', 'max_reasonable_quantity': 8, 'performance_factor': 2.2,
+                'cost_factor': 20.0  # ~$20000
             },
             'H200 SXM': {
                 'vram': 141, 'compute_capability': 9.0, 'form_factor': 'SXM', 'nvlink': True,
                 'release_year': 2023, 'tier': 'cutting_edge', 'tensor_cores': True,
-                'category': 'enterprise', 'max_reasonable_quantity': 32, 'performance_factor': 3.0
+                'category': 'enterprise', 'max_reasonable_quantity': 32, 'performance_factor': 3.0,
+                'cost_factor': 35.0  # ~$35000
             },
             'B200 SXM': {
                 'vram': 192, 'compute_capability': 10.0, 'form_factor': 'SXM', 'nvlink': True,
                 'release_year': 2024, 'tier': 'cutting_edge', 'tensor_cores': True,
-                'category': 'enterprise', 'max_reasonable_quantity': 32, 'performance_factor': 4.0
+                'category': 'enterprise', 'max_reasonable_quantity': 32, 'performance_factor': 4.0,
+                'cost_factor': 50.0  # ~$50000+ (estimated)
             }
         }
         
@@ -2171,20 +2605,16 @@ class GPUAnalyzer:
             min_quantity=static_analysis['min_quantity'],
             min_vram_gb=static_analysis['min_vram_gb'],
             min_runtime_estimate=static_analysis['min_runtime_estimate'],
-            consumer_gpu_type=static_analysis.get('consumer_gpu_type'),
-            consumer_quantity=static_analysis.get('consumer_quantity'),
-            consumer_vram_gb=static_analysis.get('consumer_vram_gb'),
-            consumer_runtime_estimate=static_analysis.get('consumer_runtime_estimate'),
-            consumer_viable=static_analysis.get('consumer_viable', True),
-            consumer_limitation=static_analysis.get('consumer_limitation'),
-            enterprise_gpu_type=static_analysis.get('enterprise_gpu_type', ""),
-            enterprise_quantity=static_analysis.get('enterprise_quantity', 1),
-            enterprise_vram_gb=static_analysis.get('enterprise_vram_gb', 0),
-            enterprise_runtime_estimate=static_analysis.get('enterprise_runtime_estimate', ""),
-            optimal_gpu_type=static_analysis.get('optimal_gpu_type', ""),
-            optimal_quantity=static_analysis.get('optimal_quantity', 1),
-            optimal_vram_gb=static_analysis.get('optimal_vram_gb', 0),
-            optimal_runtime_estimate=static_analysis.get('optimal_runtime_estimate', ""),
+            recommended_gpu_type=static_analysis.get('consumer_gpu_type'),
+            recommended_quantity=static_analysis.get('consumer_quantity'),
+            recommended_vram_gb=static_analysis.get('consumer_vram_gb'),
+            recommended_runtime_estimate=static_analysis.get('consumer_runtime_estimate'),
+            recommended_viable=static_analysis.get('consumer_viable', True),
+            recommended_limitation=static_analysis.get('consumer_limitation'),
+            optimal_gpu_type=static_analysis.get('enterprise_gpu_type', ""),
+            optimal_quantity=static_analysis.get('enterprise_quantity', 1),
+            optimal_vram_gb=static_analysis.get('enterprise_vram_gb', 0),
+            optimal_runtime_estimate=static_analysis.get('enterprise_runtime_estimate', ""),
             sxm_required=static_analysis['sxm_required'],
             sxm_reasoning=static_analysis['sxm_reasoning'],
             arm_compatibility=static_analysis['arm_compatibility'],
@@ -2322,21 +2752,21 @@ class GPUAnalyzer:
         return code_cells, markdown_cells
         
     def _perform_static_analysis(self, code_cells: List[str], markdown_cells: List[str]) -> Dict:
-        """Perform static analysis of notebook content."""
-        # Start with CPU-only defaults and scale up based on detected patterns
+        """Perform static analysis of notebook content using CPU-first approach."""
+        # Start with CPU-only defaults 
         analysis = {
             'min_gpu_type': 'CPU-only',
             'min_quantity': 0,
             'min_vram_gb': 0,
-            'min_runtime_estimate': 'N/A',
+            'min_runtime_estimate': 'CPU execution',
             'consumer_gpu_type': None,
             'consumer_quantity': None,
             'consumer_vram_gb': None,
             'consumer_runtime_estimate': None,
-            'consumer_viable': True,
-            'consumer_limitation': None,
+            'consumer_viable': False,
+            'consumer_limitation': "CPU-optimized workload",
             'enterprise_gpu_type': "",
-            'enterprise_quantity': 1,
+            'enterprise_quantity': 0,
             'enterprise_vram_gb': 0,
             'enterprise_runtime_estimate': "",
             'sxm_required': False,
@@ -2345,71 +2775,67 @@ class GPUAnalyzer:
             'arm_reasoning': [],
             'confidence': 0.7,  # Will be recalculated dynamically
             'reasoning': [],
-            'workload_detected': False,
-            'workload_type': 'none'
+            'workload_detected': False,  # Default to no GPU workload
+            'workload_type': 'data-analysis'  # Default workload type
         }
         
         all_code = '\n'.join(code_cells)
+        all_content = all_code + '\n'.join(markdown_cells)
         
-        # First, detect if there's any actual GPU/ML workload using optimized parallel search
-        gpu_workload_patterns = [
-            # Training patterns
-            r'\b(?:train|fit|epoch|optimizer|loss|backward|gradient)\b',
-            # Inference patterns
-            r'\b(?:predict|inference|forward|model\.eval|torch\.no_grad)\b',
-            # Model loading/creation
-            r'\b(?:from_pretrained|load_model|create_model|Model\(|Sequential\()\b',
-            # GPU-specific operations
-            r'\b(?:\.cuda\(\)|\.gpu\(\)|device=.*["\']cuda["\']|torch\.cuda|CUDA_VISIBLE_DEVICES)\b',
-            # Deep learning frameworks in actual usage (not just imports)
-            r'\b(?:torch\.|tf\.|tensorflow\.|model\.|transformers\.|datasets\.)\w+',
-            # Data processing for ML
-            r'\b(?:DataLoader|Dataset|batch_size|transform|preprocessing)\b',
-            # GPU-accelerated data processing (cuDF/RAPIDS)
-            r'\b(?:cudf\.|cupy\.|cuml\.|cugraph\.)\w+',
-            r'backend=["\']cudf["\']|engine=["\']cudf["\']',
-            # NVIDIA GPU computing (enhanced for Numba CUDA)
-            r'\b(?:numba\.cuda|pycuda\.|tensorrt\.)\w+',
-            # Numba CUDA specific patterns (CRITICAL FIX)
-            r'@cuda\.jit\b',
-            r'\bcuda\.grid\b',
-            r'\bcuda\.gridsize\b',
-            r'\bcuda\.blockIdx\b',
-            r'\bcuda\.threadIdx\b',
-            r'\bcuda\.to_device\b',
-            r'\bcuda\.device_array\b',
-            r'from numba import cuda\b',
-            # GPU memory management
-            r'\b(?:cuda_memory|gpu_memory|cuda\.mem)\b'
-        ]
+        # Use the new GPU benefit detection system
+        gpu_benefit_analysis = self.detect_gpu_benefit_level(all_content)
         
-        # Use parallel pattern search for better performance
-        workload_matches = parallel_pattern_search(all_code, gpu_workload_patterns)
-        workload_detected = any(workload_matches)
+        # Store GPU benefit analysis for later use
+        analysis['_gpu_benefit_analysis'] = gpu_benefit_analysis
         
-        if not workload_detected:
-            # Check for simple library imports that might indicate ML intent
-            simple_ml_imports = [
-                r'import torch\b', r'import tensorflow\b', r'import transformers\b',
-                r'from torch', r'from tensorflow', r'from transformers',
-                r'import sklearn\b', r'from sklearn'
-            ]
-            has_ml_imports = any(re.search(pattern, all_code, re.IGNORECASE) for pattern in simple_ml_imports)
-            
-            if has_ml_imports:
-                # Has ML imports but no actual workload - might be a demo/tutorial
-                analysis['workload_type'] = 'demonstration'
-                analysis['reasoning'].append("ML libraries imported but no active GPU workload detected")
-            else:
-                # No ML workload at all
-                analysis['workload_type'] = 'none'
-                analysis['reasoning'].append("No GPU workload or ML frameworks detected - CPU-only notebook")
-                return analysis
+        # Update analysis based on GPU benefit level
+        benefit_level = gpu_benefit_analysis['benefit_level']
         
-        # If we get here, there's some form of GPU/ML workload
+        # CRITICAL FIX: Use confidence from GPU benefit analysis instead of the static 0.7
+        analysis['confidence'] = gpu_benefit_analysis['confidence']
+        
+        if benefit_level == 'none':
+            # CPU-only workload - keep defaults
+            analysis['workload_type'] = gpu_benefit_analysis['workload_type']
+            analysis['reasoning'].extend(gpu_benefit_analysis['reasoning'])
+            return analysis
+        
+        # GPU workload detected - update analysis
         analysis['workload_detected'] = True
+        analysis['workload_type'] = gpu_benefit_analysis['workload_type']
+        analysis['reasoning'].extend(gpu_benefit_analysis['reasoning'])
         
-        # Detect frameworks and patterns using optimized search
+        # Set initial GPU recommendations based on benefit level
+        vram_needed = gpu_benefit_analysis['vram_estimate']
+        
+        if benefit_level == 'required':
+            # High-end workload
+            analysis['min_gpu_type'] = 'L40S' if vram_needed > 24 else 'RTX 4090'
+            analysis['min_vram_gb'] = max(vram_needed, 24)
+            analysis['consumer_viable'] = vram_needed <= 24
+            analysis['consumer_limitation'] = "Workload requires enterprise-grade hardware" if vram_needed > 24 else None
+        elif benefit_level == 'recommended':
+            # Training/significant ML workload
+            analysis['min_gpu_type'] = 'RTX 4070' if vram_needed <= 12 else 'RTX 4080'
+            analysis['min_vram_gb'] = max(vram_needed, 8)
+            analysis['consumer_viable'] = True
+            analysis['consumer_limitation'] = None
+        else:  # beneficial
+            # Light ML workload
+            analysis['min_gpu_type'] = 'RTX 4060'
+            analysis['min_vram_gb'] = max(vram_needed, 8)
+            analysis['consumer_viable'] = True
+            analysis['consumer_limitation'] = None
+        
+        # Update quantities and runtime estimates
+        analysis['min_quantity'] = 1
+        analysis['min_runtime_estimate'] = self._convert_runtime_to_new_format('1.0-2.0')
+        analysis['consumer_gpu_type'] = analysis['min_gpu_type']
+        analysis['consumer_quantity'] = 1
+        analysis['consumer_vram_gb'] = analysis['min_vram_gb']
+        analysis['consumer_runtime_estimate'] = analysis['min_runtime_estimate']
+        
+        # Detect frameworks for additional context
         detected_frameworks = []
         for framework, patterns in self.framework_patterns.items():
             # Use parallel search for framework patterns
@@ -2417,47 +2843,41 @@ class GPUAnalyzer:
             if any(framework_matches):
                 detected_frameworks.append(framework)
         
-        if not detected_frameworks:
-            # Has workload patterns but no clear framework detection
-            analysis['workload_type'] = 'basic'
-            analysis['min_gpu_type'] = 'RTX 4060'
-            analysis['min_quantity'] = 1
-            analysis['min_vram_gb'] = 8
-            analysis['min_runtime_estimate'] = self._convert_runtime_to_new_format('0.5-1.0')
-            analysis['consumer_gpu_type'] = 'RTX 4070'
-            analysis['consumer_quantity'] = 1
-            analysis['consumer_vram_gb'] = 12
-            analysis['consumer_runtime_estimate'] = self._convert_runtime_to_new_format('1.0-2.0')
-            analysis['reasoning'].append("Basic GPU workload detected - entry-level GPU recommended")
-            return analysis
+        analysis['detected_frameworks'] = detected_frameworks
         
         # Estimate VRAM requirements based on detected models
-        estimated_vram = 8  # Start with entry-level requirement
-        
         for model, specs in self.model_specs.items():
             if model in all_code.lower():
-                estimated_vram = max(estimated_vram, specs['base_vram'])
+                vram_needed = max(vram_needed, specs['base_vram'])
                 analysis['reasoning'].append(f"Detected {model} model requiring {specs['base_vram']}GB+ VRAM")
-        
-        # Check for specific workload types - PRIORITIZE GPU COMPUTING FIRST
-        # Check for GPU computing patterns (Numba CUDA, PyCUDA, etc.) - HIGHEST PRIORITY
-        gpu_computing_patterns = ['@cuda.jit', 'cuda.grid', 'numba.cuda', 'pycuda', 'cuda kernel']
-        is_gpu_computing = any(pattern in all_code.lower() for pattern in gpu_computing_patterns)
-        
-        # Check for training patterns
-        training_patterns = ['train', 'fit', 'epoch', 'optimizer', 'loss', 'backward']
-        is_training = any(pattern in all_code.lower() for pattern in training_patterns)
-        
-        if is_gpu_computing:
-            analysis['workload_type'] = 'gpu-computing'
-            analysis['reasoning'].append("GPU computing workload detected (Numba CUDA, PyCUDA, etc.)")
-        elif is_training:
-            estimated_vram = int(estimated_vram * 1.5)  # Training requires more memory
-            analysis['reasoning'].append("Training workload detected - increased VRAM estimate")
-            analysis['workload_type'] = 'training'
-        else:
-            analysis['workload_type'] = 'inference'
-            analysis['reasoning'].append("Inference workload detected")
+                
+                # CRITICAL FIX: Only update GPU recommendation if model actually requires more VRAM
+                # Don't automatically escalate to enterprise hardware for small models
+                if specs['base_vram'] > analysis['min_vram_gb']:
+                    analysis['min_vram_gb'] = specs['base_vram']
+                    
+                    # Only escalate to enterprise if model is genuinely large (>24GB)
+                    if specs['base_vram'] > 24:
+                        # Large model requires enterprise GPU
+                        analysis['consumer_viable'] = False
+                        analysis['consumer_limitation'] = "Large model requires enterprise GPU"
+                        # CRITICAL FIX: If consumer is not viable, minimum should be enterprise too
+                        # This ensures logical consistency between minimum and recommended tiers
+                        if specs['base_vram'] <= 48:
+                            analysis['min_gpu_type'] = 'L40S'
+                            analysis['min_vram_gb'] = 48
+                        else:
+                            analysis['min_gpu_type'] = 'A100 PCIe 80G'
+                            analysis['min_vram_gb'] = 80
+                    elif specs['base_vram'] > 16:
+                        # Medium model - update to RTX 4090 but keep consumer viable
+                        analysis['min_gpu_type'] = 'RTX 4090'
+                        analysis['min_vram_gb'] = 24  # RTX 4090 VRAM
+                    elif specs['base_vram'] > 12:
+                        # Small-medium model - update to RTX 4080 but keep consumer viable  
+                        analysis['min_gpu_type'] = 'RTX 4080'
+                        analysis['min_vram_gb'] = 16  # RTX 4080 VRAM
+                    # For models ≤12GB, keep existing GPU recommendation from benefit level
         
         # Check for multi-GPU patterns using parallel search
         multi_gpu_matches = parallel_pattern_search(all_code, self.multi_gpu_patterns)
@@ -2479,27 +2899,7 @@ class GPUAnalyzer:
                     analysis['sxm_reasoning'].append(f"Large-scale training pattern detected: {self.sxm_patterns[i]}")
                     break
         
-        # Set minimum GPU recommendations based on estimated VRAM needs
-        if estimated_vram <= 8:
-            # Entry-level workload
-            analysis['min_gpu_type'] = 'RTX 4060'
-            analysis['min_vram_gb'] = 8
-            analysis['min_runtime_estimate'] = self._convert_runtime_to_new_format('1.0-2.0')  # Fallback estimate
-        elif estimated_vram <= 16:
-            # Mid-tier workload
-            analysis['min_gpu_type'] = 'RTX 4070'
-            analysis['min_vram_gb'] = 12
-            analysis['min_runtime_estimate'] = self._convert_runtime_to_new_format('1.0-2.0')  # Fallback estimate
-        elif estimated_vram <= 24:
-            # High-end workload
-            analysis['min_gpu_type'] = 'RTX 4090'
-            analysis['min_vram_gb'] = 24
-            analysis['min_runtime_estimate'] = self._convert_runtime_to_new_format('1.0-2.0')  # Fallback estimate
-        else:
-            # Enterprise workload - set minimum to enterprise GPU
-            analysis['min_gpu_type'] = 'L4'
-            analysis['min_vram_gb'] = max(estimated_vram, 24)
-            analysis['min_runtime_estimate'] = self._convert_runtime_to_new_format('1.0-2.0')  # Fallback estimate
+        # GPU recommendations are already set based on GPU benefit level above
 
         # Set quantities based on multi-GPU detection and workload requirements
         if multi_gpu_detected or analysis.get('sxm_required', False):
@@ -2601,7 +3001,7 @@ class GPUAnalyzer:
                 break  # Avoid duplicate similar warnings
         
         # Workload-specific ARM compatibility considerations
-        if is_training:
+        if analysis['workload_type'] == 'training':
             if 'distributed' in all_code.lower():
                 arm_compatibility_score -= 10
                 arm_issues.append("Distributed training on ARM may have performance limitations")
@@ -2616,7 +3016,7 @@ class GPUAnalyzer:
         arm_heavy_models = ['stable.diffusion', 'llama', 'gpt']
         for model in arm_heavy_models:
             if model in all_code.lower():
-                if estimated_vram > 40:
+                if analysis['min_vram_gb'] > 40:
                     arm_issues.append(f"Large {model} models may have reduced performance on ARM")
                     arm_compatibility_score -= 5
                 else:
@@ -3174,183 +3574,212 @@ class GPUAnalyzer:
             return self._convert_runtime_to_new_format("1.0-2.0")
 
     def _generate_comprehensive_recommendations(self, analysis: Dict):
-        """Generate minimum, consumer, and enterprise recommendations and set optimal fields."""
+        """Generate minimum, consumer, and enterprise recommendations using new GPU specs-based system."""
         
-        total_vram_needed = analysis.get('min_vram_gb', 8)
-        quantity_needed = analysis.get('optimal_quantity', 1)
-        per_gpu_vram_needed = total_vram_needed // quantity_needed if quantity_needed > 0 else total_vram_needed
-        workload_type = analysis.get('workload_type', 'inference')
-        sxm_required = analysis.get('sxm_required', False)
+        # Step 1: Use existing GPU benefit analysis from static analysis
+        # (Don't re-run detection, use the results from _perform_static_analysis)
+        gpu_benefit_analysis = analysis.get('_gpu_benefit_analysis')
         
-        # Extract LLM runtime data if available
-        llm_runtime_data = analysis.get('llm_runtime_data')
-        
-        # Assess consumer viability and generate recommendation if viable (using per-GPU VRAM)
-        consumer_viable, limitation = self._assess_consumer_viability_with_vram(
-            analysis, per_gpu_vram_needed, quantity_needed
-        )
-        analysis['consumer_viable'] = consumer_viable
-        analysis['consumer_limitation'] = limitation
-        
-        consumer_rec = None
-        if consumer_viable:
-            consumer_rec = self._generate_consumer_recommendation(
-                per_gpu_vram_needed, quantity_needed, workload_type, llm_runtime_data
+        # If not available, run detection (fallback)
+        if not gpu_benefit_analysis:
+            all_code = '\n'.join(analysis.get('code_cells', []))
+            all_markdown = '\n'.join(analysis.get('markdown_cells', []))
+            
+            gpu_benefit_analysis = self.detect_gpu_benefit_level(
+                all_code + all_markdown, 
+                analysis.get('detected_frameworks', []), 
+                analysis.get('code_patterns', {})
             )
-            analysis['consumer_gpu_type'] = consumer_rec['type']
-            analysis['consumer_quantity'] = consumer_rec['quantity']
-            analysis['consumer_vram_gb'] = consumer_rec['vram']
-            analysis['consumer_runtime_estimate'] = consumer_rec['runtime']
-        else:
-            # Consumer not viable - clear consumer fields
+        
+        # Step 2: Calculate enhanced VRAM requirements
+        vram_estimate = self.calculate_vram_requirements_with_gpu_context(analysis)
+        
+        # Step 3: Apply CPU-first logic based on GPU benefit analysis
+        if gpu_benefit_analysis['benefit_level'] == 'none':
+            # CPU-only recommendation
+            analysis['min_gpu_type'] = 'CPU-only'
+            analysis['min_quantity'] = 0
+            analysis['min_vram_gb'] = 0
+            analysis['min_runtime_estimate'] = 'CPU execution'
             analysis['consumer_gpu_type'] = None
             analysis['consumer_quantity'] = None
             analysis['consumer_vram_gb'] = None
             analysis['consumer_runtime_estimate'] = None
+            analysis['consumer_viable'] = False
+            analysis['consumer_limitation'] = "CPU-optimized workload - GPU not needed"
+            analysis['enterprise_gpu_type'] = ""
+            analysis['enterprise_quantity'] = 0
+            analysis['enterprise_vram_gb'] = 0
+            analysis['enterprise_runtime_estimate'] = ""
+            analysis['optimal_gpu_type'] = 'CPU-only'
+            analysis['optimal_quantity'] = 0
+            analysis['optimal_vram_gb'] = 0
+            analysis['optimal_runtime_estimate'] = 'CPU execution'
             
-            # Add reasoning about why consumer isn't viable
-            if limitation:
-                analysis['reasoning'].append(f"Consumer GPUs not recommended: {limitation}")
-        
-        # Generate enterprise recommendation (always available) using per-GPU VRAM
-        enterprise_rec = self._generate_enterprise_recommendation(
-            per_gpu_vram_needed, quantity_needed, workload_type, sxm_required, llm_runtime_data
-        )
-        
-        # Check if enterprise recommendation is slower than consumer
-        if consumer_viable and consumer_rec:
-            consumer_perf = self.gpu_specs.get(consumer_rec['type'], {}).get('performance_factor', 1.0)
-            enterprise_perf = self.gpu_specs.get(enterprise_rec['type'], {}).get('performance_factor', 1.0)
+            # Update workload type and reasoning
+            analysis['workload_type'] = gpu_benefit_analysis['workload_type']
+            analysis['reasoning'].extend(gpu_benefit_analysis['reasoning'])
+            analysis['reasoning'].append(f"Confidence: {gpu_benefit_analysis['confidence']:.1%}")
             
-            # If enterprise is slower than consumer, upgrade enterprise recommendation
-            if enterprise_perf < consumer_perf:
-                analysis['reasoning'].append(f"Upgraded enterprise recommendation from {enterprise_rec['type']} to ensure better performance than consumer option")
+            return
+        
+        # Step 4: Generate tiered GPU recommendations based on benefit level
+        benefit_level = gpu_benefit_analysis['benefit_level']
+        workload_type = gpu_benefit_analysis['workload_type']
+        vram_needed = gpu_benefit_analysis['vram_estimate']
+        
+        if benefit_level in ['beneficial', 'recommended', 'required']:
+            use_case_context = analysis.get('use_case_context', 'professional')
+            consumer_viable = analysis.get('consumer_viable', True)
+            recommendations = self.generate_tiered_recommendations(
+                vram_needed,
+                workload_type,
+                use_case_context,
+                consumer_viable
+            )
+        else:
+            # For CPU-only workloads, no GPU recommendations needed
+            recommendations = {}
+        
+        # Step 5: Provide honest assessment
+        honest_assessment = self.provide_honest_assessment(analysis, vram_estimate, gpu_benefit_analysis)
+        
+        # Step 6: Map new tiered recommendations to existing structure
+        if recommendations:
+            # Get quantities from static analysis (accounts for multi-GPU)
+            base_quantity = analysis.get('min_quantity', 1)
+            
+            # MINIMUM tier -> min_gpu fields
+            if 'budget_minimum' in recommendations:
+                min_rec = recommendations['budget_minimum']
+                analysis['min_gpu_type'] = min_rec['gpu_name']
+                analysis['min_quantity'] = base_quantity
+                analysis['min_vram_gb'] = min_rec['vram_gb'] * base_quantity  # Total VRAM
+                analysis['min_runtime_estimate'] = self._format_runtime_estimate(min_rec['estimated_runtime_multiplier'])
+            
+            # RECOMMENDED tier -> always map to consumer fields (new 3-tier approach)
+            if 'recommended' in recommendations:
+                rec_rec = recommendations['recommended']
                 
-                # Find a faster enterprise GPU
-                faster_options = [
-                    ('L40S', 48, 0.75),
-                    ('A100 PCIe 40G', 40, 1.0),
-                    ('A100 PCIe 80G', 80, 1.0),
-                    ('A100 SXM 40G', 40, 1.2),
-                    ('A100 SXM 80G', 80, 1.2),
-                    ('H100 PCIe', 80, 2.2),
-                    ('H100 SXM', 80, 2.5),
-                    ('H200 SXM', 141, 3.0),
-                    ('B200 SXM', 192, 4.0)
-                ]
+                # Always populate consumer/recommended fields regardless of category
+                analysis['consumer_gpu_type'] = rec_rec['gpu_name']
+                analysis['consumer_quantity'] = base_quantity
+                analysis['consumer_vram_gb'] = rec_rec['vram_gb']
+                analysis['consumer_runtime_estimate'] = self._format_runtime_estimate(rec_rec['estimated_runtime_multiplier'])
                 
-                for gpu_name, gpu_vram, gpu_perf in faster_options:
-                    if gpu_perf >= consumer_perf and gpu_vram >= per_gpu_vram_needed:
-                        enterprise_rec['type'] = gpu_name
-                        enterprise_rec['vram'] = gpu_vram * quantity_needed
-                        
-                        # Calculate runtime with proper None checks
-                        baseline_runtime = '2-3'
-                        baseline_gpu = 'RTX 4090'
-                        optimization_factor = 1.0
-                        
-                        if llm_runtime_data:
-                            baseline_runtime = llm_runtime_data.get('baseline_runtime_hours', '2-3')
-                            baseline_gpu = llm_runtime_data.get('baseline_reference_gpu', 'RTX 4090')
-                            optimization_factor = llm_runtime_data.get('optimization_speedup_factor', 1.0)
-                        
-                        enterprise_rec['runtime'] = self._calculate_runtime_for_gpu(
-                            baseline_runtime, baseline_gpu, gpu_name, quantity_needed, optimization_factor
-                        )
-                        break
-        
-        analysis['enterprise_gpu_type'] = enterprise_rec['type']
-        analysis['enterprise_quantity'] = enterprise_rec['quantity']
-        analysis['enterprise_vram_gb'] = enterprise_rec['vram']
-        analysis['enterprise_runtime_estimate'] = enterprise_rec['runtime']
-        
-        # CRITICAL FIX: Elevate minimum recommendation to enterprise grade when consumer GPUs are not viable
-        if not consumer_viable:
-            # When consumer GPUs are not viable, the minimum should match the enterprise recommendation
-            # This ensures consistency and provides the most appropriate starting point
-            analysis['min_gpu_type'] = enterprise_rec['type']
-            analysis['min_quantity'] = enterprise_rec['quantity']
-            analysis['min_vram_gb'] = enterprise_rec['vram']
-            analysis['min_runtime_estimate'] = enterprise_rec['runtime']
-            analysis['reasoning'].append(
-                f"Updated minimum recommendation to enterprise GPU ({enterprise_rec['type']}) since consumer GPUs are not viable for this workload")
-        elif consumer_rec:
-            # CONSISTENCY FIX: When consumer GPUs are viable, ensure minimum is not more powerful than consumer
-            # This maintains the logical hierarchy: minimum ≤ consumer ≤ enterprise
-            current_min_gpu = analysis.get('min_gpu_type', '')
-            consumer_gpu = consumer_rec['type']
+                # CRITICAL FIX: Don't override consumer viability based on recommended tier category
+                # The consumer viability should have been determined earlier based on workload requirements
+                # If consumer is not viable, then the recommended tier correctly shows an enterprise GPU
+                # and we should preserve the original consumer_viable determination
+                if not analysis.get('consumer_viable', True):
+                    # Consumer not viable - recommended tier is showing enterprise GPU as expected
+                    # Keep the existing consumer_limitation or set a default
+                    if not analysis.get('consumer_limitation'):
+                        analysis['consumer_limitation'] = f"Workload requires enterprise-grade hardware - {rec_rec['gpu_name']} recommended"
+                else:
+                    # Consumer viable - recommended tier might be consumer or enterprise
+                    if rec_rec['category'] == 'consumer':
+                        analysis['consumer_viable'] = True
+                        analysis['consumer_limitation'] = None
+                    else:
+                        # Enterprise GPU in recommended tier even though consumer is viable
+                        # This means enterprise is better but consumer would work
+                        analysis['consumer_viable'] = True
+                        analysis['consumer_limitation'] = f"Workload optimized for {rec_rec['gpu_name']} - consumer alternatives may be slower"
+                
+                # Always set enterprise/optimal as upgrade path
+                if 'optimal' in recommendations:
+                    opt_rec = recommendations['optimal']
+                    analysis['enterprise_gpu_type'] = opt_rec['gpu_name']
+                    analysis['enterprise_quantity'] = base_quantity
+                    analysis['enterprise_vram_gb'] = opt_rec['vram_gb']
+                    analysis['enterprise_runtime_estimate'] = self._format_runtime_estimate(opt_rec['estimated_runtime_multiplier'])
+                else:
+                    # If no optimal tier, use recommended as enterprise too
+                    analysis['enterprise_gpu_type'] = rec_rec['gpu_name']
+                    analysis['enterprise_quantity'] = base_quantity
+                    analysis['enterprise_vram_gb'] = rec_rec['vram_gb']
+                    analysis['enterprise_runtime_estimate'] = self._format_runtime_estimate(rec_rec['estimated_runtime_multiplier'])
             
-            # Get performance factors to compare GPU power
-            min_perf = self.gpu_specs.get(current_min_gpu, {}).get('performance_factor', 1.0)
-            consumer_perf = self.gpu_specs.get(consumer_gpu, {}).get('performance_factor', 1.0)
-            
-            # If minimum is more powerful than consumer, adjust minimum to match consumer
-            if min_perf > consumer_perf:
-                analysis['min_gpu_type'] = consumer_gpu
-                analysis['min_quantity'] = consumer_rec['quantity']
-                analysis['min_vram_gb'] = consumer_rec['vram']
-                analysis['min_runtime_estimate'] = consumer_rec['runtime']
-                analysis['reasoning'].append(
-                    f"Adjusted minimum recommendation from {current_min_gpu} to {consumer_gpu} to maintain logical hierarchy (minimum ≤ consumer)")
+            # OPTIMAL tier -> optimal_gpu fields (for backward compatibility)
+            if 'optimal' in recommendations:
+                opt_rec = recommendations['optimal']
+                analysis['optimal_gpu_type'] = opt_rec['gpu_name']
+                analysis['optimal_quantity'] = base_quantity
+                analysis['optimal_vram_gb'] = opt_rec['vram_gb'] * base_quantity
+                analysis['optimal_runtime_estimate'] = self._format_runtime_estimate(opt_rec['estimated_runtime_multiplier'])
+            elif 'recommended' in recommendations:
+                # Fall back to recommended if no optimal
+                rec_rec = recommendations['recommended']
+                analysis['optimal_gpu_type'] = rec_rec['gpu_name']
+                analysis['optimal_quantity'] = base_quantity
+                analysis['optimal_vram_gb'] = rec_rec['vram_gb'] * base_quantity
+                analysis['optimal_runtime_estimate'] = self._format_runtime_estimate(rec_rec['estimated_runtime_multiplier'])
+        else:
+            # No GPU recommendations - already set to CPU-only above
+            pass
         
-        # VRAM FIX: Ensure all vRAM values are calculated correctly based on GPU specs
+        # Step 7: Add assessment insights to reasoning
+        analysis['reasoning'].extend(honest_assessment['honesty_factors'])
+        if honest_assessment['caveats']:
+            analysis['reasoning'].extend([f"Caveat: {caveat}" for caveat in honest_assessment['caveats']])
+        
+        # Step 8: Store additional analysis data for output formatting
+        analysis['_vram_estimate'] = vram_estimate
+        analysis['_honest_assessment'] = honest_assessment
+        analysis['_gpu_benefit_analysis'] = gpu_benefit_analysis
+        analysis['_tiered_recommendations'] = recommendations
+
+        # Step 9: Fix VRAM calculations to ensure they match actual GPU specs
         self._fix_vram_calculations(analysis)
         
-        # Set optimal recommendation
-        if consumer_viable and consumer_rec:
-            # Set optimal to consumer since it's viable
-            analysis['optimal_gpu_type'] = consumer_rec['type']
-            analysis['optimal_quantity'] = consumer_rec['quantity']
-            analysis['optimal_vram_gb'] = consumer_rec['vram']
-            analysis['optimal_runtime_estimate'] = consumer_rec['runtime']
-        else:
-            # Set optimal to enterprise
-            analysis['optimal_gpu_type'] = enterprise_rec['type']
-            analysis['optimal_quantity'] = enterprise_rec['quantity']
-            analysis['optimal_vram_gb'] = enterprise_rec['vram']
-            analysis['optimal_runtime_estimate'] = enterprise_rec['runtime']
+        # Step 10: Ensure minimum GPU consistency with consumer viability
+        self._ensure_minimum_gpu_consistency(analysis)
         
-        # Generate minimum runtime using LLM data if available
-        if llm_runtime_data and analysis.get('min_gpu_type'):
-            min_gpu_type = analysis.get('min_gpu_type', '')
-            min_quantity = analysis.get('min_quantity', 1)
-            baseline_runtime = llm_runtime_data.get('baseline_runtime_hours', '2-3')
-            baseline_gpu = llm_runtime_data.get('baseline_reference_gpu', 'RTX 4090')
-            optimization_factor = llm_runtime_data.get('optimization_speedup_factor', 1.0)
-            analysis['min_runtime_estimate'] = self._calculate_runtime_for_gpu(
-                baseline_runtime, baseline_gpu, min_gpu_type, min_quantity, optimization_factor
-            )
+        # Step 11: Ensure consumer fields are never null
+        self._ensure_consumer_fields_populated(analysis)
+
+    def _format_runtime_estimate(self, runtime_multiplier):
+        """Convert runtime multiplier to human-readable estimate"""
+        if runtime_multiplier <= 0.5:
+            return "5-15 minutes"
+        elif runtime_multiplier <= 1.0:
+            return "15-30 minutes"
+        elif runtime_multiplier <= 2.0:
+            return "30-60 minutes"
+        else:
+            return "1-3 hours"
 
     def _fix_vram_calculations(self, analysis: Dict):
         """Fix vRAM calculations to ensure they are based on actual GPU specs * quantity."""
         
-        # Fix minimum vRAM
+        # Fix minimum vRAM (per-GPU VRAM * quantity = total VRAM)
         min_gpu_type = analysis.get('min_gpu_type', '')
         min_quantity = analysis.get('min_quantity', 1)
         if min_gpu_type and min_gpu_type in self.gpu_specs:
-            gpu_vram = self.gpu_specs[min_gpu_type]['vram']
-            analysis['min_vram_gb'] = gpu_vram * min_quantity
+            per_gpu_vram = self.gpu_specs[min_gpu_type]['vram']
+            analysis['min_vram_gb'] = per_gpu_vram * min_quantity
         
-        # Fix consumer vRAM
+        # Fix consumer vRAM (per-GPU VRAM * quantity = total VRAM)
         consumer_gpu_type = analysis.get('consumer_gpu_type')
         consumer_quantity = analysis.get('consumer_quantity', 1)
         if consumer_gpu_type and consumer_gpu_type in self.gpu_specs:
-            gpu_vram = self.gpu_specs[consumer_gpu_type]['vram']
-            analysis['consumer_vram_gb'] = gpu_vram * consumer_quantity
+            per_gpu_vram = self.gpu_specs[consumer_gpu_type]['vram']
+            analysis['consumer_vram_gb'] = per_gpu_vram * consumer_quantity
         
-        # Fix enterprise vRAM
+        # Fix enterprise vRAM (per-GPU VRAM * quantity = total VRAM)
         enterprise_gpu_type = analysis.get('enterprise_gpu_type', '')
         enterprise_quantity = analysis.get('enterprise_quantity', 1)
         if enterprise_gpu_type and enterprise_gpu_type in self.gpu_specs:
-            gpu_vram = self.gpu_specs[enterprise_gpu_type]['vram']
-            analysis['enterprise_vram_gb'] = gpu_vram * enterprise_quantity
+            per_gpu_vram = self.gpu_specs[enterprise_gpu_type]['vram']
+            analysis['enterprise_vram_gb'] = per_gpu_vram * enterprise_quantity
         
-        # Fix optimal vRAM
+        # Fix optimal vRAM (per-GPU VRAM * quantity = total VRAM)
         optimal_gpu_type = analysis.get('optimal_gpu_type', '')
         optimal_quantity = analysis.get('optimal_quantity', 1)
         if optimal_gpu_type and optimal_gpu_type in self.gpu_specs:
-            gpu_vram = self.gpu_specs[optimal_gpu_type]['vram']
-            analysis['optimal_vram_gb'] = gpu_vram * optimal_quantity
+            per_gpu_vram = self.gpu_specs[optimal_gpu_type]['vram']
+            analysis['optimal_vram_gb'] = per_gpu_vram * optimal_quantity
 
     def _assess_consumer_viability_with_vram(self, analysis: Dict, per_gpu_vram: int, quantity: int) -> Tuple[bool, Optional[str]]:
         """
@@ -3717,26 +4146,27 @@ class GPUAnalyzer:
         elif not self.quiet_mode:
             print(f"✅ Compliance evaluation complete (score: {compliance_score:.0f}/100)")
         
+        # CRITICAL FIX: Calculate final dynamic confidence before building result
+        # This integrates static analysis, LLM analysis, and all confidence factors
+        final_confidence = self._calculate_dynamic_confidence(static_analysis, llm_context)
+        static_analysis['confidence'] = final_confidence
+        
         # Build final result
         return GPURequirement(
             min_gpu_type=static_analysis['min_gpu_type'],
             min_quantity=static_analysis['min_quantity'],
             min_vram_gb=static_analysis['min_vram_gb'],
             min_runtime_estimate=static_analysis['min_runtime_estimate'],
-            consumer_gpu_type=static_analysis.get('consumer_gpu_type'),
-            consumer_quantity=static_analysis.get('consumer_quantity'),
-            consumer_vram_gb=static_analysis.get('consumer_vram_gb'),
-            consumer_runtime_estimate=static_analysis.get('consumer_runtime_estimate'),
-            consumer_viable=static_analysis.get('consumer_viable', True),
-            consumer_limitation=static_analysis.get('consumer_limitation'),
-            enterprise_gpu_type=static_analysis.get('enterprise_gpu_type', ""),
-            enterprise_quantity=static_analysis.get('enterprise_quantity', 1),
-            enterprise_vram_gb=static_analysis.get('enterprise_vram_gb', 0),
-            enterprise_runtime_estimate=static_analysis.get('enterprise_runtime_estimate', ""),
-            optimal_gpu_type=static_analysis.get('optimal_gpu_type', ""),
-            optimal_quantity=static_analysis.get('optimal_quantity', 1),
-            optimal_vram_gb=static_analysis.get('optimal_vram_gb', 0),
-            optimal_runtime_estimate=static_analysis.get('optimal_runtime_estimate', ""),
+            recommended_gpu_type=static_analysis.get('consumer_gpu_type'),
+            recommended_quantity=static_analysis.get('consumer_quantity'),
+            recommended_vram_gb=static_analysis.get('consumer_vram_gb'),
+            recommended_runtime_estimate=static_analysis.get('consumer_runtime_estimate'),
+            recommended_viable=static_analysis.get('consumer_viable', True),
+            recommended_limitation=static_analysis.get('consumer_limitation'),
+            optimal_gpu_type=static_analysis.get('enterprise_gpu_type', ""),
+            optimal_quantity=static_analysis.get('enterprise_quantity', 1),
+            optimal_vram_gb=static_analysis.get('enterprise_vram_gb', 0),
+            optimal_runtime_estimate=static_analysis.get('enterprise_runtime_estimate', ""),
             sxm_required=static_analysis['sxm_required'],
             sxm_reasoning=static_analysis['sxm_reasoning'],
             arm_compatibility=static_analysis['arm_compatibility'],
@@ -3754,6 +4184,862 @@ class GPUAnalyzer:
             confidence_factors=static_analysis.get('confidence_factors', [])
         )
 
+    def get_gpus_by_category(self, category=None, tier=None):
+        """
+        Filter GPUs from self.gpu_specs by category and/or tier
+        """
+        filtered_gpus = {}
+        for gpu_name, specs in self.gpu_specs.items():
+            if category and specs['category'] != category:
+                continue
+            if tier and specs['tier'] != tier:
+                continue
+            filtered_gpus[gpu_name] = specs
+        return filtered_gpus
+
+    def find_minimum_viable_gpu(self, vram_needed, prefer_consumer=True):
+        """
+        Find the absolute cheapest GPU that meets VRAM requirements
+        """
+        viable_gpus = []
+        
+        # Check consumer GPUs first (usually more cost-effective)
+        if prefer_consumer:
+            consumer_gpus = self.get_gpus_by_category(category='consumer')
+            for gpu_name, specs in consumer_gpus.items():
+                if specs['vram'] >= vram_needed:
+                    viable_gpus.append((gpu_name, specs, self._calculate_price_score(specs)))
+        
+        # If no consumer options or enterprise preferred, check enterprise
+        if not viable_gpus or not prefer_consumer:
+            enterprise_gpus = self.get_gpus_by_category(category='enterprise')
+            for gpu_name, specs in enterprise_gpus.items():
+                if specs['vram'] >= vram_needed and specs['tier'] in ['mid', 'high']:  # Exclude cutting_edge for minimum
+                    viable_gpus.append((gpu_name, specs, self._calculate_price_score(specs)))
+        
+        # Sort by price score (lower is cheaper), then by VRAM
+        if viable_gpus:
+            return sorted(viable_gpus, key=lambda x: (x[2], x[1]['vram']))[0]
+        return None
+
+    def _calculate_price_score(self, specs):
+        """
+        Calculate relative price score using real cost factors (lower score = cheaper)
+        """
+        # Use the cost_factor if available (real-world relative pricing)
+        if 'cost_factor' in specs:
+            return specs['cost_factor']
+        
+        # Fallback calculation for any GPUs missing cost_factor
+        base_score = specs['vram'] * 2  # VRAM is major cost factor
+        
+        # Tier multipliers
+        tier_multipliers = {
+            'entry': 0.5,
+            'mid': 1.0,
+            'high': 1.5,
+            'flagship': 2.0,
+            'enterprise': 2.5,
+            'cutting_edge': 4.0
+        }
+        
+        # Category multipliers
+        category_multipliers = {
+            'consumer': 1.0,
+            'enterprise': 1.8  # Enterprise typically more expensive
+        }
+        
+        multiplier = tier_multipliers.get(specs['tier'], 1.0) * category_multipliers.get(specs['category'], 1.0)
+        
+        # Performance factor affects price
+        performance_bonus = specs['performance_factor'] * 10
+        
+        return base_score * multiplier + performance_bonus
+
+    def _find_best_consumer_gpu(self, vram_needed):
+        """Find best consumer GPU for given VRAM requirement"""
+        consumer_gpus = self.get_gpus_by_category(category='consumer')
+        suitable_gpus = []
+        
+        for gpu_name, specs in consumer_gpus.items():
+            if specs['vram'] >= vram_needed:
+                # Score based on price/performance balance
+                efficiency_score = specs['performance_factor'] / self._calculate_price_score(specs)
+                suitable_gpus.append((gpu_name, specs, efficiency_score))
+        
+        if suitable_gpus:
+            return sorted(suitable_gpus, key=lambda x: x[2], reverse=True)[0]  # Best efficiency
+        return None
+
+    def _find_best_professional_gpu(self, vram_needed, workload_type):
+        """Find best professional/enterprise GPU"""
+        enterprise_gpus = self.get_gpus_by_category(category='enterprise')
+        suitable_gpus = []
+        
+        for gpu_name, specs in enterprise_gpus.items():
+            if specs['vram'] >= vram_needed:
+                # For enterprise, prioritize performance and features
+                score = specs['performance_factor']
+                
+                # Bonus for features relevant to workload
+                if workload_type == "training" and specs['nvlink']:
+                    score *= 1.2  # NVLink beneficial for multi-GPU training
+                if specs['tensor_cores']:
+                    score *= 1.1  # Tensor cores beneficial for ML
+                
+                suitable_gpus.append((gpu_name, specs, score))
+        
+        if suitable_gpus:
+            return sorted(suitable_gpus, key=lambda x: x[2], reverse=True)[0]  # Best performance
+        return None
+
+    def _find_optimal_gpu(self, vram_needed, workload_type):
+        """Find absolute best GPU regardless of cost"""
+        all_suitable_gpus = []
+        
+        for gpu_name, specs in self.gpu_specs.items():
+            if specs['vram'] >= vram_needed:
+                score = specs['performance_factor']
+                
+                # Workload-specific bonuses
+                if workload_type in ["training", "large_models"] and specs['nvlink']:
+                    score *= 1.3
+                if workload_type == "inference" and specs['tier'] in ['cutting_edge', 'flagship']:
+                    score *= 1.2
+                
+                all_suitable_gpus.append((gpu_name, specs, score))
+        
+        if all_suitable_gpus:
+            return sorted(all_suitable_gpus, key=lambda x: x[2], reverse=True)[0]
+        return None
+
+    def detect_gpu_benefit_level(self, notebook_content, imports=None, code_patterns=None):
+        """
+        Detect the level of GPU benefit for a notebook workload.
+        CPU-first approach: assume CPU-only until proven otherwise.
+        
+        Returns:
+            dict: {
+                'benefit_level': 'none'|'beneficial'|'recommended'|'required',
+                'confidence': float (0.0-1.0),
+                'reasoning': List[str],
+                'estimated_speedup': Optional[str],
+                'workload_type': str,
+                'vram_estimate': int (GB, 0 if CPU-only)
+            }
+        """
+        import re
+        
+        full_content = str(notebook_content).lower()
+        
+        # Score different categories of GPU indicators
+        gpu_required_score = 0      # Must have GPU
+        gpu_recommended_score = 0   # Significant benefit
+        gpu_beneficial_score = 0    # Some benefit
+        cpu_optimized_score = 0     # Better on CPU
+        
+        # === GPU REQUIRED PATTERNS (Cannot run on CPU) ===
+        gpu_required_patterns = [
+            # Large models that require GPU memory
+            r'llama.*[1-9][0-9]b',  # LLaMA 10B+
+            r'gpt.*[1-9][0-9]b',    # GPT 10B+
+            r'bloom.*[1-9][0-9]b',  # BLOOM 10B+
+            r'opt.*[1-9][0-9]b',    # OPT 10B+
+            # Explicit CUDA code
+            r'@cuda\.jit',
+            r'cuda\.grid',
+            r'cuda\.blockidx',
+            r'cuda\.threadidx',
+            r'pycuda\.',
+            r'cupy\.',
+            r'tensorrt\.',
+            # Multi-GPU distributed training
+            r'distributeddataparallel',
+            r'torch\.distributed',
+            # Explicit GPU-only libraries (actual usage, not just mentions)
+            r'import\s+cudf',
+            r'from\s+cudf',
+            r'import\s+cuml',
+            r'from\s+cuml',
+            r'import\s+cugraph',
+            r'from\s+cugraph',
+            r'cudf\.[a-zA-Z_]+\(',  # Actual cuDF function calls
+            r'cuml\.[a-zA-Z_]+\(',  # Actual cuML function calls
+            r'cugraph\.[a-zA-Z_]+\(',  # Actual cuGraph function calls
+            # Very large batch sizes or model sizes
+            r'batch_size.*[5-9][0-9]{2,}',  # 500+ batch size
+            r'hidden_size.*[1-9][0-9]{3,}', # 1000+ hidden size
+        ]
+        
+        # === GPU RECOMMENDED PATTERNS (Significant benefit) ===
+        gpu_recommended_patterns = [
+            # Training loops
+            r'\.train\(\)',
+            r'model\.fit\(',
+            r'optimizer\.step\(',
+            r'loss\.backward\(',
+            r'for epoch in',
+            r'training_loop',
+            # Large neural networks
+            r'torch\.nn\..*conv',
+            r'torch\.nn\..*lstm',
+            r'torch\.nn\..*gru',
+            r'torch\.nn\..*transformer',
+            r'tensorflow\.keras\.layers',
+            # Computer vision
+            r'torchvision',
+            r'cv2\..*resize.*[5-9][0-9]{2,}',  # Large image processing
+            r'image.*classification',
+            r'object.*detection',
+            r'semantic.*segmentation',
+            # NLP with transformers
+            r'transformers\.',
+            r'bert.*model',
+            r'gpt.*model',
+            r'from.*transformers.*import',
+            # Medium-large models
+            r'llama.*[1-9]b',  # 1-9B parameters
+            r'gpt.*[1-9]b',
+            # GPU acceleration libraries
+            r'torch\.cuda',
+            r'tensorflow.*gpu',
+            r'device.*cuda',
+        ]
+        
+        # === GPU BENEFICIAL PATTERNS (Some benefit) ===
+        gpu_beneficial_patterns = [
+            # Basic ML training
+            r'sklearn\..*fit\(',
+            r'xgboost',
+            r'lightgbm',
+            r'catboost',
+            # Basic neural networks
+            r'torch\.nn\.linear',
+            r'torch\.nn\.sequential',
+            r'keras\.sequential',
+            # Image processing
+            r'cv2\.',
+            r'pillow',
+            r'imageio',
+            # Large dataset processing
+            r'dataloader',
+            r'dataset.*[1-9][0-9]{4,}',  # 10k+ samples
+            # Basic GPU operations
+            r'\.cuda\(\)',
+            r'\.gpu\(\)',
+            r'device.*gpu',
+        ]
+        
+        # === CPU OPTIMIZED PATTERNS (Better on CPU) ===
+        cpu_optimized_patterns = [
+            # Pure data analysis
+            r'pandas\.',
+            r'numpy\.',
+            r'matplotlib\.',
+            r'seaborn\.',
+            r'plotly\.',
+            r'scipy\.',
+            r'statsmodels\.',
+            # Small datasets
+            r'\.shape.*\([1-9][0-9]{0,2},',  # <1000 rows
+            r'len\(.*\).*[1-9][0-9]{0,2}',   # <1000 items
+            # Traditional ML (small scale)
+            r'sklearn\.linear_model',
+            r'sklearn\.tree',
+            r'sklearn\.naive_bayes',
+            r'sklearn\.svm',
+            # Statistical analysis
+            r'correlation',
+            r'regression',
+            r'anova',
+            r't-test',
+            r'chi-square',
+            # Visualization
+            r'plt\.plot',
+            r'plt\.scatter',
+            r'plt\.hist',
+            r'sns\.',
+        ]
+        
+        # Count pattern matches
+        for pattern in gpu_required_patterns:
+            gpu_required_score += len(re.findall(pattern, full_content)) * 5
+        
+        for pattern in gpu_recommended_patterns:
+            gpu_recommended_score += len(re.findall(pattern, full_content)) * 3
+        
+        for pattern in gpu_beneficial_patterns:
+            gpu_beneficial_score += len(re.findall(pattern, full_content)) * 2
+        
+        for pattern in cpu_optimized_patterns:
+            cpu_optimized_score += len(re.findall(pattern, full_content)) * 1
+        
+        # Determine benefit level
+        total_gpu_score = gpu_required_score + gpu_recommended_score + gpu_beneficial_score
+        
+        # CRITICAL FIX: Adjust scoring for small-scale GPU library usage
+        # cuDF/RAPIDS usage on small datasets shouldn't trigger 'required' level
+        if gpu_required_score > 0:
+            # Check for small dataset indicators that suggest this is a tutorial/demo
+            small_dataset_indicators = [
+                r'10\s+samples?', r'small.*dataset', r'tutorial', r'example', 
+                r'demo', r'test.*data', r'sample.*data', r'\.head\(\)', 
+                r'\.shape.*\([1-9][0-9]{0,2}', r'len\(.*\).*[1-9][0-9]{0,2}'
+            ]
+            
+            small_dataset_score = 0
+            for pattern in small_dataset_indicators:
+                small_dataset_score += len(re.findall(pattern, full_content))
+            
+            # If we have strong indicators this is a small dataset/tutorial, 
+            # downgrade from 'required' to 'recommended'
+            if small_dataset_score >= 2 and gpu_required_score <= 20:
+                gpu_required_score = 0  # Clear required score
+                gpu_recommended_score += 10  # Boost recommended score instead
+        
+        if gpu_required_score > 0:
+            benefit_level = 'required'
+            confidence = min(0.95, 0.7 + (gpu_required_score / 20))
+            workload_type = 'gpu-computing' if 'cuda' in full_content else 'large-scale-ml'
+            # Fix VRAM estimation - be more conservative for simple GPU computing
+            if 'cuda' in full_content and 'numba' in full_content:
+                # Simple CUDA/Numba workloads typically need much less VRAM
+                vram_estimate = 8 if gpu_required_score > 15 else 4
+            else:
+                vram_estimate = 48 if gpu_required_score > 10 else 24
+            estimated_speedup = 'Required - cannot run on CPU'
+            reasoning = ['GPU required for this workload']
+        
+        elif gpu_recommended_score > 3:  # Lowered from 5 to 3
+            benefit_level = 'recommended'
+            confidence = min(0.9, 0.6 + (gpu_recommended_score / 30))
+            # Improved workload type detection
+            training_patterns = ['train', 'fit', 'epoch', 'optimizer', 'loss', 'backward', 'gradient', 'learning_rate']
+            inference_patterns = ['predict', 'inference', 'eval', 'forward', 'model.load', 'torch.no_grad']
+            
+            training_score = sum(1 for p in training_patterns if p in full_content.lower())
+            inference_score = sum(1 for p in inference_patterns if p in full_content.lower())
+            
+            if training_score > inference_score:
+                workload_type = 'training'
+            elif inference_score > 0:
+                workload_type = 'inference'
+            elif 'cuda' in full_content and 'numba' in full_content:
+                workload_type = 'gpu-computing'
+            else:
+                workload_type = 'inference'  # Default to inference for ML workloads
+            
+            vram_estimate = 16 if gpu_recommended_score > 15 else 8
+            estimated_speedup = '3-10x faster than CPU'
+            reasoning = ['GPU provides significant performance benefit']
+            
+        elif gpu_beneficial_score > 1 and cpu_optimized_score < 10:  # Lowered from 3 to 1
+            benefit_level = 'beneficial'
+            confidence = min(0.8, 0.5 + (gpu_beneficial_score / 20))
+            workload_type = 'small-ml'
+            vram_estimate = 8
+            estimated_speedup = '2-5x faster than CPU'
+            reasoning = ['GPU provides moderate performance benefit']
+            
+        else:
+            # Default to CPU-only
+            benefit_level = 'none'
+            workload_type = 'data-analysis' if cpu_optimized_score > 5 else 'general'
+            vram_estimate = 0
+            estimated_speedup = None
+            reasoning = ['CPU-optimized workload - GPU provides minimal benefit']
+            
+            # High confidence for pure data analysis
+            if cpu_optimized_score > 10 and total_gpu_score == 0:
+                confidence = 0.9
+                reasoning = ['Pure data analysis workload - CPU is optimal']
+            else:
+                confidence = 0.7
+        
+        # Add specific reasoning based on detected patterns
+        if gpu_required_score > 0:
+            reasoning.append(f"High GPU requirement indicators detected (score: {gpu_required_score})")
+        if gpu_recommended_score > 0:
+            reasoning.append(f"Training/ML patterns detected (score: {gpu_recommended_score})")
+        if gpu_beneficial_score > 0:
+            reasoning.append(f"GPU-accelerated operations detected (score: {gpu_beneficial_score})")
+        if cpu_optimized_score > 0:
+            reasoning.append(f"CPU-optimized libraries detected (score: {cpu_optimized_score})")
+        
+        return {
+            'benefit_level': benefit_level,
+            'confidence': confidence,
+            'reasoning': reasoning,
+            'estimated_speedup': estimated_speedup,
+            'workload_type': workload_type,
+            'vram_estimate': vram_estimate
+        }
+
+    def provide_cpu_recommendation(self, workload_type, dataset_size_hint=None):
+        """
+        Provide honest CPU-only recommendations when appropriate
+        """
+        recommendations = {
+            "cpu_sufficient": True,
+            "reasoning": "",
+            "optional_gpu_benefit": "",
+            "gpu_recommendation": None
+        }
+        
+        if workload_type == "data_analysis":
+            recommendations.update({
+                "reasoning": "Data analysis with pandas/numpy/sklearn - CPU optimized by design",
+                "optional_gpu_benefit": "Minimal benefit unless using cuDF/cuML with large datasets (>10GB)",
+                "gpu_recommendation": self.find_minimum_viable_gpu(8) if dataset_size_hint == "large" else None
+            })
+        elif workload_type == "small_ml":
+            recommendations.update({
+                "reasoning": "Small ML workload - CPU sufficient but GPU may provide 2-5x training speedup",
+                "optional_gpu_benefit": "Faster experimentation and iteration cycles",
+                "gpu_recommendation": self.find_minimum_viable_gpu(12)  # RTX 4070 tier
+            })
+        elif workload_type == "visualization":
+            recommendations.update({
+                "reasoning": "Data visualization workload - CPU handles matplotlib/plotly efficiently",
+                "optional_gpu_benefit": "No significant benefit for standard plotting libraries"
+            })
+        
+        return recommendations
+
+    def calculate_vram_requirements_with_gpu_context(self, notebook_analysis):
+        """
+        Enhanced VRAM estimation that considers GPU architecture capabilities
+        """
+        base_estimate = self._calculate_base_vram_requirement(notebook_analysis)
+        
+        # Apply optimizations based on modern GPU capabilities
+        optimized_estimate = base_estimate
+        
+        # Tensor Core optimization (available on newer GPUs)
+        if notebook_analysis.get("uses_mixed_precision", False):
+            optimized_estimate *= 0.6  # Mixed precision significantly reduces VRAM
+        
+        # Memory optimization techniques
+        if notebook_analysis.get("uses_lora", False):
+            optimized_estimate *= 0.3  # LoRA dramatically reduces memory needs
+        
+        if notebook_analysis.get("uses_quantization", False):
+            quant_factor = {
+                "int8": 0.5,
+                "int4": 0.25,
+                "fp16": 0.5
+            }.get(notebook_analysis.get("quantization_type", "int8"), 0.5)
+            optimized_estimate *= quant_factor
+        
+        if notebook_analysis.get("uses_gradient_checkpointing", False):
+            optimized_estimate *= 0.7  # Gradient checkpointing trades compute for memory
+        
+        # Modern GPU architectural benefits
+        minimum_gpu = self.find_minimum_viable_gpu(optimized_estimate)
+        if minimum_gpu and minimum_gpu[1]['compute_capability'] >= 8.0:
+            # Newer architectures have better memory efficiency
+            optimized_estimate *= 0.9
+        
+        return {
+            "base_vram_estimate": base_estimate,
+            "optimized_vram_estimate": optimized_estimate,
+            "optimization_savings": base_estimate - optimized_estimate,
+            "confidence": self._calculate_estimation_confidence(notebook_analysis),
+            "assumptions": self._list_vram_assumptions(notebook_analysis)
+        }
+
+    def _calculate_base_vram_requirement(self, notebook_analysis):
+        """Calculate base VRAM requirement from notebook analysis"""
+        # Start with detected model requirements
+        base_vram = notebook_analysis.get('min_vram_gb', 8)
+        
+        # Adjust based on workload type
+        workload_type = notebook_analysis.get('workload_type', 'inference')
+        if workload_type == 'training':
+            base_vram *= 1.5  # Training needs more memory
+        elif workload_type == 'fine-tuning':
+            base_vram *= 1.3  # Fine-tuning needs moderate increase
+        
+        # Adjust for multi-GPU setups
+        if notebook_analysis.get('min_quantity', 1) > 1:
+            # Multi-GPU can distribute memory load
+            base_vram *= 0.8
+        
+        return max(4, base_vram)  # Minimum 4GB
+
+    def _calculate_estimation_confidence(self, notebook_analysis):
+        """Calculate confidence in VRAM estimation"""
+        confidence = 0.5  # Base confidence
+        
+        # Increase confidence if we detected specific models
+        if notebook_analysis.get('detected_models'):
+            confidence += 0.2
+        
+        # Increase confidence if we have clear workload patterns
+        if notebook_analysis.get('workload_type') in ['training', 'inference']:
+            confidence += 0.2
+        
+        # Decrease confidence if analysis is uncertain
+        if notebook_analysis.get('confidence', 0) < 0.7:
+            confidence -= 0.1
+        
+        return min(1.0, max(0.1, confidence))
+
+    def _list_vram_assumptions(self, notebook_analysis):
+        """List assumptions made in VRAM estimation"""
+        assumptions = []
+        
+        workload_type = notebook_analysis.get('workload_type', 'unknown')
+        assumptions.append(f"Workload type: {workload_type}")
+        
+        if notebook_analysis.get('min_quantity', 1) > 1:
+            assumptions.append("Multi-GPU setup assumed for memory distribution")
+        
+        if not notebook_analysis.get('detected_models'):
+            assumptions.append("No specific models detected - using generic estimates")
+        
+        return assumptions
+
+    def generate_tiered_recommendations(self, vram_requirement, workload_type, use_case_context, consumer_viable=True):
+        """
+        Generate tiered recommendations like Windows power modes:
+        - Minimum: Power Saver (cheapest that works)
+        - Recommended: Balanced (best price/performance)
+        - Optimal: Performance (best performance within reason)
+        
+        Args:
+            vram_requirement: VRAM needed in GB
+            workload_type: Type of workload (training, inference, etc.)
+            use_case_context: Context about the use case
+            consumer_viable: Whether consumer GPUs are viable for this workload
+        """
+        recommendations = {}
+        
+        # MINIMUM - "Power Saver Mode" - Absolute cheapest that will work
+        min_gpu = self._find_minimum_viable_gpu_strict(vram_requirement, consumer_viable)
+        if min_gpu:
+            recommendations["budget_minimum"] = {
+                "gpu_name": min_gpu[0],
+                "specs": min_gpu[1],
+                "vram_gb": min_gpu[1]['vram'],
+                "category": min_gpu[1]['category'],
+                "use_case": "Minimum viable GPU - will work but may be slow",
+                "estimated_runtime_multiplier": 1.0 / min_gpu[1]['performance_factor']
+            }
+        
+        # RECOMMENDED - "Balanced Mode" - Best price/performance ratio
+        rec_gpu = self._find_balanced_gpu(vram_requirement, workload_type, consumer_viable)
+        if rec_gpu:
+            recommendations["recommended"] = {
+                "gpu_name": rec_gpu[0],
+                "specs": rec_gpu[1],
+                "vram_gb": rec_gpu[1]['vram'],
+                "category": rec_gpu[1]['category'],
+                "use_case": "Balanced price/performance - recommended for most users",
+                "estimated_runtime_multiplier": 1.0 / rec_gpu[1]['performance_factor']
+            }
+        
+        # OPTIMAL - "Performance Mode" - Best performance within reason
+        optimal_gpu = self._find_performance_gpu(vram_requirement, workload_type, consumer_viable)
+        if optimal_gpu:
+            recommendations["optimal"] = {
+                "gpu_name": optimal_gpu[0],
+                "specs": optimal_gpu[1],
+                "vram_gb": optimal_gpu[1]['vram'],
+                "category": optimal_gpu[1]['category'],
+                "use_case": "High performance within reasonable cost bounds",
+                "estimated_runtime_multiplier": 1.0 / optimal_gpu[1]['performance_factor']
+            }
+        
+        return recommendations
+
+    def provide_honest_assessment(self, notebook_analysis, vram_estimate, gpu_benefit_analysis):
+        """
+        Provide transparent, honest recommendations using GPU specs context
+        """
+        import math
+        
+        assessment = {
+            "requires_gpu": True,
+            "confidence_level": "high",
+            "honesty_factors": [],
+            "caveats": [],
+            "alternative_recommendations": []
+        }
+        
+        # CPU-only assessment based on GPU benefit analysis
+        if gpu_benefit_analysis['benefit_level'] == 'none':
+            assessment.update({
+                "requires_gpu": False,
+                "confidence_level": "high" if gpu_benefit_analysis['confidence'] > 0.8 else "medium",
+                "honesty_factors": [
+                    f"Workload appears CPU-optimized (confidence: {gpu_benefit_analysis['confidence']:.1%})",
+                    "GPU may provide minimal benefit for this workload"
+                ],
+                "alternative_recommendations": ["Consider CPU-only execution first", "Evaluate actual performance before GPU investment"]
+            })
+        elif gpu_benefit_analysis['benefit_level'] == 'beneficial':
+            assessment.update({
+                "requires_gpu": False,
+                "confidence_level": "medium",
+                "honesty_factors": [
+                    f"GPU provides moderate benefit (confidence: {gpu_benefit_analysis['confidence']:.1%})",
+                    f"Estimated speedup: {gpu_benefit_analysis['estimated_speedup']}"
+                ],
+                "alternative_recommendations": ["CPU execution is viable but slower", "GPU recommended for better performance"]
+            })
+        
+        # VRAM uncertainty flags
+        if vram_estimate["confidence"] < 0.7:
+            assessment["honesty_factors"].append(f"VRAM estimation has moderate uncertainty ({vram_estimate['confidence']:.1%} confidence)")
+            assessment["confidence_level"] = "medium"
+            assessment["caveats"].append("Monitor actual memory usage during execution")
+        
+        # GPU availability reality check
+        required_vram = vram_estimate["optimized_vram_estimate"]
+        available_gpus = [(name, specs['vram']) for name, specs in self.gpu_specs.items() if specs['vram'] >= required_vram]
+        
+        if not available_gpus:
+            assessment["honesty_factors"].append(f"Required {required_vram:.1f}GB exceeds largest available GPU")
+            assessment["alternative_recommendations"].append("Consider model optimization techniques or distributed computing")
+        
+        # Multi-GPU considerations
+        if required_vram > 80:  # Larger than single H100
+            multi_gpu_options = self._suggest_multi_gpu_options(required_vram)
+            assessment["alternative_recommendations"].extend(multi_gpu_options)
+        
+        return assessment
+
+    def _suggest_multi_gpu_options(self, total_vram_needed):
+        """Suggest multi-GPU configurations when single GPU isn't sufficient"""
+        import math
+        
+        suggestions = []
+        
+        # Find GPUs with NVLink for efficient multi-GPU
+        nvlink_gpus = {name: specs for name, specs in self.gpu_specs.items() if specs['nvlink']}
+        
+        for gpu_name, specs in nvlink_gpus.items():
+            num_gpus_needed = math.ceil(total_vram_needed / specs['vram'])
+            if num_gpus_needed <= specs['max_reasonable_quantity']:
+                suggestions.append(f"{num_gpus_needed}x {gpu_name} with NVLink ({num_gpus_needed * specs['vram']}GB total)")
+        
+        return suggestions
+
+    def format_recommendations_with_gpu_specs(self, recommendations, assessment, vram_estimate):
+        """
+        Format output using actual GPU specifications
+        """
+        output = {
+            "workload_assessment": {
+                "requires_gpu": assessment["requires_gpu"],
+                "confidence": assessment["confidence_level"],
+                "vram_estimate": {
+                    "base_requirement": vram_estimate["base_vram_estimate"],
+                    "optimized_requirement": vram_estimate["optimized_vram_estimate"],
+                    "confidence": vram_estimate["confidence"]
+                }
+            },
+            "gpu_recommendations": {},
+            "honest_assessment": assessment["honesty_factors"],
+            "caveats": assessment["caveats"],
+            "gpu_specs_used": True  # Flag that we're using the proper GPU database
+        }
+        
+        # Add each recommendation tier if available
+        for tier_name, rec in recommendations.items():
+            if rec:
+                output["gpu_recommendations"][tier_name] = {
+                    "gpu_model": rec["gpu_name"],
+                    "vram_gb": rec["vram_gb"],
+                    "category": rec["category"],
+                    "tier": rec["specs"]["tier"],
+                    "form_factor": rec["specs"]["form_factor"],
+                    "nvlink_support": rec["specs"]["nvlink"],
+                    "tensor_cores": rec["specs"]["tensor_cores"],
+                    "estimated_runtime_factor": rec["estimated_runtime_multiplier"],
+                    "use_case_description": rec["use_case"],
+                    "max_reasonable_quantity": rec["specs"]["max_reasonable_quantity"]
+                }
+        
+        # CPU-only recommendation
+        if not assessment["requires_gpu"]:
+            output["cpu_only_recommendation"] = {
+                "recommended": True,
+                "reasoning": "Analysis indicates CPU-optimized workload",
+                "performance_impact": "GPU would provide minimal benefit",
+                "cost_savings": "Significant cost savings vs GPU deployment"
+            }
+        
+        return output
+
+    def _find_minimum_viable_gpu_strict(self, vram_needed, consumer_viable=True):
+        """Find the absolute cheapest GPU that meets VRAM requirements"""
+        suitable_gpus = []
+        
+        for gpu_name, specs in self.gpu_specs.items():
+            if specs['vram'] >= vram_needed:
+                # Skip consumer GPUs if they're not viable for this workload
+                if not consumer_viable and specs['category'] == 'consumer':
+                    continue
+                    
+                # Calculate cost score (lower is cheaper)
+                cost_score = self._calculate_price_score(specs)
+                suitable_gpus.append((gpu_name, specs, cost_score))
+        
+        if suitable_gpus:
+            # Sort by cost (lowest first)
+            return sorted(suitable_gpus, key=lambda x: x[2])[0]
+        return None
+
+    def _find_balanced_gpu(self, vram_needed, workload_type, consumer_viable=True):
+        """Find GPU with best price/performance ratio"""
+        suitable_gpus = []
+        target_vram = vram_needed * 1.3  # 30% headroom for balanced mode
+        
+        for gpu_name, specs in self.gpu_specs.items():
+            if specs['vram'] >= target_vram:
+                # Skip consumer GPUs if they're not viable for this workload
+                if not consumer_viable and specs['category'] == 'consumer':
+                    continue
+                    
+                # Calculate efficiency score (performance per dollar)
+                cost_score = self._calculate_price_score(specs)
+                performance_score = specs['performance_factor']
+                
+                # Workload-specific bonuses
+                if workload_type == "training" and specs['tensor_cores']:
+                    performance_score *= 1.1
+                if workload_type == "inference" and specs['category'] == 'consumer':
+                    performance_score *= 1.05  # Slight preference for consumer in inference
+                
+                efficiency_score = performance_score / cost_score
+                suitable_gpus.append((gpu_name, specs, efficiency_score))
+        
+        if suitable_gpus:
+            # Sort by efficiency (highest first)
+            return sorted(suitable_gpus, key=lambda x: x[2], reverse=True)[0]
+        return None
+
+    def _find_performance_gpu(self, vram_needed, workload_type, consumer_viable=True):
+        """Find high-performance GPU within reasonable cost bounds"""
+        suitable_gpus = []
+        target_vram = vram_needed * 1.5  # 50% headroom for performance mode
+        
+        # Define "reasonable" cost bounds to avoid always recommending B200 SXM
+        max_reasonable_cost = 20.0  # Excludes ultra-expensive enterprise GPUs (H100+)
+        
+        for gpu_name, specs in self.gpu_specs.items():
+            if specs['vram'] >= target_vram:
+                # Skip consumer GPUs if they're not viable for this workload
+                if not consumer_viable and specs['category'] == 'consumer':
+                    continue
+                    
+                cost_score = self._calculate_price_score(specs)
+                
+                # Skip ultra-expensive GPUs unless workload truly requires them
+                if cost_score > max_reasonable_cost:
+                    # Only include if workload has specific enterprise requirements AND high VRAM needs
+                    if not (workload_type in ["training", "large_models"] and specs['nvlink'] and target_vram > 32):
+                        continue
+                
+                # Performance score with workload bonuses
+                performance_score = specs['performance_factor']
+                
+                if workload_type == "training":
+                    if specs['nvlink']:
+                        performance_score *= 1.2
+                    if specs['tensor_cores']:
+                        performance_score *= 1.15
+                elif workload_type == "inference":
+                    if specs['tier'] in ['flagship', 'high']:
+                        performance_score *= 1.1
+                
+                suitable_gpus.append((gpu_name, specs, performance_score))
+        
+        if suitable_gpus:
+            # Sort by performance (highest first)
+            return sorted(suitable_gpus, key=lambda x: x[2], reverse=True)[0]
+        return None
+
+    def _ensure_minimum_gpu_consistency(self, analysis: Dict):
+        """
+        Ensure minimum GPU is consistent with consumer viability.
+        If consumer GPUs are not viable, minimum should be enterprise too.
+        """
+        if not analysis.get('consumer_viable', True):
+            # Consumer is not viable, ensure minimum is enterprise
+            current_min_gpu = analysis.get('min_gpu_type', '')
+            consumer_cards = ['RTX 4060', 'RTX 4070', 'RTX 4080', 'RTX 4090', 'RTX 5080', 'RTX 5090']
+            
+            if current_min_gpu in consumer_cards:
+                # Upgrade minimum to enterprise card based on VRAM needs
+                vram_needed = analysis.get('min_vram_gb', 16)
+                if vram_needed <= 24:
+                    analysis['min_gpu_type'] = 'L4'
+                    analysis['min_vram_gb'] = 24
+                elif vram_needed <= 48:
+                    analysis['min_gpu_type'] = 'L40S'
+                    analysis['min_vram_gb'] = 48
+                else:
+                    analysis['min_gpu_type'] = 'A100 PCIe 80G'
+                    analysis['min_vram_gb'] = 80
+                
+                # Add reasoning for the upgrade
+                analysis['reasoning'].append(f"Upgraded minimum GPU from {current_min_gpu} to {analysis['min_gpu_type']} since recommended GPUs are not viable")
+
+    def _ensure_consumer_fields_populated(self, analysis: Dict):
+        """
+        Ensure consumer/recommended fields are never null in the new 3-tier system.
+        With the new approach, we always show 3 tiers when GPUs are beneficial.
+        CRITICAL: Respect consumer viability - if consumer not viable, all tiers should be enterprise.
+        """
+        # If consumer_gpu_type is set but quantity/runtime are null, populate them
+        if analysis.get('consumer_gpu_type') and not analysis.get('consumer_quantity'):
+            analysis['consumer_quantity'] = analysis.get('min_quantity', 1)
+            
+        if analysis.get('consumer_gpu_type') and not analysis.get('consumer_runtime_estimate'):
+            analysis['consumer_runtime_estimate'] = analysis.get('min_runtime_estimate', '30-60 minutes')
+            
+        # NEW 3-TIER APPROACH: Always ensure consumer fields are populated if GPU workload detected
+        # BUT respect consumer viability
+        if not analysis.get('consumer_gpu_type') and analysis.get('min_gpu_type') and analysis.get('min_gpu_type') != 'CPU-only':
+            consumer_viable = analysis.get('consumer_viable', True)
+            
+            if consumer_viable:
+                # Consumer viable - use minimum as fallback for recommended tier
+                analysis['consumer_gpu_type'] = analysis.get('min_gpu_type')
+                analysis['consumer_quantity'] = analysis.get('min_quantity', 1)
+                analysis['consumer_vram_gb'] = analysis.get('min_vram_gb', 8)
+                analysis['consumer_runtime_estimate'] = analysis.get('min_runtime_estimate', '30-60 minutes')
+                
+                # Set viability based on GPU category
+                consumer_cards = ['RTX 4060', 'RTX 4070', 'RTX 4080', 'RTX 4090', 'RTX 5080', 'RTX 5090']
+                if analysis.get('min_gpu_type') in consumer_cards:
+                    analysis['consumer_viable'] = True
+                    analysis['consumer_limitation'] = None
+                else:
+                    analysis['consumer_viable'] = False
+                    analysis['consumer_limitation'] = f"Workload optimized for enterprise hardware - consumer alternatives may be slower"
+            else:
+                # Consumer NOT viable - ensure recommended tier is also enterprise
+                # Use enterprise/optimal GPU for the recommended tier
+                enterprise_gpu = analysis.get('enterprise_gpu_type') or analysis.get('optimal_gpu_type')
+                if enterprise_gpu:
+                    analysis['consumer_gpu_type'] = enterprise_gpu
+                    analysis['consumer_quantity'] = analysis.get('enterprise_quantity') or analysis.get('optimal_quantity', 1)
+                    analysis['consumer_vram_gb'] = analysis.get('enterprise_vram_gb') or analysis.get('optimal_vram_gb', 48)
+                    analysis['consumer_runtime_estimate'] = analysis.get('enterprise_runtime_estimate') or analysis.get('optimal_runtime_estimate', '15-30 minutes')
+                else:
+                    # Fallback to minimum if no enterprise GPU set (shouldn't happen but safety)
+                    analysis['consumer_gpu_type'] = analysis.get('min_gpu_type')
+                    analysis['consumer_quantity'] = analysis.get('min_quantity', 1)
+                    analysis['consumer_vram_gb'] = analysis.get('min_vram_gb', 48)
+                    analysis['consumer_runtime_estimate'] = analysis.get('min_runtime_estimate', '30-60 minutes')
+                
+                # Ensure viability is set correctly
+                analysis['consumer_viable'] = False
+
 # Environment detection for optimization
 def is_production_environment():
     """Detect if running in production environment (Vercel, etc.)"""
@@ -3768,6 +5054,9 @@ def is_production_environment():
 
 def get_environment_config():
     """Get configuration based on environment"""
+    # Check for debug flag that forces detailed phases
+    force_detailed_phases = os.getenv('DEBUG_DETAILED_PHASES', '').lower() == 'true'
+    
     if is_production_environment():
         # Check if we're on Vercel Pro (has more resources)
         # Vercel doesn't always set VERCEL_PLAN, so we use multiple detection methods
@@ -3800,7 +5089,7 @@ def get_environment_config():
             return {
                 'llm_timeout': 15,  # Shorter timeout for free plan
                 'progress_batching': True,  # Batch progress messages
-                'detailed_phases': False,  # Simplified progress for free plan
+                'detailed_phases': force_detailed_phases,  # Allow debug override
                 'self_review_enabled': False,  # Disable self-review on free plan
                 'max_content_length': 8000,  # Smaller content limit
                 'connection_timeout': 10,

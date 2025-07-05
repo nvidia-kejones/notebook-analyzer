@@ -198,6 +198,17 @@
         }
         
         /* Light mode reasoning items (explicit) */
+        
+        /* Fix alert-warning dark mode visibility */
+        [data-bs-theme="dark"] .alert-warning {
+            background-color: rgba(255, 193, 7, 0.15) !important;
+            border-color: rgba(255, 193, 7, 0.3) !important;
+            color: #ffc107 !important;
+        }
+        
+        [data-bs-theme="dark"] .alert-warning .bi-info-circle {
+            color: #ffc107 !important;
+        }
         [data-bs-theme="light"] .reasoning-item {
             background-color: #f8f9fa !important;
             color: #212529 !important;

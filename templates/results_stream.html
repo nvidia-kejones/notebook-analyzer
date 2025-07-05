@@ -110,57 +110,26 @@ function displayResults(data) {
                                 </h5>
                             </div>
                             <div class="card-body">
+                                ${analysis.min_gpu && analysis.min_gpu.type === 'CPU-only' ? `
+                                <div class="alert alert-info mb-3">
+                                    <div class="d-flex align-items-center">
+                                        <i class="bi bi-cpu fs-4 me-3 text-info"></i>
+                                        <div>
+                                            <h6 class="mb-1">CPU-Optimized Workload Detected</h6>
+                                            <small class="mb-0">This notebook is designed for CPU execution and does not require GPU acceleration.</small>
+                                        </div>
+                                    </div>
+                                </div>
+                                ` : ''}
                                 <div class="row">
                                     <!-- Minimum Configuration -->
-                                    <div class="col-md-4 mb-3">
-                                        <div class="border-start border-warning border-3 ps-3">
-                                            <h6 class="text-warning mb-2">
-                                                <i class="bi bi-shield-fill-exclamation me-1"></i>
-                                                Minimum Requirements
-                                            </h6>
-                                            <div class="mb-2">
-                                                <strong>GPU:</strong> 
-                                                <span class="badge bg-warning text-dark ms-1">${analysis.min_gpu.type}</span>
-                                            </div>
-                                            <div class="mb-2">
-                                                <strong>Quantity:</strong> ${analysis.min_gpu.quantity}
-                                            </div>
-                                            <div class="mb-2">
-                                                <strong>VRAM:</strong> ${analysis.min_gpu.vram_gb} GB
-                                            </div>
-                                            <div class="mb-0">
-                                                <strong>Runtime:</strong> 
-                                                <span class="text-muted">${analysis.min_gpu.runtime}</span>
-                                            </div>
-                                        </div>
-                                    </div>
+                                    ${getMinimumColumn(analysis)}
 
-                                    <!-- Consumer Optimal Configuration -->
-                                    ${getConsumerOptimalColumn(analysis)}
+                                    <!-- Recommended Configuration -->
+                                    ${getRecommendedColumn(analysis)}
 
-                                    <!-- Enterprise Optimal Configuration -->
-                                    <div class="col-md-4 mb-3">
-                                        <div class="border-start border-success border-3 ps-3">
-                                            <h6 class="text-success mb-2">
-                                                <i class="bi bi-building me-1"></i>
-                                                Enterprise Optimal
-                                            </h6>
-                                            <div class="mb-2">
-                                                <strong>GPU:</strong> 
-                                                <span class="badge bg-success ms-1">${analysis.enterprise_gpu.type}</span>
-                                            </div>
-                                            <div class="mb-2">
-                                                <strong>Quantity:</strong> ${analysis.enterprise_gpu.quantity}
-                                            </div>
-                                            <div class="mb-2">
-                                                <strong>VRAM:</strong> ${analysis.enterprise_gpu.vram_gb} GB
-                                            </div>
-                                            <div class="mb-0">
-                                                <strong>Runtime:</strong> 
-                                                <span class="text-muted">${analysis.enterprise_gpu.runtime}</span>
-                                            </div>
-                                        </div>
-                                    </div>
+                                    <!-- Optimal Configuration -->
+                                    ${getOptimalColumn(analysis)}
                                 </div>
 
                                 <!-- Additional Requirements -->
@@ -248,27 +217,27 @@ function displayResults(data) {
                                     </button>
                                 </div>
                                 <div class="collapse mt-3" id="methodologyCollapse">
-                                    <div class="alert alert-info">
-                                        <h6 class="alert-heading">
+                                    <div class="methodology-panel">
+                                        <h6 class="methodology-heading">
                                             <i class="bi bi-gear me-1"></i>
                                             Analysis Methodology
                                         </h6>
                                         <p class="mb-2">
                                             <strong>Three-Stage Analysis:</strong> Our analyzer uses a comprehensive approach combining static pattern detection, AI enhancement, and self-review validation.
                                         </p>
-                                        <hr class="my-2">
-                                        <ul class="mb-2 small">
+                                        <hr class="methodology-divider">
+                                        <ul class="mb-2 small methodology-list">
                                             <li><strong>Static Analysis:</strong> Scans code for GPU frameworks, model patterns, and workload indicators</li>
                                             <li><strong>AI Enhancement:</strong> Uses LLM to understand context, model complexity, and optimization techniques</li>
                                             <li><strong>Self-Review:</strong> AI acts as a "teacher grading its work" to identify inconsistencies and ensure recommendations are logical and bounded</li>
                                             <li><strong>Confidence Scoring:</strong> Combines pattern certainty with LLM agreement for overall confidence</li>
                                         </ul>
-                                        <div class="small text-muted">
+                                        <div class="small confidence-indicators">
                                             <i class="bi bi-check-circle-fill text-success me-1"></i> High confidence: Clear patterns detected
                                             <br>
                                             <i class="bi bi-check-circle text-warning me-1"></i> Medium confidence: Partial indicators found
                                             <br>
-                                            <i class="bi bi-question-circle text-muted me-1"></i> Low confidence: Estimated or uncertain
+                                            <i class="bi bi-question-circle confidence-low-icon me-1"></i> Low confidence: Estimated or uncertain
                                         </div>
                                     </div>
                                 </div>
@@ -381,14 +350,28 @@ function generateApiResponse(data) {
                 vram_gb: analysis.min_gpu.vram_gb,
                 runtime: analysis.min_gpu.runtime
             },
-            consumer_gpu: analysis.consumer_viable ? {
+            recommended_gpu: (analysis.recommended_viable && analysis.recommended_gpu) ? {
+                type: analysis.recommended_gpu.type,
+                quantity: analysis.recommended_gpu.quantity,
+                vram_gb: analysis.recommended_gpu.vram_gb,
+                runtime: analysis.recommended_gpu.runtime
+            } : null,
+            consumer_gpu: (analysis.consumer_viable && analysis.consumer_gpu) ? {
                 type: analysis.consumer_gpu.type,
                 quantity: analysis.consumer_gpu.quantity,
                 vram_gb: analysis.consumer_gpu.vram_gb,
                 runtime: analysis.consumer_gpu.runtime
             } : null,
+            recommended_viable: analysis.recommended_viable,
+            recommended_limitation: analysis.recommended_limitation,
             consumer_viable: analysis.consumer_viable,
             consumer_limitation: analysis.consumer_limitation,
+            optimal_gpu: {
+                type: analysis.optimal_gpu.type,
+                quantity: analysis.optimal_gpu.quantity,
+                vram_gb: analysis.optimal_gpu.vram_gb,
+                runtime: analysis.optimal_gpu.runtime
+            },
             enterprise_gpu: {
                 type: analysis.enterprise_gpu.type,
                 quantity: analysis.enterprise_gpu.quantity,
@@ -510,20 +493,32 @@ function createShareableText(analysis, sourceName, sourceType) {
     let text = `🚀 **GPU Analysis Results**
 ${sourceInfo}
 
-**💾 Minimum Requirements:**
+**💾 Minimum Configuration:**
 • GPU: ${analysis.min_gpu.type}
 • Quantity: ${analysis.min_gpu.quantity}
 • VRAM: ${analysis.min_gpu.vram_gb} GB
 • Runtime: ${analysis.min_gpu.runtime}
 
-**🎮 Consumer Optimal:**`;
+**🎯 Recommended:**`;
 
-    if (analysis.consumer_viable && analysis.consumer_gpu) {
+    // Handle CPU-only workloads
+    if (!analysis.consumer_gpu || analysis.consumer_gpu.type === 'CPU-only') {
+        text += `
+• Processing: CPU-Only
+• GPU Required: No
+• VRAM: 0 GB
+• Runtime: CPU execution`;
+    } else if (analysis.consumer_gpu) {
         text += `
 • GPU: ${analysis.consumer_gpu.type}
 • Quantity: ${analysis.consumer_gpu.quantity}
 • VRAM: ${analysis.consumer_gpu.vram_gb} GB
 • Runtime: ${analysis.consumer_gpu.runtime}`;
+        
+        // Add limitation note only for actual GPU workloads that have limitations
+        if (!analysis.consumer_viable && analysis.consumer_limitation) {
+            text += `\n• Note: ${analysis.consumer_limitation}`;
+        }
     } else {
         text += `
 • Not Recommended${analysis.consumer_limitation ? '\n• Reason: ' + analysis.consumer_limitation : ''}`;
@@ -531,11 +526,11 @@ ${sourceInfo}
 
     text += `
 
-**🏢 Enterprise Optimal:**
-• GPU: ${analysis.enterprise_gpu.type}
-• Quantity: ${analysis.enterprise_gpu.quantity}
-• VRAM: ${analysis.enterprise_gpu.vram_gb} GB
-• Runtime: ${analysis.enterprise_gpu.runtime}
+**⭐ Optimal:**
+• GPU: ${analysis.enterprise_gpu && analysis.enterprise_gpu.type ? analysis.enterprise_gpu.type : 'CPU-only'}
+• Quantity: ${analysis.enterprise_gpu ? analysis.enterprise_gpu.quantity : 0}
+• VRAM: ${analysis.enterprise_gpu ? analysis.enterprise_gpu.vram_gb : 0} GB
+• Runtime: ${analysis.enterprise_gpu && analysis.enterprise_gpu.runtime ? analysis.enterprise_gpu.runtime : 'CPU execution'}
 
 **📊 Technical Details:**
 • SXM Required: ${analysis.sxm_required ? 'Yes' : 'No'}
@@ -557,7 +552,10 @@ ${sourceInfo}
         const title = analysis.llm_reasoning && analysis.llm_reasoning.length > 0 ? 
             'Static Analysis Details' : 'Key Analysis Points';
         text += `\n\n**🔍 ${title}:**`;
-        analysis.reasoning.slice(0, 5).forEach(reason => {
+        
+        // Remove duplicates and limit to 5 items
+        const uniqueReasons = [...new Set(analysis.reasoning)];
+        uniqueReasons.slice(0, 5).forEach(reason => {
             text += `\n• ${reason}`;
         });
     }
@@ -926,53 +924,178 @@ function extractVRAMFromText(text) {
     return vramMatch ? parseInt(vramMatch[1]) : 0;
 }
 
-function getConsumerOptimalColumn(analysis) {
-    if (analysis.consumer_viable && analysis.consumer_gpu) {
+function getRecommendedColumn(analysis) {
+    // Handle CPU-only workloads where consumer_gpu is null
+    if (!analysis.consumer_gpu || analysis.consumer_gpu.type === 'CPU-only') {
         return `
             <div class="col-md-4 mb-3">
-                <div class="border-start border-primary border-3 ps-3">
-                    <h6 class="text-primary mb-2">
-                        <i class="bi bi-controller me-1"></i>
-                        Consumer Optimal
+                <div class="border-start border-info border-3 ps-3">
+                    <h6 class="text-info mb-2">
+                        <i class="bi bi-cpu me-1"></i>
+                        CPU-Only
                     </h6>
                     <div class="mb-2">
-                        <strong>GPU:</strong> 
-                        <span class="badge bg-primary ms-1">${analysis.consumer_gpu.type}</span>
+                        <strong>Processing:</strong> 
+                        <span class="badge bg-info ms-1">CPU Optimized</span>
                     </div>
                     <div class="mb-2">
-                        <strong>Quantity:</strong> ${analysis.consumer_gpu.quantity}
+                        <strong>GPU Required:</strong> No
                     </div>
                     <div class="mb-2">
-                        <strong>VRAM:</strong> ${analysis.consumer_gpu.vram_gb} GB
+                        <strong>VRAM:</strong> 0 GB
                     </div>
-                    <div class="mb-0">
-                        <strong>Runtime:</strong> 
-                        <span class="text-muted">${analysis.consumer_gpu.runtime}</span>
-                    </div>
-                </div>
-            </div>
-        `;
-    } else {
-        return `
-            <div class="col-md-4 mb-3">
-                <div class="border-start border-secondary border-3 ps-3">
-                    <h6 class="text-secondary mb-2">
-                        <i class="bi bi-controller me-1"></i>
-                        Consumer Optimal
-                    </h6>
-                    <div class="text-muted">
-                        <i class="bi bi-x-circle me-1"></i>
-                        Not Recommended
-                    </div>
-                    ${analysis.consumer_limitation ? `
-                    <div class="small text-muted mt-2">
-                        ${analysis.consumer_limitation}
-                    </div>
-                    ` : ''}
+                                                <div class="mb-0">
+                                <strong>Runtime:</strong> 
+                                <span class="text-muted">CPU execution</span>
+                            </div>
                 </div>
             </div>
         `;
     }
+    
+    // With the 3-tier system, there should always be a recommended GPU for any GPU workload
+    return `
+        <div class="col-md-4 mb-3">
+            <div class="border-start border-primary border-3 ps-3">
+                <h6 class="text-primary mb-2">
+                    <i class="bi bi-award me-1"></i>
+                    Recommended
+                </h6>
+                <div class="mb-2">
+                    <strong>GPU:</strong> 
+                    <span class="badge bg-primary ms-1">${analysis.consumer_gpu.type}</span>
+                </div>
+                <div class="mb-2">
+                    <strong>Quantity:</strong> ${analysis.consumer_gpu.quantity}
+                </div>
+                <div class="mb-2">
+                    <strong>VRAM:</strong> ${analysis.consumer_gpu.vram_gb} GB
+                </div>
+                <div class="mb-0">
+                    <strong>Runtime:</strong> 
+                    <span class="text-muted">${analysis.consumer_gpu.runtime}</span>
+                </div>
+                ${!analysis.consumer_viable && analysis.consumer_limitation && analysis.consumer_gpu.type !== 'CPU-only' ? `
+                <div class="small text-muted mt-2">
+                    <i class="bi bi-info-circle me-1"></i>
+                    ${analysis.consumer_limitation}
+                </div>
+                ` : ''}
+            </div>
+        </div>
+    `;
+}
+
+function getMinimumColumn(analysis) {
+    // Handle CPU-only workloads
+    if (analysis.min_gpu.type === 'CPU-only') {
+        return `
+            <div class="col-md-4 mb-3">
+                <div class="border-start border-info border-3 ps-3">
+                    <h6 class="text-info mb-2">
+                        <i class="bi bi-cpu me-1"></i>
+                        CPU-Only
+                    </h6>
+                    <div class="mb-2">
+                        <strong>Processing:</strong> 
+                        <span class="badge bg-info ms-1">CPU Optimized</span>
+                    </div>
+                    <div class="mb-2">
+                        <strong>GPU Required:</strong> No
+                    </div>
+                    <div class="mb-2">
+                        <strong>VRAM:</strong> 0 GB
+                    </div>
+                    <div class="mb-0">
+                        <strong>Runtime:</strong> 
+                        <span class="text-muted">${analysis.min_gpu.runtime}</span>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+    
+    // Regular GPU workload
+    return `
+        <div class="col-md-4 mb-3">
+            <div class="border-start border-warning border-3 ps-3">
+                <h6 class="text-warning mb-2">
+                    <i class="bi bi-shield-fill-exclamation me-1"></i>
+                    Minimum
+                </h6>
+                <div class="mb-2">
+                    <strong>GPU:</strong> 
+                    <span class="badge bg-warning text-dark ms-1">${analysis.min_gpu.type}</span>
+                </div>
+                <div class="mb-2">
+                    <strong>Quantity:</strong> ${analysis.min_gpu.quantity}
+                </div>
+                <div class="mb-2">
+                    <strong>VRAM:</strong> ${analysis.min_gpu.vram_gb} GB
+                </div>
+                <div class="mb-0">
+                    <strong>Runtime:</strong> 
+                    <span class="text-muted">${analysis.min_gpu.runtime}</span>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function getOptimalColumn(analysis) {
+    // Handle CPU-only workloads
+    if (!analysis.enterprise_gpu || analysis.enterprise_gpu.type === '' || analysis.enterprise_gpu.type === 'CPU-only') {
+        return `
+            <div class="col-md-4 mb-3">
+                <div class="border-start border-info border-3 ps-3">
+                    <h6 class="text-info mb-2">
+                        <i class="bi bi-cpu me-1"></i>
+                        CPU-Only
+                    </h6>
+                    <div class="mb-2">
+                        <strong>Processing:</strong> 
+                        <span class="badge bg-info ms-1">CPU Optimized</span>
+                    </div>
+                    <div class="mb-2">
+                        <strong>GPU Required:</strong> No
+                    </div>
+                    <div class="mb-2">
+                        <strong>VRAM:</strong> 0 GB
+                    </div>
+                    <div class="mb-0">
+                        <strong>Runtime:</strong> 
+                        <span class="text-muted">CPU execution</span>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+    
+    // Regular GPU workload
+    return `
+        <div class="col-md-4 mb-3">
+            <div class="border-start border-success border-3 ps-3">
+                <h6 class="text-success mb-2">
+                    <i class="bi bi-star me-1"></i>
+                    Optimal
+                </h6>
+                <div class="mb-2">
+                    <strong>GPU:</strong> 
+                    <span class="badge bg-success ms-1">${analysis.enterprise_gpu.type}</span>
+                </div>
+                <div class="mb-2">
+                    <strong>Quantity:</strong> ${analysis.enterprise_gpu.quantity}
+                </div>
+                <div class="mb-2">
+                    <strong>VRAM:</strong> ${analysis.enterprise_gpu.vram_gb} GB
+                </div>
+                <div class="mb-0">
+                    <strong>Runtime:</strong> 
+                    <span class="text-muted">${analysis.enterprise_gpu.runtime}</span>
+                </div>
+            </div>
+        </div>
+    `;
 }
 
 function getArmCompatibilityBadge(compatibility) {
@@ -1246,6 +1369,126 @@ function showFriendlyMessage() {
 .analysis-section h6 {
     font-size: 0.95rem;
     font-weight: 600;
+}
+
+/* Light and dark mode methodology panel styles */
+.methodology-panel {
+    padding: 1.25rem 1.5rem;
+    border-radius: 0.75rem;
+    border: 1px solid #d1d5db;
+    background-color: #f9fafb;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
+    margin-bottom: 1rem;
+    color: #111827;
+}
+
+.methodology-heading {
+    color: #1f2937;
+    margin-bottom: 1rem;
+    font-weight: 600;
+    font-size: 1.1rem;
+}
+
+.methodology-divider {
+    border-top: 1px solid #d1d5db;
+    margin: 1rem 0;
+    opacity: 1;
+}
+
+.methodology-list {
+    margin-bottom: 1rem;
+}
+
+.methodology-list li {
+    margin-bottom: 0.75rem;
+    line-height: 1.5;
+    color: #374151;
+}
+
+.methodology-list li strong {
+    color: #111827;
+    font-weight: 600;
+}
+
+.confidence-indicators {
+    color: #374151;
+    line-height: 1.8;
+    font-size: 0.9rem;
+}
+
+.confidence-low-icon {
+    color: #6b7280;
+}
+
+/* Dark mode overrides */
+@media (prefers-color-scheme: dark) {
+    .methodology-panel {
+        background-color: #1f2937 !important;
+        border-color: #374151 !important;
+        color: #f9fafb !important;
+    }
+    
+    .methodology-heading {
+        color: #f9fafb !important;
+    }
+    
+    .methodology-divider {
+        border-top-color: #4b5563 !important;
+    }
+    
+    .confidence-indicators {
+        color: #e5e7eb !important;
+    }
+    
+    .confidence-low-icon {
+        color: #9ca3af !important;
+    }
+    
+    .methodology-list li {
+        color: #e5e7eb !important;
+    }
+    
+    .methodology-list li strong {
+        color: #f9fafb !important;
+    }
+}
+
+/* Force dark mode styles when body has dark theme */
+body[data-bs-theme="dark"] .methodology-panel,
+.dark .methodology-panel {
+    background-color: #1f2937 !important;
+    border-color: #374151 !important;
+    color: #f9fafb !important;
+}
+
+body[data-bs-theme="dark"] .methodology-heading,
+.dark .methodology-heading {
+    color: #f9fafb !important;
+}
+
+body[data-bs-theme="dark"] .methodology-divider,
+.dark .methodology-divider {
+    border-top-color: #4b5563 !important;
+}
+
+body[data-bs-theme="dark"] .confidence-indicators,
+.dark .confidence-indicators {
+    color: #e5e7eb !important;
+}
+
+body[data-bs-theme="dark"] .confidence-low-icon,
+.dark .confidence-low-icon {
+    color: #9ca3af !important;
+}
+
+body[data-bs-theme="dark"] .methodology-list li,
+.dark .methodology-list li {
+    color: #e5e7eb !important;
+}
+
+body[data-bs-theme="dark"] .methodology-list strong,
+.dark .methodology-list strong {
+    color: #f9fafb !important;
 }
 </style>
 {% endblock %} 

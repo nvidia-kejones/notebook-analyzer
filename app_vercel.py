@@ -197,28 +197,35 @@ def format_analysis_for_web(analysis) -> dict:
         'confidence_factors': analysis.confidence_factors or []
     }
     
-    # Add consumer GPU recommendation if available
-    if analysis.consumer_gpu_type:
-        formatted_data['consumer_gpu'] = {
-            'type': analysis.consumer_gpu_type,
-            'quantity': analysis.consumer_quantity,
-            'vram_gb': analysis.consumer_vram_gb,
-            'runtime': analysis.consumer_runtime_estimate
+    # Add recommended GPU (formerly consumer) - maintain backward compatibility
+    if analysis.recommended_gpu_type:
+        recommended_gpu = {
+            'type': analysis.recommended_gpu_type,
+            'quantity': analysis.recommended_quantity,
+            'vram_gb': analysis.recommended_vram_gb,
+            'runtime': analysis.recommended_runtime_estimate
         }
+        formatted_data['recommended_gpu'] = recommended_gpu
+        formatted_data['consumer_gpu'] = recommended_gpu  # Backward compatibility
     else:
+        formatted_data['recommended_gpu'] = None
         formatted_data['consumer_gpu'] = None
     
-    # Add consumer viability information
-    formatted_data['consumer_viable'] = analysis.consumer_viable
-    formatted_data['consumer_limitation'] = analysis.consumer_limitation
+    # Add recommended viability info (with backward compatibility)
+    formatted_data['recommended_viable'] = analysis.recommended_viable
+    formatted_data['recommended_limitation'] = analysis.recommended_limitation
+    formatted_data['consumer_viable'] = analysis.recommended_viable  # Backward compatibility
+    formatted_data['consumer_limitation'] = analysis.recommended_limitation  # Backward compatibility
     
-    # Add enterprise GPU recommendation
-    formatted_data['enterprise_gpu'] = {
-        'type': analysis.enterprise_gpu_type,
-        'quantity': analysis.enterprise_quantity,
-        'vram_gb': analysis.enterprise_vram_gb,
-        'runtime': analysis.enterprise_runtime_estimate
+    # Add optimal GPU (formerly enterprise) - maintain backward compatibility
+    optimal_gpu = {
+        'type': analysis.optimal_gpu_type,
+        'quantity': analysis.optimal_quantity,
+        'vram_gb': analysis.optimal_vram_gb,
+        'runtime': analysis.optimal_runtime_estimate
     }
+    formatted_data['optimal_gpu'] = optimal_gpu
+    formatted_data['enterprise_gpu'] = optimal_gpu  # Backward compatibility
     
     return formatted_data
 
@@ -623,6 +630,9 @@ def analyze_stream():
                         batch_buffer.clear()
             else:
                 def progress_callback(message: str) -> None:
+                    # Debug: Log all progress messages being queued
+                    if "Issue" in message or "⚠️" in message:
+                        print(f"🔍 STREAM DEBUG: Queueing issue message: {message}")
                     progress_queue.put(message)
                 
                 def flush_batch():
@@ -657,6 +667,9 @@ def analyze_stream():
                 try:
                     # Get progress message with timeout
                     message = progress_queue.get(timeout=0.1)
+                    # Debug: Log issue messages being yielded
+                    if "Issue" in message or "⚠️" in message:
+                        print(f"🔍 STREAM DEBUG: Yielding issue message: {message}")
                     yield f"data: {json.dumps({'type': 'progress', 'message': message})}\n\n"
                 except queue.Empty:
                     # Continue checking if analysis is complete
@@ -1247,7 +1260,7 @@ def mcp_endpoint():
                                     {
                                         'type': 'text',
                                         'text': f"GPU Analysis Results for: {source_display}\n\n" +
-                                               f"**Minimum Requirements:**\n" +
+                                               f"**Minimum Configuration:**\n" +
                                                f"- GPU: {analysis_data['min_gpu']['type']}\n" +
                                                f"- Quantity: {analysis_data['min_gpu']['quantity']}\n" +
                                                f"- VRAM: {analysis_data['min_gpu']['vram_gb']} GB\n" +

@@ -499,6 +499,8 @@ document.addEventListener('DOMContentLoaded', function() {
                     background: rgba(118, 185, 0, 0.1) !important;
                 }
                 
+
+                
                 .btn-outline-nvidia {
                     color: var(--nvidia-green);
                     border-color: var(--nvidia-green);
@@ -668,6 +670,8 @@ document.addEventListener('DOMContentLoaded', function() {
                                 data.message.includes('✅ Self-review passed') ||
                                 data.message.includes('🔧 Self-review found issues') ||
                                 data.message.includes('⚠️ Issue identified') ||
+                                data.message.includes('⚠️ Issue ') ||
+                                data.message.includes('📋 Found') ||
                                 data.message.includes('⚠️ Plus') ||
                                 data.message.includes('🔧 Correcting workload') ||
                                 data.message.includes('🔧 Adjusting confidence') ||
@@ -677,12 +681,23 @@ document.addEventListener('DOMContentLoaded', function() {
                                 data.message.includes('⚠️ Self-review parsing') ||
                                 data.message.includes('⚡ Enhancing GPU recommendations') ||
                                 data.message.includes('Evaluating workload complexity');
+
+            // Check if this is a self-review message (needs special highlighting)
+            const isSelfReviewMessage = data.message.includes('🎓') || 
+                                       data.message.includes('🔧 Self-review') ||
+                                       data.message.includes('🔧 Correcting') ||
+                                       data.message.includes('🔧 Adjusting') ||
+                                       data.message.includes('🔧 Updating') ||
+                                       data.message.includes('✅ Self-review') ||
+                                       data.message.includes('🎯 Phase 6: Analyzing self-review');
             
             if (isLlmMessage) {
                 // Show the LLM analysis section if it's hidden
                 if (llmAnalysisSection.style.display === 'none') {
                     llmAnalysisSection.style.display = 'block';
                 }
+                
+                // Auto-expansion removed per user request
                 
                 // Add to LLM progress log
                 const llmLogEntry = document.createElement('div');
@@ -693,8 +708,13 @@ document.addEventListener('DOMContentLoaded', function() {
                 
                 // Also add to main progress log but with different styling
                 const logEntry = document.createElement('div');
-                logEntry.className = 'progress-step llm-main-step';
-                logEntry.innerHTML = `<i class="bi bi-robot text-nvidia me-1"></i>${data.message}`;
+                if (isSelfReviewMessage) {
+                    logEntry.className = 'progress-step llm-main-step';
+                    logEntry.innerHTML = `<i class="bi bi-robot text-nvidia me-1"></i>${data.message}`;
+                } else {
+                    logEntry.className = 'progress-step llm-main-step';
+                    logEntry.innerHTML = `<i class="bi bi-robot text-nvidia me-1"></i>${data.message}`;
+                }
                 progressLog.appendChild(logEntry);
             } else {
                 // Regular progress message

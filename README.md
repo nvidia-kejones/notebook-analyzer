@@ -239,7 +239,7 @@ See `MCP_README.md` for detailed integration instructions.
 GPU REQUIREMENTS ANALYSIS
 ======================================================================
 
-📊 MINIMUM REQUIREMENTS:
+📊 MINIMUM Configuration:
    GPU Type: L4
    Quantity: 1
    VRAM: 24 GB
