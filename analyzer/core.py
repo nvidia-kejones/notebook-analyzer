@@ -1460,9 +1460,10 @@ Respond in JSON format:
         corrected_analysis = preliminary_analysis.copy()
         final_reasoning = []
         
-        # Apply recommended corrections if review didn't pass
-        if not self_review.get('review_passed', True):
-            corrections = self_review.get('recommended_corrections', {})
+        # Apply recommended corrections regardless of review status
+        # Self-review can provide corrections even when the review "passes"
+        corrections = self_review.get('recommended_corrections', {})
+        if corrections:
             
             # Apply workload type correction
             if 'workload_type' in corrections:
@@ -2558,7 +2559,7 @@ class GPUAnalyzer:
                     # Same hardware - use consumer runtime for consistency
                     static_analysis['min_runtime_estimate'] = static_analysis['consumer_runtime_estimate']
                 
-                # Recalculate confidence with LLM context
+                # Let LLM confidence take precedence over static analysis for CPU-only workloads
                 enhanced_confidence = self._calculate_dynamic_confidence(static_analysis, llm_context)
                 static_analysis['confidence'] = enhanced_confidence
                 
@@ -2582,13 +2583,16 @@ class GPUAnalyzer:
                     # Update analysis with corrected values
                     static_analysis.update(corrected_analysis)
                     
-                    # Replace reasoning with unified reasoning from self-review
+                    # Keep original static reasoning, but replace LLM reasoning with unified reasoning from self-review
                     llm_reasoning = final_reasoning
                     
                     if not self.quiet_mode:
                         review_status = "passed" if self_review.get('review_passed', True) else "corrected issues"
                         print(f"✅ Self-review {review_status} - enhanced accuracy and consistency")
                 else:
+                    # If no self-review, recalculate confidence one more time with final LLM context
+                    final_confidence = self._calculate_dynamic_confidence(static_analysis, llm_context)
+                    static_analysis['confidence'] = final_confidence
                     self_review = None
         
         # Evaluate NVIDIA Best Practices compliance
@@ -2805,7 +2809,7 @@ class GPUAnalyzer:
         # Update analysis based on GPU benefit level
         benefit_level = gpu_benefit_analysis['benefit_level']
         
-        # CRITICAL FIX: Use confidence from GPU benefit analysis instead of the static 0.7
+        # CRITICAL FIX: Use confidence from GPU benefit analysis as the baseline
         analysis['confidence'] = gpu_benefit_analysis['confidence']
         
         if benefit_level == 'none':
@@ -3617,10 +3621,9 @@ class GPUAnalyzer:
             analysis['optimal_vram_gb'] = 0
             analysis['optimal_runtime_estimate'] = 'CPU execution'
             
-            # Update workload type and reasoning
+            # Update workload type (reasoning already added in _perform_static_analysis)
             analysis['workload_type'] = gpu_benefit_analysis['workload_type']
-            analysis['reasoning'].extend(gpu_benefit_analysis['reasoning'])
-            analysis['reasoning'].append(f"Confidence: {gpu_benefit_analysis['confidence']:.1%}")
+            # Don't add reasoning here to avoid duplicates - it's already added in _perform_static_analysis
             
             return
         
@@ -4123,7 +4126,7 @@ class GPUAnalyzer:
                     # Update analysis with corrected values
                     static_analysis.update(corrected_analysis)
                     
-                    # Replace reasoning with unified reasoning from self-review
+                    # Keep original static reasoning, but replace LLM reasoning with unified reasoning from self-review
                     llm_reasoning = final_reasoning
                     
                     if progress_callback:
@@ -4160,10 +4163,16 @@ class GPUAnalyzer:
         elif not self.quiet_mode:
             print(f"✅ Compliance evaluation complete (score: {compliance_score:.0f}/100)")
         
-        # CRITICAL FIX: Calculate final dynamic confidence before building result
-        # This integrates static analysis, LLM analysis, and all confidence factors
-        final_confidence = self._calculate_dynamic_confidence(static_analysis, llm_context)
-        static_analysis['confidence'] = final_confidence
+        # Final confidence is already set by self-review if it occurred
+        # If no self-review, use intelligent confidence calculation
+        if not self_review:
+            if llm_context and llm_context.get('confidence', 0) > 0.8:
+                # LLM has high confidence - use it
+                static_analysis['confidence'] = llm_context['confidence']
+            else:
+                # Fall back to dynamic calculation
+                final_confidence = self._calculate_dynamic_confidence(static_analysis, llm_context)
+                static_analysis['confidence'] = final_confidence
         
         # Build final result
         return GPURequirement(
@@ -4571,14 +4580,15 @@ class GPUAnalyzer:
             else:
                 confidence = 0.7
         
-        # Add specific reasoning based on detected patterns
+        # Add specific reasoning based on detected patterns (avoid duplicates)
         if gpu_required_score > 0:
             reasoning.append(f"High GPU requirement indicators detected (score: {gpu_required_score})")
         if gpu_recommended_score > 0:
             reasoning.append(f"Training/ML patterns detected (score: {gpu_recommended_score})")
         if gpu_beneficial_score > 0:
             reasoning.append(f"GPU-accelerated operations detected (score: {gpu_beneficial_score})")
-        if cpu_optimized_score > 0:
+        if cpu_optimized_score > 0 and benefit_level != 'none':
+            # Only add CPU-optimized reasoning if not already covered by the main CPU-only reasoning
             reasoning.append(f"CPU-optimized libraries detected (score: {cpu_optimized_score})")
         
         return {
@@ -4760,7 +4770,7 @@ class GPUAnalyzer:
                 "confidence_level": "high" if gpu_benefit_analysis['confidence'] > 0.8 else "medium",
                 "honesty_factors": [
                     f"Workload appears CPU-optimized (confidence: {gpu_benefit_analysis['confidence']:.1%})",
-                    "GPU may provide minimal benefit for this workload"
+                    # REMOVED: "GPU may provide minimal benefit for this workload" - this is already in reasoning from detect_gpu_benefit_level
                 ],
                 "alternative_recommendations": ["Consider CPU-only execution first", "Evaluate actual performance before GPU investment"]
             })
