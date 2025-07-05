@@ -20,6 +20,7 @@ from functools import lru_cache
 from datetime import datetime, timedelta
 import gzip
 import io
+from typing import Optional, Dict, Any
 
 # Import request validation
 try:
@@ -129,29 +130,61 @@ def cache_models(models_data):
     MODEL_CACHE['data'] = models_data
     MODEL_CACHE['timestamp'] = datetime.now()
 
-# Security utility functions - P1 Security Fix
+# Enhanced secure error handling - Phase 2 Security Fix
+try:
+    from analyzer.secure_error_handler import (
+        get_secure_error_handler, 
+        create_secure_flask_response,
+        handle_error_securely,
+        ValidationError,
+        SecurityError,
+        RateLimitError
+    )
+    SECURE_ERROR_HANDLER_AVAILABLE = True
+except ImportError:
+    SECURE_ERROR_HANDLER_AVAILABLE = False
+
 def sanitize_error_message(error: Exception, debug_mode: bool = False) -> str:
     """
     Sanitize error messages to prevent information disclosure.
-    Returns detailed errors in debug mode, generic errors in production.
+    Enhanced with comprehensive secure error handling.
     """
-    if debug_mode:
-        return str(error)
+    if SECURE_ERROR_HANDLER_AVAILABLE:
+        # Use comprehensive secure error handler
+        handler = get_secure_error_handler(debug_mode)
+        response = handler.handle_error(error)
+        return response.internal_message if debug_mode and response.internal_message else response.public_message
     else:
-        # Generic error messages that don't leak system information
-        error_mappings = {
-            'FileNotFoundError': 'File not found. Please check the file path.',
-            'PermissionError': 'Access denied. Please check file permissions.',
-            'JSONDecodeError': 'Invalid file format. Please check the file content.',
-            'UnicodeDecodeError': 'File encoding error. Please use UTF-8 encoding.',
-            'ConnectionError': 'Network connection failed. Please try again.',
-            'TimeoutError': 'Request timed out. Please try again.',
-            'ValueError': 'Invalid input. Please check your data.',
-            'TypeError': 'Invalid data type. Please check your input.',
-        }
-        
-        error_type = type(error).__name__
-        return error_mappings.get(error_type, 'An error occurred. Please try again.')
+        # Fallback to basic sanitization
+        if debug_mode:
+            return str(error)
+        else:
+            # Generic error messages that don't leak system information
+            error_mappings = {
+                'FileNotFoundError': 'File not found. Please check the file path.',
+                'PermissionError': 'Access denied. Please check file permissions.',
+                'JSONDecodeError': 'Invalid file format. Please check the file content.',
+                'UnicodeDecodeError': 'File encoding error. Please use UTF-8 encoding.',
+                'ConnectionError': 'Network connection failed. Please try again.',
+                'TimeoutError': 'Request timed out. Please try again.',
+                'ValueError': 'Invalid input. Please check your data.',
+                'TypeError': 'Invalid data type. Please check your input.',
+            }
+            
+            error_type = type(error).__name__
+            return error_mappings.get(error_type, 'An error occurred. Please try again.')
+
+def create_secure_error_response(error: Exception, context: Optional[Dict[str, Any]] = None):
+    """
+    Create a secure error response using the enhanced error handler.
+    Falls back to basic error handling if secure handler not available.
+    """
+    if SECURE_ERROR_HANDLER_AVAILABLE:
+        return create_secure_flask_response(error, context, app.debug)
+    else:
+        # Fallback to basic error response
+        message = sanitize_error_message(error, app.debug)
+        return jsonify({'error': message}), 500
 
 # Set up paths for Vercel environment
 current_dir = os.path.dirname(os.path.abspath(__file__))
