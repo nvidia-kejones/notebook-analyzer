@@ -918,14 +918,11 @@ def filter_and_organize_models(models_list):
     
     # Define specific model priorities
     top_priority_nemotron = [
-        'nvidia/llama-3.3-nemotron-super-49b-v1',  # Super - highest priority
         'nvidia/llama-3.1-nemotron-ultra-253b-v1',  # Ultra - highest priority
         'nvidia/llama-3.1-nemotron-nano-4b-v1.1',   # Nano
         'nvidia/llama-3.1-nemotron-nano-8b-v1',     # Nano
         'nvidia/llama-3.1-nemotron-51b-instruct',
-        'nvidia/llama-3.1-nemotron-70b-instruct',
-        'nvidia/nemotron-4-340b-instruct',
-        'nvidia/nemotron-mini-4b-instruct'
+        'nvidia/llama-3.1-nemotron-70b-instruct'
     ]
     
     preferred_models = {
@@ -933,8 +930,7 @@ def filter_and_organize_models(models_list):
             'meta/llama-3.3-70b-instruct',
             'meta/llama-3.1-405b-instruct',
             'meta/llama-3.1-70b-instruct',
-            'meta/llama-3.1-8b-instruct',
-            'meta/codellama-70b'
+            'meta/llama-3.1-8b-instruct'
         ],
         'mistralai': [
             'mistralai/mistral-large-2-instruct',
@@ -943,15 +939,8 @@ def filter_and_organize_models(models_list):
             'mistralai/codestral-22b-instruct-v0.1'
             # Removed mathstral - not suitable for general notebook analysis
         ],
-        'deepseek-ai': [
-            'deepseek-ai/deepseek-r1',
-            'deepseek-ai/deepseek-coder-6.7b-instruct'
-        ],
-        'google': [
-            'google/gemma-3-27b-it',
-            'google/gemma-2-27b-it',
-            'google/codegemma-1.1-7b'
-        ],
+
+
         'microsoft': [
             'microsoft/phi-4-mini-instruct',
             'microsoft/phi-3.5-moe-instruct'
@@ -967,14 +956,16 @@ def filter_and_organize_models(models_list):
         'swallow', 'bielik', 'taiwan', 'hindi', 'sahabatai', 'italia', 'sea-lion',
         'embed', 'reward', 'guard', 'safety', 'retriever', 'clip', 'vision',
         'medical', 'med-', 'fin-', 'financial', 'nemoguard', 'shieldgemma',
-        'mathstral'  # Math-specific, not ideal for general notebook analysis
+        'mathstral',  # Math-specific, not ideal for general notebook analysis
+        'deepseek', 'codellama', 'nemotron-super',  # Problematic models
+        'nemotron-4-340b', 'nemotron-mini', 'gemma', 'codegemma'  # Additional unwanted models
     ]
     
     # Esoteric/less useful creators to exclude
     exclude_creators = [
         'abacusai', 'baichuan-inc', 'marin', 'mediatek', 'aisingapore', 
         'gotocompany', 'institute-of-science-tokyo', 'tokyotech-llm', 
-        'yentinglin', 'speakleash', 'rakuten', 'utter-project'
+        'yentinglin', 'speakleash', 'rakuten', 'utter-project', 'deepseek-ai'
     ]
     
     # Get all available model IDs
@@ -1003,6 +994,12 @@ def filter_and_organize_models(models_list):
             
         # Skip models with excluded keywords
         if any(keyword in model_id.lower() for keyword in exclude_keywords):
+            continue
+            
+        # Additional specific model exclusions
+        if any(excluded in model_id for excluded in [
+            'nemotron-4-340b', 'nemotron-mini', 'gemma', 'codegemma'
+        ]):
             continue
             
         base_name = get_base_model_name(model_id)
@@ -1048,9 +1045,10 @@ def filter_and_organize_models(models_list):
         'others': []
     }
     
-    # Add top priority Nemotron models (in order)
+    # Add top priority Nemotron models (in order) - with filtering
     for model_id in top_priority_nemotron:
-        if model_id in available_models:
+        if (model_id in available_models and 
+            not any(pattern in model_id.lower() for pattern in ['nemotron-4-340b', 'nemotron-mini', 'gemma', 'codegemma'])):
             organized_models['nemotron'].append(model_id)
     
     # Add other Nemotron models not in the top priority list
@@ -1059,13 +1057,15 @@ def filter_and_organize_models(models_list):
         if (best_model not in top_priority_nemotron and 
             'nvidia/' in best_model and 
             ('nemotron' in best_model.lower() or 'nemo' in best_model.lower()) and
-            'instruct' in best_model.lower()):
+            'instruct' in best_model.lower() and
+            not any(pattern in best_model.lower() for pattern in ['nemotron-4-340b', 'nemotron-mini', 'gemma', 'codegemma'])):
             organized_models['nemotron'].append(best_model)
     
-    # Add preferred creator models (in priority order)
+    # Add preferred creator models (in priority order) - with filtering
     for creator, model_list in preferred_models.items():
         for model_id in model_list:
-            if model_id in available_models:
+            if (model_id in available_models and 
+                not any(pattern in model_id.lower() for pattern in ['gemma', 'codegemma'])):
                 organized_models['preferred'].append(model_id)
     
     # Add other useful models from preferred creators not in the specific list
@@ -1077,7 +1077,8 @@ def filter_and_organize_models(models_list):
         if (creator in preferred_creators and 
             best_model not in organized_models['preferred'] and
             best_model not in organized_models['nemotron'] and
-            ('instruct' in best_model.lower() or 'chat' in best_model.lower() or 'code' in best_model.lower())):
+            ('instruct' in best_model.lower() or 'chat' in best_model.lower() or 'code' in best_model.lower()) and
+            not any(pattern in best_model.lower() for pattern in ['nemotron-4-340b', 'nemotron-mini', 'gemma', 'codegemma'])):
             
             # Skip very small models (less useful for analysis)
             if not any(size in best_model.lower() for size in ['1b', '2b', '3b']):
@@ -1099,6 +1100,20 @@ def filter_and_organize_models(models_list):
             any(size in best_model.lower() for size in ['70b', '32b', '27b', '22b'])):
             organized_models['others'].append(best_model)
     
+    # Final filtering to remove any unwanted models that slipped through
+    final_exclude_patterns = [
+        'nemotron-4-340b', 'nemotron-mini', 'gemma', 'codegemma', 
+        'deepseek', 'codellama', 'nemotron-super'
+    ]
+    
+    def final_filter(model_list):
+        return [model for model in model_list 
+                if not any(pattern in model.lower() for pattern in final_exclude_patterns)]
+    
+    organized_models['nemotron'] = final_filter(organized_models['nemotron'])
+    organized_models['preferred'] = final_filter(organized_models['preferred'])
+    organized_models['others'] = final_filter(organized_models['others'])
+    
     # Limit each group to reasonable sizes
     organized_models['nemotron'] = organized_models['nemotron'][:10]
     organized_models['preferred'] = organized_models['preferred'][:12]
@@ -1110,28 +1125,20 @@ def get_fallback_models():
     """Fallback static model list when API is not available."""
     return {
         'nemotron': [
-            'nvidia/llama-3.3-nemotron-super-49b-v1',
             'nvidia/llama-3.1-nemotron-ultra-253b-v1',
             'nvidia/llama-3.1-nemotron-70b-instruct',
-            'nvidia/llama-3.1-nemotron-51b-instruct',
-            'nvidia/nemotron-4-340b-instruct',
-            'nvidia/nemotron-mini-4b-instruct'
+            'nvidia/llama-3.1-nemotron-51b-instruct'
         ],
         'preferred': [
             'meta/llama-3.3-70b-instruct',
             'meta/llama-3.1-405b-instruct',
             'meta/llama-3.1-70b-instruct',
-            'meta/codellama-70b',
             'mistralai/mistral-large-2-instruct',
             'mistralai/codestral-22b-instruct-v0.1',
-            'deepseek-ai/deepseek-r1',
-            'deepseek-ai/deepseek-coder-6.7b-instruct',
-            'google/gemma-3-27b-it',
             'qwen/qwen2.5-coder-32b-instruct'
         ],
         'others': [
-            'microsoft/phi-4-mini-instruct',
-            'google/codegemma-1.1-7b'
+            'microsoft/phi-4-mini-instruct'
         ]
     }
 
