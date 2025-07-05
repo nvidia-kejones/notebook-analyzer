@@ -192,6 +192,7 @@ class GPURequirement:
     content_quality_issues: Optional[List[str]] = None
     technical_recommendations: Optional[List[str]] = None
     confidence_factors: Optional[List[str]] = None
+    workload_detected: bool = False  # Whether a GPU workload was detected
     
     def __post_init__(self):
         # Ensure lists are properly initialized
@@ -2629,7 +2630,8 @@ class GPUAnalyzer:
             structure_assessment=structure_assessment,
             content_quality_issues=content_issues,
             technical_recommendations=technical_recommendations,
-            confidence_factors=static_analysis.get('confidence_factors', [])
+            confidence_factors=static_analysis.get('confidence_factors', []),
+            workload_detected=static_analysis['workload_detected']
         )
         
     def _extract_notebook_content(self, url_or_path: str) -> Tuple[List[str], List[str]]:
@@ -4181,7 +4183,8 @@ class GPUAnalyzer:
             structure_assessment=structure_assessment,
             content_quality_issues=content_issues,
             technical_recommendations=technical_recommendations,
-            confidence_factors=static_analysis.get('confidence_factors', [])
+            confidence_factors=static_analysis.get('confidence_factors', []),
+            workload_detected=static_analysis['workload_detected']
         )
 
     def get_gpus_by_category(self, category=None, tier=None):

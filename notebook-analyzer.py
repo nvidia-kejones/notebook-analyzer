@@ -100,6 +100,7 @@ Examples:
             'structure_assessment': result.structure_assessment,
             'content_quality_issues': result.content_quality_issues,
             'technical_recommendations': result.technical_recommendations,
+            'workload_detected': result.workload_detected,
             'analysis_metadata': {
                 'analyzed_url_or_path': url_or_path,
                 'timestamp': __import__('datetime').datetime.now().isoformat(),
