@@ -699,32 +699,66 @@ python notebook-analyzer.py --json --verbose ./local-notebook.ipynb
 
 ## 🧠 Analysis Methodology
 
-### Static Analysis
-- **Library Detection**: Identifies GPU frameworks (PyTorch, TensorFlow, etc.)
-- **Model Pattern Recognition**: Detects specific models and their requirements
-- **Batch Size Analysis**: Extracts and analyzes batch size implications
-- **Training Detection**: Identifies training vs inference workloads
-- **Multi-GPU Patterns**: Detects distributed computing requirements
+### 3-Tier GPU Recommendation System
+Our core analysis provides three distinct hardware recommendations:
 
-### LLM Enhancement
-- **Contextual Understanding**: Analyzes code intent and workflow context
-- **Memory Optimization Detection**: Identifies advanced techniques
-- **Workload Classification**: Better complexity assessment
-- **Quality Evaluation**: Comprehensive notebook best practices review
+- **🟢 Minimum**: Entry-level viable option (lowest cost that works)
+- **🟡 Recommended**: Balanced price/performance (best value for most users)  
+- **🔴 Optimal**: High performance option (best performance regardless of cost)
 
-### NVIDIA Compliance Evaluation
-Based on comprehensive NVIDIA notebook guidelines loaded from `analyzer/nvidia_best_practices.md`:
-- **Structure (25%)**: Title format ("doing X with NVIDIA Product"), comprehensive introduction, navigation, conclusion
-- **Content (25%)**: Documentation ratio, code explanations, educational value, professional writing, external links
-- **Technical (25%)**: Requirements.txt management, environment variables, reproducibility, file complexity, GPU optimizations
+**CPU-First Analysis**: Automatically detects CPU-only workloads (basic Python, simple data analysis) and correctly recommends no GPU when appropriate.
+
+### Multi-Phase Analysis Pipeline
+
+#### Phase 1: Static Analysis
+- **Framework Detection**: Identifies GPU-accelerated libraries (PyTorch, TensorFlow, RAPIDS, etc.)
+- **Model Pattern Recognition**: Detects specific models (BERT, GPT, LLaMA, ResNet, etc.) and estimates requirements
+- **Workload Classification**: Distinguishes between inference, training, fine-tuning, and GPU computing
+- **Multi-GPU Detection**: Identifies distributed training patterns and SXM requirements
+- **VRAM Estimation**: Calculates memory requirements based on models, batch sizes, and optimizations
+- **ARM/Grace Compatibility**: Evaluates compatibility with ARM-based systems
+
+#### Phase 2: LLM Enhancement (Optional)
+When OpenAI API is configured, adds intelligent analysis:
+- **Contextual Understanding**: Analyzes code intent and workflow complexity
+- **Memory Optimization Detection**: Identifies LoRA, quantization, gradient checkpointing
+- **Tutorial vs Production Classification**: Distinguishes demos from production workloads
+- **Runtime Estimation**: Provides realistic time estimates based on hardware performance
+- **Confidence Calibration**: Adjusts confidence based on evidence quality
+
+#### Phase 2.5: Self-Review (Development Mode)
+Advanced consistency checking:
+- **Accuracy Validation**: Reviews recommendations for logical consistency
+- **3-Tier Compliance**: Ensures proper minimum → recommended → optimal progression
+- **Workload Alignment**: Validates GPU recommendations match detected complexity
+- **Error Correction**: Automatically fixes common analysis inconsistencies
+
+#### Phase 3: NVIDIA Compliance Evaluation
+Based on comprehensive NVIDIA notebook guidelines:
+- **Structure (25%)**: Title format, introduction quality, navigation headers, conclusion
+- **Content (25%)**: Documentation ratio, code explanations, educational value, external links
+- **Technical (25%)**: Requirements management, reproducibility, GPU optimizations, file organization
 - **Brand (25%)**: NVIDIA messaging, brand consistency, developer focus, maintenance quality
 
-### 🆕 Enhanced Features (v3.1.0)
-- **Comprehensive NVIDIA Best Practices**: Official guidelines integrated from structured markdown
-- **Enhanced Static Analysis**: Improved compliance checking with detailed criteria
-- **Guidelines-Enhanced LLM Prompts**: LLM evaluation uses loaded NVIDIA standards for better accuracy
-- **Detailed Compliance Scoring**: 100-point system with granular feedback and recommendations
-- **Professional Compliance Reporting**: Color-coded scores with specific improvement suggestions
+### Advanced Features
+
+#### Smart Workload Detection
+- **CPU-Only Recognition**: Identifies basic Python operations requiring no GPU
+- **GPU Benefit Levels**: Classifies workloads as none/beneficial/recommended/required
+- **Scale Assessment**: Distinguishes tutorial datasets from production workloads
+- **Framework Analysis**: Detects specific ML/AI frameworks and their GPU requirements
+
+#### Performance-Aware Recommendations
+- **Relative Performance Factors**: Uses real-world GPU performance data
+- **Runtime Estimation**: Provides time estimates across different hardware tiers
+- **Multi-GPU Scaling**: Accounts for distributed training performance benefits
+- **Form Factor Analysis**: Determines when SXM GPUs with NVLink are beneficial
+
+#### Security & Reliability
+- **Content Sanitization**: Secure processing of notebook content
+- **Fallback Analysis**: Graceful degradation when LLM services unavailable
+- **Rate Limiting**: Respects API limits with intelligent retry mechanisms
+- **Error Handling**: Robust processing of malformed or incomplete notebooks
 
 ## 🔗 Supported Input Sources
 
@@ -837,27 +871,37 @@ For enterprise GitLab instances:
 ## 🎓 Use Cases
 
 ### For Data Scientists & ML Engineers
-- **Hardware Planning**: Determine optimal GPU configuration for projects
-- **Cost Optimization**: Balance performance vs budget with min/optimal recommendations
-- **Runtime Planning**: Estimate project completion times
-- **Platform Selection**: Choose between different cloud GPU offerings
+- **Hardware Planning**: Determine optimal GPU configuration for projects with 3-tier recommendations
+- **Cost Optimization**: Balance performance vs budget with minimum/recommended/optimal configurations
+- **Runtime Planning**: Get realistic execution time estimates for different GPU configurations
+- **Platform Selection**: Choose between consumer and enterprise GPU offerings based on workload
 - **Local Development**: Analyze notebooks before committing to repositories
-- **Automation Integration**: Use JSON output for CI/CD pipelines and tooling
+- **Automation Integration**: Use JSON output for CI/CD pipelines and infrastructure provisioning
+- **CPU-First Analysis**: Automatically detect CPU-only workloads to avoid unnecessary GPU costs
 
-### For NVIDIA Teams
-- **Content Quality Assurance**: Ensure notebooks meet company standards
-- **Launchable Validation**: Verify notebooks before publication
-- **Developer Experience**: Improve notebook quality for better user experience
-- **Brand Consistency**: Maintain unified voice across NVIDIA content
-- **Private Repository Analysis**: Analyze internal notebooks securely
+### For NVIDIA Teams & Partners
+- **Content Quality Assurance**: Ensure notebooks meet NVIDIA's comprehensive standards (100-point scoring)
+- **Launchable Validation**: Verify notebooks before publication with compliance scoring
+- **Developer Experience**: Improve notebook quality with structure, content, and technical recommendations
+- **Brand Consistency**: Maintain unified voice across NVIDIA content with best practices integration
+- **Private Repository Analysis**: Analyze internal notebooks securely with GitHub/GitLab token support
+- **Tutorial vs Production Classification**: Distinguish between demo content and production workloads
 
-### For DevOps & Infrastructure
-- **Resource Allocation**: Plan GPU cluster requirements
-- **Performance Monitoring**: Validate actual vs predicted performance
-- **Platform Compatibility**: Assess ARM/Grace system compatibility
-- **Batch Analysis**: Process multiple notebooks for infrastructure planning
-- **Automated Workflows**: Integrate JSON output into monitoring and provisioning systems
-- **Cost Management**: Aggregate VRAM requirements across projects for budgeting
+### For DevOps & Infrastructure Teams
+- **Resource Allocation**: Plan GPU cluster requirements with accurate VRAM estimates
+- **Performance Monitoring**: Validate actual vs predicted performance with runtime estimates
+- **Platform Compatibility**: Assess ARM/Grace system compatibility automatically
+- **Batch Analysis**: Process multiple notebooks for infrastructure planning and budgeting
+- **Automated Workflows**: Integrate JSON output into monitoring, provisioning, and cost management systems
+- **Security Compliance**: Use security sandbox for safe analysis of untrusted notebooks
+- **Multi-Cloud Planning**: Get recommendations across consumer and enterprise GPU tiers
+
+### For AI/ML Platform Providers
+- **Resource Optimization**: Automatically right-size GPU instances based on workload analysis
+- **Cost Management**: Provide users with minimum viable vs optimal configurations
+- **Quality Gates**: Implement notebook quality checks in deployment pipelines
+- **User Experience**: Guide users to appropriate hardware choices with confidence scoring
+- **Compliance Monitoring**: Track notebook quality across teams and projects
 
 ## 🔄 Integration Examples
 
@@ -874,6 +918,13 @@ if (( $(echo "$COMPLIANCE_SCORE < 70" | bc -l) )); then
   exit 1
 fi
 
+# Check if workload actually needs GPU
+WORKLOAD_DETECTED=$(echo "$RESULT" | jq '.workload_detected')
+if [ "$WORKLOAD_DETECTED" = "false" ]; then
+  echo "💡 CPU-only workload detected - no GPU required"
+  exit 0
+fi
+
 MIN_VRAM=$(echo "$RESULT" | jq '.min_vram_gb')
 if (( MIN_VRAM > 32 )); then
   echo "⚠️ High VRAM requirement detected: ${MIN_VRAM}GB"
@@ -882,7 +933,7 @@ fi
 echo "✅ Notebook analysis passed"
 ```
 
-### Batch Processing
+### Batch Processing for Infrastructure Planning
 ```bash
 # Analyze multiple notebooks and aggregate results
 for notebook in notebooks/*.ipynb notebooks/*.py; do
@@ -891,7 +942,8 @@ done
 
 # Extract insights with jq
 jq -s 'map(select(.nvidia_compliance_score < 80))' batch_results.jsonl > low_compliance.json
-jq -s 'map(.min_vram_gb) | add / length' batch_results.jsonl  # Average VRAM requirement
+jq -s 'map(select(.workload_detected == true)) | map(.min_vram_gb) | add / length' batch_results.jsonl  # Average VRAM for GPU workloads
+jq -s 'map(select(.workload_detected == false)) | length' batch_results.jsonl  # Count CPU-only workloads
 ```
 
 ### Monitoring Integration
@@ -903,12 +955,12 @@ curl -X POST https://monitoring.company.com/metrics \
   -d "$RESULT"
 ```
 
-### Infrastructure Provisioning
+### Infrastructure Provisioning with 3-Tier Support
 ```python
 import subprocess
 import json
 
-def analyze_and_provision(notebook_path):
+def analyze_and_provision(notebook_path, tier="recommended"):
     result = subprocess.run(
         ["python", "notebook-analyzer.py", "--json", notebook_path],
         capture_output=True, text=True
@@ -916,68 +968,167 @@ def analyze_and_provision(notebook_path):
     
     analysis = json.loads(result.stdout)
     
-    # Auto-configure cloud instance
-    gpu_type = analysis["optimal_gpu_type"]
-    vram_gb = analysis["optimal_vram_gb"]
+    # Check if GPU is actually needed
+    if not analysis.get("workload_detected", False):
+        return provision_cpu_instance(analysis)
+    
+    # Auto-configure cloud instance based on tier
+    if tier == "minimum":
+        gpu_type = analysis["min_gpu_type"]
+        vram_gb = analysis["min_vram_gb"]
+        runtime = analysis["min_runtime_estimate"]
+    elif tier == "optimal":
+        gpu_type = analysis["optimal_gpu_type"]
+        vram_gb = analysis["optimal_vram_gb"]
+        runtime = analysis["optimal_runtime_estimate"]
+    else:  # recommended
+        gpu_type = analysis["recommended_gpu_type"] or analysis["min_gpu_type"]
+        vram_gb = analysis["recommended_vram_gb"] or analysis["min_vram_gb"]
+        runtime = analysis["recommended_runtime_estimate"] or analysis["min_runtime_estimate"]
     
     instance_config = {
         "gpu_type": gpu_type,
         "vram_requirement": vram_gb,
-        "estimated_runtime": analysis["optimal_runtime_estimate"]
+        "estimated_runtime": runtime,
+        "confidence": analysis["confidence"],
+        "compliance_score": analysis["nvidia_compliance_score"]
     }
     
     return provision_cloud_instance(instance_config)
+
+def provision_cpu_instance(analysis):
+    """Provision CPU-only instance for non-GPU workloads"""
+    return {
+        "instance_type": "cpu_optimized",
+        "estimated_runtime": analysis["min_runtime_estimate"],
+        "cost_savings": "Significant vs GPU deployment"
+    }
 ```
 
-- **Estimation Accuracy**: Runtime estimates are approximations based on patterns
-- **Dynamic Content**: Cannot analyze notebooks with runtime-dependent behavior
-- **API Dependencies**: LLM features require internet access and API availability
-- **Language Support**: Primarily designed for Python notebooks
-- **Complex Workflows**: May not capture intricate distributed training setups
-- **Token Expiration**: GitHub/GitLab tokens may expire and need renewal
-- **Platform Differences**: GitLab and GitHub have different URL formats and authentication methods
+### MCP (Model Context Protocol) Integration
+```python
+# Available as MCP server for AI assistants
+# Endpoint: POST /mcp
+# Supports Claude, ChatGPT, and other AI assistants
+
+{
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "params": {
+    "name": "analyze_notebook",
+    "arguments": {
+      "notebook_url": "https://github.com/user/repo/blob/main/notebook.ipynb"
+    }
+  }
+}
+```
 
 ## 🚨 Limitations
+
+### Analysis Limitations
+- **Estimation Accuracy**: Runtime estimates are approximations based on patterns and GPU performance data
+- **Dynamic Content**: Cannot analyze notebooks with runtime-dependent behavior or dynamic imports
+- **Language Support**: Primarily designed for Python notebooks (Jupyter .ipynb and marimo .py)
+- **Complex Workflows**: May not capture intricate distributed training setups or custom CUDA kernels
+- **Security Scope**: Security sandbox focuses on preventing code execution, not comprehensive security audit
+
+### API and Authentication
+- **API Dependencies**: LLM features require internet access and API availability
+- **Token Expiration**: GitHub/GitLab tokens may expire and need renewal
+- **Rate Limiting**: GitHub/GitLab APIs have rate limits that may affect batch processing
+- **Platform Differences**: GitLab and GitHub have different URL formats and authentication methods
+
+### Environment Constraints
+- **Resource Limits**: Web interface has memory and time limits for large notebooks
+- **Concurrent Analysis**: Limited concurrent analysis capacity in web deployment
+- **File Size Limits**: Large notebooks (>10MB) may not be supported in web interface
+
+## 🛠️ Troubleshooting
 
 ### Common Issues
 
 **❌ "Not found (404)" for GitHub/GitLab URLs**
 - Repository may be private (set `GITHUB_TOKEN` or `GITLAB_TOKEN`)
 - File may not exist at the specified path
-- Branch name may be incorrect
-- For GitLab: ensure URL uses `/-/blob/` format
+- Branch name may be incorrect in URL
+- For GitLab: ensure URL uses `/-/blob/` format, not `/blob/`
 
 **❌ "Forbidden (403)" errors**
 - Authentication required for private repository
 - GitHub/GitLab token may be expired or have insufficient permissions
-- Rate limiting (wait and retry)
+- Rate limiting (wait and retry, or use different token)
 - For GitLab: ensure token has `read_repository` scope
 
 **❌ Shell quoting issues with URLs**
-- Tool automatically handles most cases
-- For complex URLs, the tool will reconstruct them automatically
-- Use verbose mode (`-v`) to see URL reconstruction
+- Tool automatically handles most URL reconstruction cases
+- For complex URLs with tokens, the tool will reconstruct them automatically
+- Use verbose mode (`-v`) to see URL reconstruction process
 
 **❌ Local file not found**
 - Check file path spelling and existence
-- Ensure file has `.ipynb` or `.py` extension (for marimo notebooks)
-- Verify file permissions
+- Ensure file has `.ipynb` extension for Jupyter or `.py` for marimo notebooks
+- Verify file permissions are readable
 
-**❌ GitLab URL format issues**
-- Ensure GitLab URLs use `/-/blob/` not `/blob/`
-- Self-hosted GitLab instances should work with proper authentication
+**❌ "CPU-only" results when expecting GPU recommendations**
+- This is often correct - the tool detects truly CPU-only workloads
+- Basic Python operations, simple data analysis don't need GPU acceleration
+- Use verbose mode (`-v`) to see detailed reasoning
 
-## 🛠️ Troubleshooting
+**❌ Low compliance scores**
+- Check notebook structure: needs proper title, introduction, headers, conclusion
+- Ensure adequate documentation-to-code ratio
+- Add requirements.txt or pin package versions
+- Include links to relevant documentation
+
+**❌ LLM enhancement failures**
+- Verify `OPENAI_BASE_URL`, `OPENAI_API_KEY`, and `OPENAI_MODEL` environment variables
+- Check API endpoint availability and model name
+- Tool will fallback to static analysis if LLM fails
+
+### Advanced Troubleshooting
+
+**🔧 Web Interface Issues**
+- Check browser developer tools for JavaScript errors
+- Verify network connectivity for streaming analysis
+- Large notebooks may timeout - try CLI version instead
+
+**🔧 MCP Integration Issues**
+- Ensure MCP endpoint is accessible at `/mcp`
+- Check JSON-RPC 2.0 message format
+- Verify AI assistant has proper MCP client implementation
+
+**🔧 Security Sandbox Issues**
+- Sandbox may reject notebooks with certain patterns
+- Check verbose output for specific security concerns
+- Some legitimate notebooks may trigger false positives
+
+## 📈 Contributing
 
 This tool is designed to be extensible. Areas for contribution:
-- Additional GPU model support
-- Enhanced pattern recognition for new frameworks
-- Improved runtime estimation models
-- Better compliance rule definitions
-- Support for additional notebook formats
-- Enhanced GitHub authentication methods
-- GitLab API integration improvements
+
+### Core Analysis
+- Additional GPU model support (new NVIDIA releases)
+- Enhanced pattern recognition for emerging ML frameworks
+- Improved runtime estimation models based on real benchmarks
+- Better compliance rule definitions and scoring
+
+### Platform Support
+- Support for additional notebook formats (Observable, Databricks, etc.)
+- Enhanced GitHub/GitLab authentication methods
 - Support for additional Git platforms (Bitbucket, Azure DevOps)
+- Integration with cloud ML platforms (SageMaker, Vertex AI)
+
+### Security & Reliability
+- Enhanced security sandbox capabilities
+- Better handling of large notebooks and complex dependencies
+- Improved error recovery and fallback mechanisms
+- Performance optimizations for batch processing
+
+### User Experience
+- Interactive web interface improvements
+- Better visualization of analysis results
+- Enhanced progress reporting and streaming
+- Mobile-responsive design improvements
 
 ## 📄 License
 
@@ -986,13 +1137,14 @@ Apache 2.0 - For external use, please ensure compliance with relevant licensing 
 ## 🆘 Support
 
 For issues with the tool:
-1. **Check verbose output** (`-v`) for detailed analysis
+1. **Check verbose output** (`-v`) for detailed analysis and reasoning
 2. **Verify environment variables** are set correctly (including `GITLAB_TOKEN` for GitLab repos)
-3. **Test with a simple public notebook** first
+3. **Test with a simple public notebook** first to verify basic functionality
 4. **Check GitHub/GitLab token permissions** for private repositories
-5. **Review the troubleshooting section** above
+5. **Review the troubleshooting section** above for common issues
+6. **Check compliance score** if results seem unexpected - low scores indicate notebook quality issues
 
-For NVIDIA-specific notebook guidelines, refer to the NVIDIA notebook standards documentation.
+For NVIDIA-specific notebook guidelines, refer to the NVIDIA notebook standards documentation and the loaded best practices (`analyzer/nvidia_best_practices.md`).
 
 ## 🧪 Testing
 
@@ -1002,21 +1154,21 @@ The project includes comprehensive test scripts in the `tests/` directory:
 # Run all tests
 cd tests && ./test.sh
 
-# Run quick tests only
+# Run quick tests only (faster, core functionality)
 cd tests && ./test.sh --quick
 
 # Test against different URL
 cd tests && ./test.sh --url http://localhost:5000
 
-# Run accuracy tests
+# Run accuracy tests (validates analysis quality)
 cd tests && ./test_accuracy.sh
 
-# Test streaming functionality
+# Test streaming functionality (web interface)
 cd tests && ./test_streaming.sh
 
-# Verify security headers
+# Verify security headers (web deployment)
 cd tests && ./verify_security_headers.sh
 ```
 
-See `tests/README.md` for detailed testing documentation.
+See `tests/README.md` for detailed testing documentation and test result interpretation.
 
