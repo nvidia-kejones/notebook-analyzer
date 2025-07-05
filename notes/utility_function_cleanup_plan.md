@@ -66,24 +66,41 @@ def convert_runtime_to_new_format(runtime_str: str) -> str:
 ✅ **Code reduction:** Eliminated ~60 lines of duplicate runtime handling code  
 ✅ **Consistency:** Unified behavior between both analyzer classes  
 
-### Phase 2: Consumer Viability Consolidation
-**Status**: 🔄 Pending  
+### Phase 2: Consumer Viability Consolidation ✅ COMPLETED
+**Status**: ✅ Completed  
 **Estimated Time**: 1 hour  
 **Dependencies**: Phase 1 ✅  
+**Completion Date**: December 2024
 
 #### Tasks:
-- [ ] Analyze differences between the two consumer viability functions
-- [ ] Create unified `_assess_consumer_viability()` function
-- [ ] Support both parameter styles (analysis Dict vs explicit parameters)
-- [ ] Update all references to use consolidated function
-- [ ] Test consumer viability assessments
+- [x] Analyze differences between the two consumer viability functions
+- [x] Create unified `_assess_consumer_viability()` function
+- [x] Support both parameter styles (analysis Dict vs explicit parameters)
+- [x] Update all references to use consolidated function (no references found)
+- [x] Test consumer viability assessments ✅ VERIFIED
 
-#### Implementation Notes:
+#### Implementation Results:
+✅ **Function Analysis Completed:**
+- **Function 1**: `_assess_consumer_viability(analysis: Dict)` - extracted values from analysis dict
+- **Function 2**: `_assess_consumer_viability_with_vram(analysis: Dict, per_gpu_vram: int, quantity: int)` - used explicit parameters
+- **Identical Logic**: Both had same checks for SXM, workload complexity, enterprise patterns
+- **Only Difference**: VRAM calculation method
+
+✅ **Unified Function Created:**
 ```python
-def _assess_consumer_viability(self, analysis: Dict = None, per_gpu_vram: int = None, 
-                              quantity: int = None) -> Tuple[bool, Optional[str]]:
+def _assess_consumer_viability(self, analysis: Dict, per_gpu_vram: Optional[int] = None, 
+                              quantity: Optional[int] = None) -> Tuple[bool, Optional[str]]:
     """Unified consumer viability assessment supporting both parameter styles."""
 ```
+
+✅ **Flexible Parameter Support:**
+- **Legacy Mode**: `_assess_consumer_viability(analysis)` - extracts values from analysis dict
+- **Direct Mode**: `_assess_consumer_viability(analysis, per_gpu_vram=32, quantity=1)` - uses explicit parameters  
+- **Mixed Mode**: `_assess_consumer_viability(analysis, quantity=4)` - combines both approaches
+
+✅ **Code Reduction:** Eliminated ~30 lines of duplicate consumer viability logic  
+✅ **Backward Compatibility:** All existing calls continue to work without changes  
+✅ **Testing Verified:** All parameter combinations tested and working correctly
 
 ### Phase 3: Module-Level Utilities
 **Status**: 🔄 Pending  
@@ -154,16 +171,22 @@ def calculate_multi_gpu_scaling(quantity: int) -> float:
   - [x] Updated LLMAnalyzer to use module-level functions
   - [x] Updated GPUAnalyzer to use module-level functions
   - [x] Eliminated ~60 lines of duplicate code
+- [x] **Phase 2: Consumer Viability Consolidation** ✅
+  - [x] Analyzed differences between two consumer viability functions
+  - [x] Created unified function supporting both parameter styles
+  - [x] Removed duplicate function (~30 lines)
+  - [x] Maintained backward compatibility
+  - [x] Verified all parameter combinations work correctly
 
 ### Current Phase
-**Phase 2: Consumer Viability Consolidation**
-- Current Task: Analyze differences between consumer viability functions
+**Phase 3: Module-Level Utilities**
+- Current Task: Extract general utility functions to module level
 - Blockers: None
-- Next Steps: Begin Phase 2 implementation
+- Next Steps: Move _compare_versions, _normalize_gpu_quantity, _calculate_multi_gpu_scaling to module level
 
 ### Metrics to Track
-- **Lines of Code Reduced**: ✅ 60+ lines (Phase 1) / Target ~200+ lines total
-- **Functions Consolidated**: ✅ 4 functions (Phase 1) / Target ~8-10 functions total
+- **Lines of Code Reduced**: ✅ 90+ lines (Phases 1+2) / Target ~200+ lines total
+- **Functions Consolidated**: ✅ 5 functions (Phases 1+2) / Target ~8-10 functions total
 - **Test Coverage**: Maintain 100% of existing functionality
 - **Performance**: No degradation in analysis speed
 

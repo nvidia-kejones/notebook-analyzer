@@ -3232,24 +3232,42 @@ class GPUAnalyzer:
         # Decision threshold: SXM needed if score >= 50
         return total_score >= 50
     
-    def _assess_consumer_viability(self, analysis: Dict) -> Tuple[bool, Optional[str]]:
+    def _assess_consumer_viability(self, analysis: Dict, per_gpu_vram: Optional[int] = None, quantity: Optional[int] = None) -> Tuple[bool, Optional[str]]:
         """
-        Assess if consumer GPUs are viable for this workload.
-        Returns (is_viable, limitation_reason)
+        Unified consumer viability assessment supporting both parameter styles.
+        
+        Args:
+            analysis: Analysis dictionary containing workload information
+            per_gpu_vram: Optional explicit per-GPU VRAM requirement (if None, calculated from analysis)
+            quantity: Optional explicit GPU quantity (if None, extracted from analysis)
+            
+        Returns:
+            (is_viable, limitation_reason)
         """
-        # Calculate per-GPU VRAM requirement
-        total_vram = analysis.get('min_vram_gb', 8)
-        quantity = analysis.get('optimal_quantity', 1)
-        per_gpu_vram = total_vram // quantity if quantity > 0 else total_vram
+        # Determine VRAM and quantity parameters
+        if per_gpu_vram is None or quantity is None:
+            # Legacy mode: extract from analysis dictionary
+            total_vram = analysis.get('min_vram_gb', 8)
+            extracted_quantity = analysis.get('optimal_quantity', 1)
+            calculated_per_gpu_vram = total_vram // extracted_quantity if extracted_quantity > 0 else total_vram
+            
+            # Use provided parameters or calculated values
+            final_per_gpu_vram = per_gpu_vram if per_gpu_vram is not None else calculated_per_gpu_vram
+            final_quantity = quantity if quantity is not None else extracted_quantity
+        else:
+            # Direct mode: use provided parameters
+            final_per_gpu_vram = per_gpu_vram
+            final_quantity = quantity
+        
         max_consumer_vram = 24  # RTX 4090
         
-        if per_gpu_vram > max_consumer_vram:
-            return False, f"VRAM requirement ({per_gpu_vram}GB per GPU) exceeds consumer GPU capacity (max {max_consumer_vram}GB)"
+        # Check VRAM requirements
+        if final_per_gpu_vram > max_consumer_vram:
+            return False, f"VRAM requirement ({final_per_gpu_vram}GB per GPU) exceeds consumer GPU capacity (max {max_consumer_vram}GB)"
         
         # Check scale requirements
-        optimal_quantity = analysis.get('optimal_quantity', 1)
-        if optimal_quantity > 2:
-            return False, f"Multi-GPU setup ({optimal_quantity} GPUs) beyond consumer capabilities (max 2)"
+        if final_quantity > 2:
+            return False, f"Multi-GPU setup ({final_quantity} GPUs) beyond consumer capabilities (max 2)"
         
         # Check SXM requirements
         if analysis.get('sxm_required', False):
@@ -3809,37 +3827,7 @@ class GPUAnalyzer:
             per_gpu_vram = self.gpu_specs[optimal_gpu_type]['vram']
             analysis['optimal_vram_gb'] = per_gpu_vram * optimal_quantity
 
-    def _assess_consumer_viability_with_vram(self, analysis: Dict, per_gpu_vram: int, quantity: int) -> Tuple[bool, Optional[str]]:
-        """
-        Assess if consumer GPUs are viable for this workload using explicit per-GPU VRAM.
-        Returns (is_viable, limitation_reason)
-        """
-        max_consumer_vram = 24  # RTX 4090
-        
-        if per_gpu_vram > max_consumer_vram:
-            return False, f"VRAM requirement ({per_gpu_vram}GB per GPU) exceeds consumer GPU capacity (max {max_consumer_vram}GB)"
-        
-        # Check scale requirements
-        if quantity > 2:
-            return False, f"Multi-GPU setup ({quantity} GPUs) beyond consumer capabilities (max 2)"
-        
-        # Check SXM requirements
-        if analysis.get('sxm_required', False):
-            return False, "Workload requires enterprise-grade interconnect (SXM)"
-        
-        # Check workload complexity
-        workload_complexity = analysis.get('workload_complexity', 'moderate')
-        if workload_complexity == 'extreme':
-            return False, "Workload complexity requires enterprise-grade features"
-        
-        # Check for enterprise-specific patterns
-        reasoning_text = ' '.join(analysis.get('reasoning', [])).lower()
-        enterprise_indicators = ['large-scale', 'multi-node', 'enterprise', 'data center', 'production scale']
-        for indicator in enterprise_indicators:
-            if indicator in reasoning_text:
-                return False, f"Workload type requires enterprise infrastructure ({indicator})"
-        
-        return True, None
+    # _assess_consumer_viability_with_vram removed - functionality merged into _assess_consumer_viability
 
     def _calculate_dynamic_confidence(self, analysis: Dict, llm_context: Optional[Dict] = None) -> float:
         """
