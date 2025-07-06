@@ -930,23 +930,20 @@ def filter_and_organize_models(models_list):
             'meta/llama-3.3-70b-instruct',
             'meta/llama-3.1-405b-instruct',
             'meta/llama-3.1-70b-instruct',
-            'meta/llama-3.1-8b-instruct'
+            'meta/llama-3.1-8b-instruct',
+            'meta/llama-4-maverick-17b-128e-instruct',
+            'meta/llama-4-scout-17b-16e-instruct'
         ],
         'mistralai': [
             'mistralai/mistral-large-2-instruct',
             'mistralai/mistral-medium-3-instruct',
-            'mistralai/mistral-small-3.1-24b-instruct-2503',
-            'mistralai/codestral-22b-instruct-v0.1'
+            'mistralai/mistral-small-3.1-24b-instruct-2503'
             # Removed mathstral - not suitable for general notebook analysis
         ],
-
-
-        'microsoft': [
-            'microsoft/phi-4-mini-instruct',
-            'microsoft/phi-3.5-moe-instruct'
+        'deepseek-ai': [
+            'deepseek-ai/deepseek-r1'
         ],
         'qwen': [
-            'qwen/qwen2.5-coder-32b-instruct',
             'qwen/qwen2.5-7b-instruct'
         ]
     }
@@ -957,7 +954,7 @@ def filter_and_organize_models(models_list):
         'embed', 'reward', 'guard', 'safety', 'retriever', 'clip', 'vision',
         'medical', 'med-', 'fin-', 'financial', 'nemoguard', 'shieldgemma',
         'mathstral',  # Math-specific, not ideal for general notebook analysis
-        'deepseek', 'codellama', 'nemotron-super',  # Problematic models
+        'codellama', 'nemotron-super',  # Problematic models
         'nemotron-4-340b', 'nemotron-mini', 'gemma', 'codegemma'  # Additional unwanted models
     ]
     
@@ -965,7 +962,7 @@ def filter_and_organize_models(models_list):
     exclude_creators = [
         'abacusai', 'baichuan-inc', 'marin', 'mediatek', 'aisingapore', 
         'gotocompany', 'institute-of-science-tokyo', 'tokyotech-llm', 
-        'yentinglin', 'speakleash', 'rakuten', 'utter-project', 'deepseek-ai'
+        'yentinglin', 'speakleash', 'rakuten', 'utter-project'
     ]
     
     # Get all available model IDs
@@ -998,7 +995,7 @@ def filter_and_organize_models(models_list):
             
         # Additional specific model exclusions
         if any(excluded in model_id for excluded in [
-            'nemotron-4-340b', 'nemotron-mini', 'gemma', 'codegemma'
+            'nemotron-4-340b', 'nemotron-mini', 'gemma', 'codegemma', 'deepseek-coder-6.7b-instruct'
         ]):
             continue
             
@@ -1103,7 +1100,7 @@ def filter_and_organize_models(models_list):
     # Final filtering to remove any unwanted models that slipped through
     final_exclude_patterns = [
         'nemotron-4-340b', 'nemotron-mini', 'gemma', 'codegemma', 
-        'deepseek', 'codellama', 'nemotron-super'
+        'codellama', 'nemotron-super', 'deepseek-coder-6.7b-instruct'
     ]
     
     def final_filter(model_list):
@@ -1133,13 +1130,13 @@ def get_fallback_models():
             'meta/llama-3.3-70b-instruct',
             'meta/llama-3.1-405b-instruct',
             'meta/llama-3.1-70b-instruct',
+            'meta/llama-4-maverick-17b-128e-instruct',
+            'meta/llama-4-scout-17b-16e-instruct',
             'mistralai/mistral-large-2-instruct',
-            'mistralai/codestral-22b-instruct-v0.1',
-            'qwen/qwen2.5-coder-32b-instruct'
+            'deepseek-ai/deepseek-r1',
+            'qwen/qwen2.5-7b-instruct'
         ],
-        'others': [
-            'microsoft/phi-4-mini-instruct'
-        ]
+        'others': []
     }
 
 @app.route('/results')
