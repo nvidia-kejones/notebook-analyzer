@@ -17,6 +17,8 @@ services:
       - GITLAB_TOKEN=${GITLAB_TOKEN:-}
       # Development environment flag (enables full transparency features)
       - NODE_ENV=development
+      # Self-review feature (set to true to enable the valuable self-review functionality)
+      - ENABLE_SELF_REVIEW=${ENABLE_SELF_REVIEW:-true}
     volumes:
       - /tmp:/tmp:rw
       # Mount source code for development (optional - comment out for production)

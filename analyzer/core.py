@@ -895,6 +895,13 @@ Focus on accuracy and speed. Avoid overthinking."""
             
             # Use robust retry mechanism for API requests
             session = get_http_session()
+            # NEMOTRON ULTRA FIX: Optimize parameters for better reliability
+            system_prompt = "You are an expert in GPU computing and machine learning workloads. Analyze notebooks for accurate GPU requirements."
+            
+            # Add "detailed thinking off" for Nemotron models to prevent hanging
+            if "nemotron" in self.model.lower():
+                system_prompt += " Provide direct, concise responses without detailed thinking steps."
+            
             response = make_api_request_with_retry(
                 session=session,
                 url=f"{self.base_url}/v1/chat/completions",
@@ -902,11 +909,11 @@ Focus on accuracy and speed. Avoid overthinking."""
                 json_data={
                     "model": self.model,
                     "messages": [
-                        {"role": "system", "content": "You are an expert in GPU computing and machine learning workloads. Analyze notebooks for accurate GPU requirements."},
+                        {"role": "system", "content": system_prompt},
                         {"role": "user", "content": prompt}
                     ],
-                    "temperature": 0.1,
-                    "max_tokens": 500
+                    "temperature": 0.3,  # NEMOTRON ULTRA FIX: Increased from 0.1 to reduce hanging
+                    "max_tokens": 800    # NEMOTRON ULTRA FIX: Increased from 500 to prevent truncation
                 },
                 timeout=self.env_config['llm_timeout'],
                 max_retries=3,
@@ -1398,6 +1405,14 @@ Be quick and decisive. Only flag real issues."""
             
             # Use robust retry mechanism for API requests
             session = get_http_session()
+            
+            # NEMOTRON ULTRA FIX: Optimize parameters for better reliability
+            system_prompt = "You are an expert reviewer specializing in GPU computing and machine learning workloads. Your job is to critically evaluate analysis results for accuracy and consistency."
+            
+            # Add "detailed thinking off" for Nemotron models to prevent hanging
+            if "nemotron" in self.model.lower():
+                system_prompt += " Provide direct, concise responses without detailed thinking steps."
+            
             response = make_api_request_with_retry(
                 session=session,
                 url=f"{self.base_url}/v1/chat/completions",
@@ -1405,10 +1420,10 @@ Be quick and decisive. Only flag real issues."""
                 json_data={
                     "model": self.model,
                     "messages": [
-                        {"role": "system", "content": "You are an expert reviewer specializing in GPU computing and machine learning workloads. Your job is to critically evaluate analysis results for accuracy and consistency."},
+                        {"role": "system", "content": system_prompt},
                         {"role": "user", "content": prompt}
                     ],
-                    "temperature": 0.1,
+                    "temperature": 0.3,  # NEMOTRON ULTRA FIX: Increased from 0.1 to reduce hanging
                     "max_tokens": self._get_self_review_max_tokens()
                 },
                 timeout=self.env_config['llm_timeout'],
@@ -1838,6 +1853,14 @@ Focus on major issues only. Be concise."""
 
             # Use robust retry mechanism for API requests (consistent with other LLM calls)
             session = get_http_session()
+            
+            # NEMOTRON ULTRA FIX: Optimize parameters for better reliability
+            system_prompt = "You are an expert in technical documentation and NVIDIA's comprehensive content standards. Evaluate notebooks thoroughly against official best practices."
+            
+            # Add "detailed thinking off" for Nemotron models to prevent hanging
+            if "nemotron" in self.model.lower():
+                system_prompt += " Provide direct, concise responses without detailed thinking steps."
+            
             response = make_api_request_with_retry(
                 session=session,
                 url=f"{self.base_url}/v1/chat/completions",
@@ -1845,11 +1868,11 @@ Focus on major issues only. Be concise."""
                 json_data={
                     "model": self.model,
                     "messages": [
-                        {"role": "system", "content": "You are an expert in technical documentation and NVIDIA's comprehensive content standards. Evaluate notebooks thoroughly against official best practices."},
+                        {"role": "system", "content": system_prompt},
                         {"role": "user", "content": prompt}
                     ],
-                    "temperature": 0.1,
-                    "max_tokens": 800
+                    "temperature": 0.3,  # NEMOTRON ULTRA FIX: Increased from 0.1 to reduce hanging
+                    "max_tokens": 1200   # NEMOTRON ULTRA FIX: Increased from 800 to prevent truncation
                 },
                 timeout=self.env_config['llm_timeout'],
                 max_retries=3,
@@ -1885,6 +1908,7 @@ class GPUAnalyzer:
     def __init__(self, quiet_mode=False):
         self.quiet_mode = quiet_mode
         self.llm_analyzer = None
+        self._sandbox_instance = None  # PERFORMANCE FIX: Singleton sandbox instance
         
         # Load NVIDIA Best Practices
         self.best_practices = NVIDIABestPracticesLoader()
@@ -2705,13 +2729,19 @@ class GPUAnalyzer:
                 if not self.quiet_mode:
                     print(f"✅ LLM analysis complete (confidence: {enhanced_confidence*100:.0f}%)")
                 
-                # PHASE 2.5: Self-review analysis for consistency and accuracy
-                if not self.quiet_mode:
-                    print("🎓 Performing self-review for accuracy and consistency...")
-                
-                self_review = self.llm_analyzer.self_review_analysis(
-                    code_cells, static_analysis, static_analysis.get('reasoning', []), llm_reasoning
-                )
+                # PHASE 2.5: Self-review analysis (only if enabled in configuration)
+                if self.llm_analyzer.env_config['self_review_enabled']:
+                    if not self.quiet_mode:
+                        print("🎓 Performing self-review for accuracy and consistency...")
+                    
+                    self_review = self.llm_analyzer.self_review_analysis(
+                        code_cells, static_analysis, static_analysis.get('reasoning', []), llm_reasoning
+                    )
+                else:
+                    # Skip self-review for performance
+                    if not self.quiet_mode:
+                        print("✅ AI analysis complete")
+                    self_review = None
                 
                 if self_review:
                     # Apply self-review corrections
@@ -2838,7 +2868,7 @@ class GPUAnalyzer:
                 
                 # Process cells in parallel for large notebooks
                 cells = notebook_data.get('cells', [])
-                if len(cells) > 20:  # Use parallel processing for large notebooks
+                if len(cells) > 5:  # PERFORMANCE FIX: Use parallel processing for smaller notebooks
                     def process_cell(cell):
                         cell_type = cell.get('cell_type')
                         source = cell.get('source', [])
@@ -5018,11 +5048,15 @@ def get_environment_config():
                 'environment_type': 'vercel_free'
             }
     else:
+        # PERFORMANCE FIX: Disable self-review by default for better performance
+        # Only enable when explicitly requested via environment variable
+        enable_self_review = os.getenv('ENABLE_SELF_REVIEW', 'false').lower() == 'true'
+        
         return {
             'llm_timeout': 30,  # Full timeout for local development
             'progress_batching': False,  # Real-time progress locally
             'detailed_phases': True,  # Full transparency locally
-            'self_review_enabled': True,  # Full self-review locally
+            'self_review_enabled': enable_self_review,  # Disabled by default for performance
             'max_content_length': 12000,  # Full content locally
             'connection_timeout': 30,
             'smart_self_review': False,  # Standard self-review locally
