@@ -875,7 +875,7 @@ class LLMAnalyzer:
             
             # Create different prompts for different model types
             if "instruct" in self.model.lower() and "nemotron" not in self.model.lower():
-                # SIMPLIFIED PROMPT FOR INSTRUCT MODELS
+                # SIMPLIFIED PROMPT FOR OTHER INSTRUCT MODELS
                 prompt = f"""Analyze this notebook for GPU requirements. Return only JSON.
 
 Look for:
@@ -1014,6 +1014,8 @@ Be accurate and specific. Provide evidence-based reasoning."""
                     "presence_penalty": 0.1,    # Additional penalty to encourage brevity
                     "stop": ["\n\n\n", "---", "###"]  # Stop on multiple newlines or markdown headers
                 })
+            
+
             
             response = make_api_request_with_retry(
                 session=session,
@@ -1618,6 +1620,8 @@ Be thorough but decisive. Flag real inconsistencies only."""
                     "stop": ["\n\n\n", "---", "###"]  # Stop on multiple newlines or markdown headers
                 })
             
+
+            
             response = make_api_request_with_retry(
                 session=session,
                 url=f"{self.base_url}/v1/chat/completions",
@@ -2186,6 +2190,8 @@ Focus on major issues. Be specific and actionable."""
                     "presence_penalty": 0.1,    # Additional penalty to encourage brevity
                     "stop": ["\n\n\n", "---", "###"]  # Stop on multiple newlines or markdown headers
                 })
+            
+
             
             response = make_api_request_with_retry(
                 session=session,
