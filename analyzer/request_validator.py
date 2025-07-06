@@ -93,16 +93,16 @@ class RequestValidator:
         
         # Compile regex patterns for performance
         self._patterns = {
-            'sql_injection': re.compile(
-                r'(union\s+select|insert\s+into|delete\s+from|drop\s+table|'
-                r'script\s*>|javascript:|vbscript:|onload\s*=|onerror\s*=|'
-                r'<\s*script|</\s*script|eval\s*\(|expression\s*\()',
-                re.IGNORECASE
-            ),
             'xss_patterns': re.compile(
                 r'(<\s*script|</\s*script|javascript:|vbscript:|onload\s*=|'
                 r'onerror\s*=|onclick\s*=|onmouseover\s*=|alert\s*\(|'
                 r'document\.cookie|document\.write)',
+                re.IGNORECASE
+            ),
+            'sql_injection': re.compile(
+                r'(union\s+select|insert\s+into|delete\s+from|drop\s+table|'
+                r'select\s+.*\s+from|update\s+.*\s+set|create\s+table|'
+                r'alter\s+table|truncate\s+table|exec\s*\(|sp_|xp_)',
                 re.IGNORECASE
             ),
             'path_traversal': re.compile(

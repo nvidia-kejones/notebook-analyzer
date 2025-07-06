@@ -1519,6 +1519,10 @@ Be thorough but decisive. Flag real inconsistencies only."""
                 if progress_callback:
                     progress_callback("🔍 Phase 5: Parsing self-review results...")
                 
+                # Initialize variables to avoid UnboundLocalError
+                json_start = -1
+                json_end = -1
+                
                 try:
                     # Extract JSON from response
                     json_start = content.find('{')

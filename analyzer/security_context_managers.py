@@ -52,10 +52,10 @@ class SecurityContext:
     request_id: Optional[str] = None
     operation_type: str = "unknown"
     risk_level: str = "medium"
-    temp_files: List[str] = None
-    temp_dirs: List[str] = None
-    processes: List[subprocess.Popen] = None
-    start_time: float = None
+    temp_files: Optional[List[str]] = None
+    temp_dirs: Optional[List[str]] = None
+    processes: Optional[List[subprocess.Popen]] = None
+    start_time: Optional[float] = None
     
     def __post_init__(self):
         if self.temp_files is None:
@@ -226,6 +226,22 @@ class SecurityContextManager:
         self.context.temp_dirs.append(temp_dir)
         
         return temp_dir
+    
+    def add_process(self, process: subprocess.Popen):
+        """
+        Add a process to be tracked and cleaned up.
+        
+        Args:
+            process: The subprocess to track
+        """
+        self.context.processes.append(process)
+        
+        # Log process tracking
+        if self.logger:
+            self.logger.log_process_isolation(
+                command=getattr(process, 'args', ['unknown']),
+                process_id=process.pid
+            )
     
     def create_isolated_process(self, command: List[str], working_dir: Optional[str] = None, 
                               env_vars: Optional[Dict[str, str]] = None, timeout: int = 300) -> subprocess.Popen:

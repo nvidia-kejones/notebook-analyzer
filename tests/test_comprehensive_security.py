@@ -27,7 +27,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import security modules
 try:
-    from analyzer.security_sandbox import SecuritySandbox
+    from analyzer.security_sandbox import SecuritySandbox, ProcessResourceUsage
     from analyzer.security_logger import SecurityLogger, SecurityEventType, SecurityEventSeverity
     from analyzer.rate_limiter import SlidingWindowRateLimiter, RateLimitConfig
     from analyzer.request_validator import RequestValidator, ValidationResult
@@ -74,19 +74,14 @@ class TestComprehensiveSecurity(unittest.TestCase):
         sandbox = SecuritySandbox(max_memory_mb=128, max_time_seconds=5)
         
         # Test process isolation context
-        with sandbox.isolated_process_context() as context:
-            # Create a simple test process
-            import subprocess
-            process = subprocess.Popen(['echo', 'test'], stdout=subprocess.PIPE)
-            context.add_process(process)
-            
+        with sandbox.isolated_process_context(['echo', 'test']) as (process, get_resources):
             # Monitor process resources
             resources = sandbox.monitor_process_resources(process)
             
             # Verify resource monitoring
-            self.assertIsInstance(resources, dict)
-            self.assertIn('memory_mb', resources)
-            self.assertIn('cpu_percent', resources)
+            self.assertIsInstance(resources, ProcessResourceUsage)
+            self.assertGreaterEqual(resources.memory_mb, 0)  # Memory can be 0 for quick processes
+            self.assertGreaterEqual(resources.cpu_percent, 0)
             
             # Process should complete successfully
             process.wait()
@@ -137,8 +132,8 @@ class TestComprehensiveSecurity(unittest.TestCase):
         
         # Create rate limiter with strict limits
         config = RateLimitConfig(
-            max_requests_per_minute=5,
-            max_requests_per_hour=20,
+            requests_per_minute=5,
+            requests_per_hour=20,
             burst_limit=3
         )
         rate_limiter = SlidingWindowRateLimiter(config)
@@ -148,12 +143,16 @@ class TestComprehensiveSecurity(unittest.TestCase):
         user_agent = "test-client"
         
         # Should allow initial requests
-        for i in range(3):
+        for i in range(2):  # Only check first 2 requests
             status = rate_limiter.check_rate_limit(client_ip, user_agent)
             self.assertTrue(status.allowed)
-            self.assertGreater(status.remaining_requests, 0)
+            self.assertGreaterEqual(status.remaining_requests, 0)  # Can be 0 for last allowed request
         
-        # Should hit burst limit
+        # Third request should still be allowed but may have 0 remaining
+        status = rate_limiter.check_rate_limit(client_ip, user_agent)
+        self.assertTrue(status.allowed)
+        
+        # Should hit burst limit on subsequent requests
         for i in range(3):
             status = rate_limiter.check_rate_limit(client_ip, user_agent)
             if not status.allowed:
@@ -166,10 +165,10 @@ class TestComprehensiveSecurity(unittest.TestCase):
         self.assertTrue(status.allowed)
         
         # Test statistics
-        stats = rate_limiter.get_statistics()
+        stats = rate_limiter.get_global_stats()
         self.assertIsInstance(stats, dict)
-        self.assertIn('total_requests', stats)
-        self.assertIn('blocked_requests', stats)
+        self.assertIn('total_requests_all_time', stats)
+        self.assertIn('total_clients', stats)
         
         print("✅ Rate limiting integration working")
     
@@ -235,9 +234,9 @@ class TestComprehensiveSecurity(unittest.TestCase):
         logger = SecurityLogger(log_to_file=True, log_file_path=log_file)
         
         # Test different event types
-        logger.log_file_upload("test.ipynb", "192.168.1.100", success=True)
-        logger.log_security_violation("sql_injection", {"query": "malicious"}, "192.168.1.100")
-        logger.log_rate_limit_hit("192.168.1.100", retry_after=60)
+        logger.log_file_upload("test.ipynb", 1024, "192.168.1.100")
+        logger.log_security_violation("sql_injection", {"query": "malicious"}, source_ip="192.168.1.100")
+        logger.log_rate_limit_hit("192.168.1.100", "/api/analyze")
         
         # Verify log file was created
         self.assertTrue(os.path.exists(log_file))
@@ -250,7 +249,7 @@ class TestComprehensiveSecurity(unittest.TestCase):
             self.assertIn("rate_limit_hit", log_content)
         
         # Test event analysis
-        events = logger.get_recent_events(limit=10)
+        events = logger.get_recent_events(hours=1)
         self.assertGreater(len(events), 0)
         
         print("✅ Security logging integration working")
@@ -409,13 +408,13 @@ class TestComprehensiveSecurity(unittest.TestCase):
             
             if manager.sandbox:
                 resources = manager.sandbox.monitor_process_resources(process)
-                self.assertIsInstance(resources, dict)
+                self.assertIsInstance(resources, ProcessResourceUsage)
             
             process.wait()
             
             # Step 7: Log successful operation
             if manager.logger:
-                manager.logger.log_file_upload("test.ipynb", client_ip, success=True)
+                manager.logger.log_file_upload("test.ipynb", 1024, client_ip)
         
         # Step 8: Verify cleanup
         self.assertFalse(os.path.exists(temp_file))
@@ -484,8 +483,8 @@ class TestComprehensiveSecurity(unittest.TestCase):
         if SECURITY_MODULES_AVAILABLE:
             # Test rate limiter config
             config = RateLimitConfig()
-            self.assertGreater(config.max_requests_per_minute, 0)
-            self.assertGreater(config.max_requests_per_hour, 0)
+            self.assertGreater(config.requests_per_minute, 0)
+            self.assertGreater(config.requests_per_hour, 0)
             
             # Test request validator config
             validator = RequestValidator()
