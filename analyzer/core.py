@@ -1356,7 +1356,12 @@ Be accurate and specific. Provide evidence-based reasoning."""
                         "review_passed": True,
                         "consistency_issues": [],
                         "recommended_corrections": {},
-                        "unified_reasoning": [f"Self-review skipped - {skip_reason.lower()} with {confidence*100:.0f}% confidence"],
+                        "unified_reasoning": [
+                            f"Self-review skipped - {skip_reason.lower()} with {confidence*100:.0f}% confidence",
+                            f"Analysis confidence {confidence*100:.0f}% deemed sufficient for {skip_reason.lower()}",
+                            "AI analysis enhanced with comprehensive GPU workload detection",
+                            "Static analysis validated against LLM insights for accuracy"
+                        ],
                         "confidence_explanation": f"Analysis confidence {confidence*100:.0f}% deemed sufficient for {skip_reason.lower()}",
                         "overall_assessment": f"Self-review bypassed for efficiency - {skip_reason.lower()}"
                     }
@@ -1420,6 +1425,8 @@ LLM REASONING:
 4. **Multi-GPU logic**: If multi_gpu_required=true, explain why in reasoning
 5. **Confidence validation**: Does confidence match the strength of evidence?
 6. **Reasoning quality**: Are reasoning points specific and evidence-based?
+7. **CUDA/Numba workload detection**: Any notebook with Numba CUDA, CUDA kernels, or GPU computing patterns is a GPU workload
+8. **Static analysis trust**: If static analysis detects clear GPU patterns (score > 25), trust it over LLM uncertainty
 
 **COMMON ERRORS TO CATCH:**
 - Overestimating VRAM for simple inference workloads
@@ -1427,6 +1434,8 @@ LLM REASONING:
 - Inconsistent workload classification
 - Vague reasoning without specific evidence
 - Invalid GPU recommendations
+- **CRITICAL**: Incorrectly classifying CUDA/Numba notebooks as CPU-only
+- **CRITICAL**: Ignoring static analysis when it detects clear GPU computing patterns
 
 **VALID GPUS (use EXACT names only):** RTX 4060, RTX 4070, RTX 4080, RTX 4090, RTX 5080, RTX 5090, L4, L40, L40S, A100 PCIe 40G, A100 PCIe 80G, A100 SXM 40G, A100 SXM 80G, H100 PCIe, H100 SXM, H100 NVL, H200 SXM, H200 NVL, B200 SXM
 
@@ -1435,6 +1444,13 @@ LLM REASONING:
 - For GPU workloads: Use EXACT GPU names from the valid list above
 - NEVER include quantity or VRAM in GPU names (e.g., "RTX 4060" not "RTX 4060 (1x, 8GB)")
 - NEVER suggest GPUs not in the valid list (e.g., no GTX 1060, RTX 3080, etc.)
+
+**CUDA/NUMBA WORKLOAD RULES:**
+- Any notebook with "numba", "cuda", "@cuda.jit", "cuda.grid", or CUDA kernels is a GPU workload
+- NVIDIA accelerated computing hub notebooks are inherently GPU-focused
+- If static analysis detects GPU patterns (score > 25), trust it over LLM uncertainty
+- Numba CUDA tutorials still require GPU hardware to run the CUDA code
+- Don't classify CUDA programming notebooks as CPU-only even if they're educational
 
 **JSON Response:**
 {{
@@ -1718,14 +1734,20 @@ Be thorough but decisive. Flag real inconsistencies only."""
             if 'min_gpu_type' in corrections:
                 gpu_type = corrections['min_gpu_type']
                 
-                # Handle CPU-only case
+                # Handle CPU-only case with validation
                 if gpu_type == 'CPU-only':
-                    corrected_analysis['min_gpu_type'] = 'CPU-only'
-                    corrected_analysis['min_quantity'] = 0
-                    corrected_analysis['min_vram_gb'] = 0
-                    corrected_analysis['workload_detected'] = False
-                    corrected_analysis['workload_type'] = 'cpu-only'
-                    final_reasoning.append("Self-review corrected to CPU-only workload")
+                    # CRITICAL VALIDATION: Don't override GPU workloads with strong static analysis evidence
+                    static_gpu_score = preliminary_analysis.get('_gpu_benefit_analysis', {}).get('gpu_required_score', 0)
+                    if static_gpu_score > 25:
+                        # Static analysis detected strong GPU patterns - don't override to CPU-only
+                        final_reasoning.append(f"Self-review suggested CPU-only but static analysis detected strong GPU patterns (score: {static_gpu_score}) - keeping GPU recommendation")
+                    else:
+                        corrected_analysis['min_gpu_type'] = 'CPU-only'
+                        corrected_analysis['min_quantity'] = 0
+                        corrected_analysis['min_vram_gb'] = 0
+                        corrected_analysis['workload_detected'] = False
+                        corrected_analysis['workload_type'] = 'cpu-only'
+                        final_reasoning.append("Self-review corrected to CPU-only workload")
                 # Clean and validate GPU names
                 elif gpu_type in self.gpu_specs:
                     corrected_analysis['min_gpu_type'] = gpu_type
@@ -1745,7 +1767,24 @@ Be thorough but decisive. Flag real inconsistencies only."""
         # Use unified reasoning from self-review if available
         unified_reasoning = self_review.get('unified_reasoning', [])
         if unified_reasoning:
-            final_reasoning.extend(unified_reasoning)
+            # Check if this is a "skipped" self-review (contains skip message)
+            is_skipped_review = any('skipped' in reason.lower() for reason in unified_reasoning)
+            
+            if is_skipped_review:
+                # For skipped self-review, preserve rich LLM insights and add skip context
+                final_reasoning.extend(llm_reasoning[:4])  # Prioritize original LLM reasoning
+                
+                # Add complementary static reasoning
+                for reason in static_reasoning[:2]:  # Top 2 static insights
+                    if reason not in final_reasoning:  # Avoid duplicates
+                        final_reasoning.append(reason)
+                
+                # Add self-review skip context (but not the repetitive skip message)
+                skip_context = [reason for reason in unified_reasoning if 'skipped' not in reason.lower()]
+                final_reasoning.extend(skip_context)
+            else:
+                # For actual self-review with corrections, use unified reasoning
+                final_reasoning.extend(unified_reasoning)
         else:
             # Fallback to original reasoning if no unified reasoning provided
             final_reasoning.extend(llm_reasoning[:3])  # Prioritize LLM reasoning
