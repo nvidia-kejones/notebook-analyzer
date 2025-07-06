@@ -944,7 +944,7 @@ Be accurate and specific. Provide evidence-based reasoning."""
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": prompt}
                     ],
-                    "temperature": 0.2,  # ANALYSIS: Lower for more consistent GPU analysis
+                    "temperature": 0.3,  # ANALYSIS: Increased from 0.2 to prevent hangs with Nemotron Ultra
                     "max_tokens": 800,   # NEMOTRON ULTRA FIX: Increased from 500 to prevent truncation
                     "response_format": {"type": "json_object"}  # OPTIMIZATION: Force JSON response
                 },
@@ -1425,7 +1425,13 @@ LLM REASONING:
 - Vague reasoning without specific evidence
 - Invalid GPU recommendations
 
-**VALID GPUS:** RTX 4060, RTX 4070, RTX 4080, RTX 4090, RTX 5080, RTX 5090, L4, L40, L40S, A100 PCIe 40G, A100 PCIe 80G, A100 SXM 40G, A100 SXM 80G, H100 PCIe, H100 SXM, H100 NVL, H200 SXM, H200 NVL, B200 SXM
+**VALID GPUS (use EXACT names only):** RTX 4060, RTX 4070, RTX 4080, RTX 4090, RTX 5080, RTX 5090, L4, L40, L40S, A100 PCIe 40G, A100 PCIe 80G, A100 SXM 40G, A100 SXM 80G, H100 PCIe, H100 SXM, H100 NVL, H200 SXM, H200 NVL, B200 SXM
+
+**CRITICAL GPU CORRECTION RULES:**
+- For CPU-only workloads: Use "CPU-only" (not a GPU name)
+- For GPU workloads: Use EXACT GPU names from the valid list above
+- NEVER include quantity or VRAM in GPU names (e.g., "RTX 4060" not "RTX 4060 (1x, 8GB)")
+- NEVER suggest GPUs not in the valid list (e.g., no GTX 1060, RTX 3080, etc.)
 
 **JSON Response:**
 {{
@@ -1434,7 +1440,7 @@ LLM REASONING:
     "recommended_corrections": {{
         "workload_type": "corrected_type_if_needed",
         "confidence": integer_0_to_100,
-        "min_gpu_type": "gpu_if_needed",
+        "min_gpu_type": "EXACT_GPU_NAME_or_CPU-only",
         "estimated_vram_gb": number_if_needed
     }},
     "unified_reasoning": ["evidence-based point 1", "evidence-based point 2"],
@@ -1702,14 +1708,30 @@ Be thorough but decisive. Flag real inconsistencies only."""
             # Apply GPU type correction with validation
             if 'min_gpu_type' in corrections:
                 gpu_type = corrections['min_gpu_type']
-                # Validate GPU type is in our specifications
-                if gpu_type in self.gpu_specs:
+                
+                # Handle CPU-only case
+                if gpu_type == 'CPU-only':
+                    corrected_analysis['min_gpu_type'] = 'CPU-only'
+                    corrected_analysis['min_quantity'] = 0
+                    corrected_analysis['min_vram_gb'] = 0
+                    corrected_analysis['workload_detected'] = False
+                    corrected_analysis['workload_type'] = 'cpu-only'
+                    final_reasoning.append("Self-review corrected to CPU-only workload")
+                # Clean and validate GPU names
+                elif gpu_type in self.gpu_specs:
                     corrected_analysis['min_gpu_type'] = gpu_type
                     # Regenerate consumer/enterprise recommendations if minimum changed
                     self._update_gpu_recommendations_after_correction(corrected_analysis)
                     final_reasoning.append(f"Self-review corrected minimum GPU to {gpu_type}")
                 else:
-                    final_reasoning.append(f"Self-review suggested invalid GPU '{gpu_type}' - keeping original recommendation")
+                    # Try to clean malformed GPU names (e.g., "RTX 4060 (1x, 8GB)" -> "RTX 4060")
+                    cleaned_gpu = gpu_type.split('(')[0].strip()  # Remove parentheses and content
+                    if cleaned_gpu in self.gpu_specs:
+                        corrected_analysis['min_gpu_type'] = cleaned_gpu
+                        self._update_gpu_recommendations_after_correction(corrected_analysis)
+                        final_reasoning.append(f"Self-review corrected minimum GPU to {cleaned_gpu} (cleaned from '{gpu_type}')")
+                    else:
+                        final_reasoning.append(f"Self-review suggested invalid GPU '{gpu_type}' - keeping original recommendation")
         
         # Use unified reasoning from self-review if available
         unified_reasoning = self_review.get('unified_reasoning', [])
@@ -2816,6 +2838,27 @@ class GPUAnalyzer:
                         review_status = "passed" if self_review.get('review_passed', True) else "corrected issues"
                         print(f"✅ Self-review {review_status} - enhanced accuracy and consistency")
                 else:
+                    # INSIGHT PRESERVATION FIX: When self-review is skipped, ensure we preserve and combine
+                    # the valuable LLM insights with static reasoning for rich final output
+                    if llm_reasoning:
+                        # Combine LLM insights with static reasoning for comprehensive output
+                        combined_reasoning = []
+                        
+                        # Prioritize LLM reasoning (more detailed and contextual)
+                        combined_reasoning.extend(llm_reasoning[:4])  # Top 4 LLM insights
+                        
+                        # Add complementary static reasoning
+                        static_reasoning = static_analysis.get('reasoning', [])
+                        for reason in static_reasoning[:3]:  # Top 3 static insights
+                            if reason not in combined_reasoning:  # Avoid duplicates
+                                combined_reasoning.append(reason)
+                        
+                        # Add insight about analysis method
+                        combined_reasoning.append("AI analysis enhanced with domain-specific GPU knowledge")
+                        
+                        # Update the llm_reasoning with the combined insights
+                        llm_reasoning = combined_reasoning
+                    
                     # If no self-review, recalculate confidence one more time with final LLM context
                     final_confidence = self._calculate_dynamic_confidence(static_analysis, llm_context)
                     static_analysis['confidence'] = final_confidence
@@ -3521,9 +3564,11 @@ class GPUAnalyzer:
         }
     
     def _determine_optimal_gpu(self, workload_type: str, vram_needed: int, quantity: int, 
-                             sxm_required: bool, workload_complexity: str = "moderate") -> tuple:
+                             sxm_required: bool, workload_complexity: str = "moderate", 
+                             min_gpu: Optional[str] = None, recommended_gpu: Optional[str] = None) -> tuple:
         """
         Context-aware optimal GPU selection that balances performance with practicality.
+        CRITICAL: Optimal must be BETTER than or equal to minimum and recommended tiers.
         
         Args:
             workload_type: Type of workload (training, inference, etc.)
@@ -3531,44 +3576,102 @@ class GPUAnalyzer:
             quantity: Number of GPUs needed
             sxm_required: Whether SXM form factor is required
             workload_complexity: Complexity level of the workload
+            min_gpu: Minimum GPU to ensure optimal is better than
+            recommended_gpu: Recommended GPU to ensure optimal is better than
             
         Returns:
             tuple: (gpu_name, per_gpu_vram, total_quantity)
         """
         per_gpu_vram: int = vram_needed // quantity if quantity > 1 else vram_needed
         
+        # GPU performance hierarchy (higher score = better performance)
+        gpu_performance_hierarchy = {
+            'RTX 4060': 1, 'RTX 4070': 2, 'RTX 4080': 3, 'RTX 4090': 4,
+            'RTX 5080': 5, 'RTX 5090': 6,
+            'L4': 3, 'L40': 7, 'L40S': 8,
+            'A100 PCIe 40G': 9, 'A100 PCIe 80G': 10, 'A100 SXM 40G': 11, 'A100 SXM 80G': 12,
+            'H100 PCIe': 13, 'H100 SXM': 14, 'H100 NVL': 15,
+            'H200 SXM': 16, 'H200 NVL': 17,
+            'B200 SXM': 18
+        }
+        
+        # Determine minimum performance level required
+        min_performance_level: int = 0
+        if min_gpu:
+            min_performance_level = max(min_performance_level, gpu_performance_hierarchy.get(min_gpu, 0))
+        if recommended_gpu:
+            min_performance_level = max(min_performance_level, gpu_performance_hierarchy.get(recommended_gpu, 0))
+        
         # 1. LARGE-SCALE/MULTI-GPU WORKLOADS: Use data center SXM
         if sxm_required or quantity >= 4:
             if per_gpu_vram <= 80:
-                return ("H100 SXM", 80, quantity)
+                candidate = "H100 SXM"
+                if gpu_performance_hierarchy.get(candidate, 0) >= min_performance_level:
+                    return (candidate, 80, quantity)
+                else:
+                    # Need better than H100 SXM
+                    return ("H200 SXM", 141, quantity)
             elif per_gpu_vram <= 141:
-                return ("H200 SXM", 141, quantity)
+                candidate = "H200 SXM"
+                if gpu_performance_hierarchy.get(candidate, 0) >= min_performance_level:
+                    return (candidate, 141, quantity)
+                else:
+                    # Need better than H200 SXM
+                    return ("B200 SXM", 192, quantity)
             else:
                 return ("B200 SXM", 192, quantity)
         
         # 2. RESEARCH/CUTTING-EDGE WORKLOADS: Use latest data center
         if workload_type in ["research", "cutting_edge"] or workload_complexity == "extreme":
             if per_gpu_vram <= 80:
-                return ("H100 SXM", 80, min(quantity, 2))
+                candidate = "H100 SXM"
+                if gpu_performance_hierarchy.get(candidate, 0) >= min_performance_level:
+                    return (candidate, 80, min(quantity, 2))
+                else:
+                    return ("H200 SXM", 141, min(quantity, 2))
             elif per_gpu_vram <= 141:
-                return ("H200 SXM", 141, min(quantity, 2))
+                candidate = "H200 SXM"
+                if gpu_performance_hierarchy.get(candidate, 0) >= min_performance_level:
+                    return (candidate, 141, min(quantity, 2))
+                else:
+                    return ("B200 SXM", 192, min(quantity, 2))
             else:
                 return ("B200 SXM", 192, min(quantity, 2))
         
         # 3. HIGH VRAM SINGLE-GPU WORKLOADS: Use enterprise PCIe
         if per_gpu_vram > 48 and quantity <= 2:
             if per_gpu_vram <= 80:
-                return ("A100 PCIe 80G", 80, quantity)
+                candidate = "A100 PCIe 80G"
+                if gpu_performance_hierarchy.get(candidate, 0) >= min_performance_level:
+                    return (candidate, 80, quantity)
+                else:
+                    return ("H100 PCIe", 80, quantity)
             else:
-                return ("H100 PCIe", 80, quantity)
+                candidate = "H100 PCIe"
+                if gpu_performance_hierarchy.get(candidate, 0) >= min_performance_level:
+                    return (candidate, 80, quantity)
+                else:
+                    return ("H100 SXM", 80, quantity)
         
         # 4. STANDARD WORKLOADS: Use enterprise PCIe (most practical)
         if per_gpu_vram <= 24:
-            return ("L40S", 48, quantity)  # L40S provides good headroom
+            candidate = "L40S"
+            if gpu_performance_hierarchy.get(candidate, 0) >= min_performance_level:
+                return (candidate, 48, quantity)
+            else:
+                return ("A100 PCIe 80G", 80, quantity)
         elif per_gpu_vram <= 48:
-            return ("L40S", 48, quantity)
+            candidate = "L40S"
+            if gpu_performance_hierarchy.get(candidate, 0) >= min_performance_level:
+                return (candidate, 48, quantity)
+            else:
+                return ("A100 PCIe 80G", 80, quantity)
         else:
-            return ("A100 PCIe 80G", 80, quantity)
+            candidate = "A100 PCIe 80G"
+            if gpu_performance_hierarchy.get(candidate, 0) >= min_performance_level:
+                return (candidate, 80, quantity)
+            else:
+                return ("H100 PCIe", 80, quantity)
     
     def _generate_enterprise_recommendation(self, vram_needed: int, quantity: int, workload_type: str, 
                                           sxm_required: bool, llm_runtime_data: Optional[Dict] = None) -> Dict:
@@ -3577,7 +3680,7 @@ class GPUAnalyzer:
         # Use the new context-aware optimal GPU selection
         workload_complexity = "moderate"  # Default complexity, could be enhanced later
         optimal_gpu, per_gpu_vram, final_quantity = self._determine_optimal_gpu(
-            workload_type, vram_needed, quantity, sxm_required, workload_complexity
+            workload_type, vram_needed, quantity, sxm_required, workload_complexity, None, None
         )
         
         gpu_type = optimal_gpu
@@ -3845,7 +3948,8 @@ class GPUAnalyzer:
                 vram_needed,
                 workload_type,
                 use_case_context,
-                consumer_viable
+                consumer_viable,
+                analysis.get('sxm_required', False)
             )
         else:
             # For CPU-only workloads, no GPU recommendations needed
@@ -4293,6 +4397,27 @@ class GPUAnalyzer:
                         review_status = "passed" if self_review.get('review_passed', True) else "corrected issues"
                         print(f"✅ Self-review {review_status} - enhanced accuracy and consistency")
                 else:
+                    # INSIGHT PRESERVATION FIX: When self-review is skipped, ensure we preserve and combine
+                    # the valuable LLM insights with static reasoning for rich final output
+                    if llm_reasoning:
+                        # Combine LLM insights with static reasoning for comprehensive output
+                        combined_reasoning = []
+                        
+                        # Prioritize LLM reasoning (more detailed and contextual)
+                        combined_reasoning.extend(llm_reasoning[:4])  # Top 4 LLM insights
+                        
+                        # Add complementary static reasoning
+                        static_reasoning = static_analysis.get('reasoning', [])
+                        for reason in static_reasoning[:3]:  # Top 3 static insights
+                            if reason not in combined_reasoning:  # Avoid duplicates
+                                combined_reasoning.append(reason)
+                        
+                        # Add insight about analysis method
+                        combined_reasoning.append("AI analysis enhanced with domain-specific GPU knowledge")
+                        
+                        # Update the llm_reasoning with the combined insights
+                        llm_reasoning = combined_reasoning
+                    
                     self_review = None
         
         # Evaluate NVIDIA Best Practices compliance
@@ -4808,7 +4933,7 @@ class GPUAnalyzer:
         
         return assumptions
 
-    def generate_tiered_recommendations(self, vram_requirement, workload_type, use_case_context, consumer_viable=True):
+    def generate_tiered_recommendations(self, vram_requirement, workload_type, use_case_context, consumer_viable=True, sxm_required=False):
         """
         Generate tiered recommendations like Windows power modes:
         - Minimum: Power Saver (cheapest that works)
@@ -4820,11 +4945,12 @@ class GPUAnalyzer:
             workload_type: Type of workload (training, inference, etc.)
             use_case_context: Context about the use case
             consumer_viable: Whether consumer GPUs are viable for this workload
+            sxm_required: Whether SXM form factor is required
         """
         recommendations = {}
         
         # MINIMUM - "Power Saver Mode" - Absolute cheapest that will work
-        min_gpu = self._find_minimum_viable_gpu_strict(vram_requirement, consumer_viable)
+        min_gpu = self._find_minimum_viable_gpu_strict(vram_requirement, consumer_viable, sxm_required)
         if min_gpu:
             recommendations["budget_minimum"] = {
                 "gpu_name": min_gpu[0],
@@ -4836,7 +4962,7 @@ class GPUAnalyzer:
             }
         
         # RECOMMENDED - "Balanced Mode" - Best price/performance ratio
-        rec_gpu = self._find_balanced_gpu(vram_requirement, workload_type, consumer_viable)
+        rec_gpu = self._find_balanced_gpu(vram_requirement, workload_type, consumer_viable, sxm_required)
         if rec_gpu:
             recommendations["recommended"] = {
                 "gpu_name": rec_gpu[0],
@@ -4848,7 +4974,10 @@ class GPUAnalyzer:
             }
         
         # OPTIMAL - "Performance Mode" - Best performance within reason
-        optimal_gpu = self._find_performance_gpu(vram_requirement, workload_type, consumer_viable)
+        # Pass minimum and recommended GPU info to ensure proper hierarchy
+        min_gpu_name = min_gpu[0] if min_gpu else None
+        rec_gpu_name = rec_gpu[0] if rec_gpu else None
+        optimal_gpu = self._find_performance_gpu(vram_requirement, workload_type, consumer_viable, min_gpu_name, rec_gpu_name, sxm_required)
         if optimal_gpu:
             recommendations["optimal"] = {
                 "gpu_name": optimal_gpu[0],
@@ -4981,24 +5110,32 @@ class GPUAnalyzer:
         
         return output
 
-    def _find_minimum_viable_gpu_strict(self, vram_needed, consumer_viable=True):
+    def _find_minimum_viable_gpu_strict(self, vram_needed, consumer_viable=True, sxm_required=False):
         """Find the absolute cheapest GPU that meets VRAM requirements"""
+        # Filter by SXM requirement if specified
+        if sxm_required:
+            sxm_gpu_specs = {k: v for k, v in self.gpu_specs.items() if v.get('form_factor') == 'SXM'}
+            return find_best_gpu(sxm_gpu_specs, vram_needed, selection_mode='cost', consumer_viable=consumer_viable)
         return find_best_gpu(self.gpu_specs, vram_needed, selection_mode='cost', consumer_viable=consumer_viable)
 
-    def _find_balanced_gpu(self, vram_needed, workload_type, consumer_viable=True):
+    def _find_balanced_gpu(self, vram_needed, workload_type, consumer_viable=True, sxm_required=False):
         """Find GPU with best price/performance ratio"""
+        # Filter by SXM requirement if specified
+        if sxm_required:
+            sxm_gpu_specs = {k: v for k, v in self.gpu_specs.items() if v.get('form_factor') == 'SXM'}
+            return find_best_gpu(sxm_gpu_specs, vram_needed, selection_mode='balanced', 
+                               workload_type=workload_type, consumer_viable=consumer_viable, vram_headroom=1.3)
         return find_best_gpu(self.gpu_specs, vram_needed, selection_mode='balanced', 
                            workload_type=workload_type, consumer_viable=consumer_viable, vram_headroom=1.3)
 
-    def _find_performance_gpu(self, vram_needed, workload_type, consumer_viable=True):
+    def _find_performance_gpu(self, vram_needed, workload_type, consumer_viable=True, min_gpu=None, recommended_gpu=None, sxm_required=False):
         """Find high-performance GPU using context-aware optimal selection"""
         # Use context-aware selection for optimal performance
         workload_complexity = "moderate"  # Default complexity
-        sxm_required = False  # For single performance GPU, assume SXM not required
         quantity = 1  # Performance GPU is typically single GPU
         
         optimal_gpu, per_gpu_vram, final_quantity = self._determine_optimal_gpu(
-            workload_type, vram_needed, quantity, sxm_required, workload_complexity
+            workload_type, vram_needed, quantity, sxm_required, workload_complexity, min_gpu, recommended_gpu
         )
         
         # Return in the expected format (gpu_name, specs, score)
@@ -5009,6 +5146,12 @@ class GPUAnalyzer:
             return (optimal_gpu, specs, score)
         
         # Fallback to original method if optimal GPU not found
+        # Filter by SXM requirement if specified
+        if sxm_required:
+            sxm_gpu_specs = {k: v for k, v in self.gpu_specs.items() if v.get('form_factor') == 'SXM'}
+            return find_best_gpu(sxm_gpu_specs, vram_needed, selection_mode='performance', 
+                               workload_type=workload_type, consumer_viable=consumer_viable, 
+                               vram_headroom=1.5, max_cost_threshold=20.0)
         return find_best_gpu(self.gpu_specs, vram_needed, selection_mode='performance', 
                            workload_type=workload_type, consumer_viable=consumer_viable, 
                            vram_headroom=1.5, max_cost_threshold=20.0)
