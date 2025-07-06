@@ -918,11 +918,7 @@ def filter_and_organize_models(models_list):
     
     # Define specific model priorities
     top_priority_nemotron = [
-        'nvidia/llama-3.1-nemotron-ultra-253b-v1',  # Ultra - highest priority
-        'nvidia/llama-3.1-nemotron-nano-4b-v1.1',   # Nano
-        'nvidia/llama-3.1-nemotron-nano-8b-v1',     # Nano
-        'nvidia/llama-3.1-nemotron-51b-instruct',
-        'nvidia/llama-3.1-nemotron-70b-instruct'
+        'nvidia/llama-3.1-nemotron-ultra-253b-v1'  # Ultra - highest priority only
     ]
     
     preferred_models = {
@@ -932,9 +928,7 @@ def filter_and_organize_models(models_list):
             'meta/llama-4-scout-17b-16e-instruct'
         ],
         'mistralai': [
-            'mistralai/mistral-large-2-instruct',
-            'mistralai/mistral-medium-3-instruct',
-            'mistralai/mistral-small-3.1-24b-instruct-2503'
+            'mistralai/mistral-medium-3-instruct'
             # Removed mathstral - not suitable for general notebook analysis
         ]
     }
@@ -1095,7 +1089,10 @@ def filter_and_organize_models(models_list):
         'deepseek-ai/deepseek-r1', 'meta/llama3-70b-instruct', 'qwen/qwen2.5-7b-instruct',
         'meta/llama-3.1-405b-instruct', 'meta/llama-3.1-70b-instruct', 'meta/llama-3.1-8b-instruct',
         'meta/llama3-8b-instruct', 'mistralai/mamba-codestral-7b-v0.1', 'mistralai/mistral-7b-instruct-v0.2',
-        'mistralai/mistral-small-24b-instruct', 'mistralai/mixtral-8x7b-instruct-v0.1'
+        'mistralai/mistral-small-24b-instruct', 'mistralai/mixtral-8x7b-instruct-v0.1',
+        'nvidia/llama-3.1-nemotron-nano-4b-v1.1', 'nvidia/llama-3.1-nemotron-nano-8b-v1',
+        'nvidia/llama-3.1-nemotron-51b-instruct', 'nvidia/llama-3.1-nemotron-70b-instruct',
+        'mistralai/mistral-large-2-instruct', 'mistralai/mistral-small-3.1-24b-instruct-2503'
     ]
     
     def final_filter(model_list):
@@ -1117,15 +1114,13 @@ def get_fallback_models():
     """Fallback static model list when API is not available."""
     return {
         'nemotron': [
-            'nvidia/llama-3.1-nemotron-ultra-253b-v1',
-            'nvidia/llama-3.1-nemotron-70b-instruct',
-            'nvidia/llama-3.1-nemotron-51b-instruct'
+            'nvidia/llama-3.1-nemotron-ultra-253b-v1'
         ],
         'preferred': [
             'meta/llama-3.3-70b-instruct',
             'meta/llama-4-maverick-17b-128e-instruct',
             'meta/llama-4-scout-17b-16e-instruct',
-            'mistralai/mistral-large-2-instruct'
+            'mistralai/mistral-medium-3-instruct'
         ],
         'others': []
     }
