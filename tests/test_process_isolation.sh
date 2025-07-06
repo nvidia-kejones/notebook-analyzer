@@ -5,6 +5,11 @@
 
 set -e
 
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Get the project root directory (parent of tests/)
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
 # Colors for output
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -20,12 +25,12 @@ echo "Test 1: Basic Process Isolation"
 echo "--------------------------------"
 
 # Create a simple test Python script
-cat > test_process_isolation.py << 'EOF'
+cat > test_process_isolation.py << EOF
 #!/usr/bin/env python3
 
 import sys
 import os
-sys.path.insert(0, '../analyzer')
+sys.path.insert(0, '$PROJECT_ROOT/analyzer')
 
 try:
     from security_sandbox import SecuritySandbox
@@ -75,12 +80,12 @@ echo ""
 echo "Test 2: Resource Monitoring"
 echo "----------------------------"
 
-cat > test_resource_monitoring.py << 'EOF'
+cat > test_resource_monitoring.py << EOF
 #!/usr/bin/env python3
 
 import sys
 import os
-sys.path.insert(0, '../analyzer')
+sys.path.insert(0, '$PROJECT_ROOT/analyzer')
 
 try:
     from security_sandbox import SecuritySandbox
@@ -136,12 +141,12 @@ echo ""
 echo "Test 3: Process Termination"
 echo "----------------------------"
 
-cat > test_process_termination.py << 'EOF'
+cat > test_process_termination.py << EOF
 #!/usr/bin/env python3
 
 import sys
 import os
-sys.path.insert(0, '../analyzer')
+sys.path.insert(0, '$PROJECT_ROOT/analyzer')
 
 try:
     from security_sandbox import SecuritySandbox

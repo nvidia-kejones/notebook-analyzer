@@ -5,6 +5,11 @@
 
 set -e  # Exit on any error unless explicitly handled
 
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Get the project root directory (parent of tests/)
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
 # Default configuration
 DEFAULT_BASE_URL="http://localhost:8080"
 TIMEOUT=10
@@ -93,7 +98,7 @@ check_dependencies
 
 # Test if the service is accessible
 echo "🔍 Testing service availability..."
-if ! curl -s --connect-timeout 5 --max-time $TIMEOUT "$BASE_URL/" > /dev/null; then
+if ! curl -s --connect-timeout 5 --max-time $TIMEOUT -L "$BASE_URL" > /dev/null; then
     echo -e "${RED}❌ Service not accessible at $BASE_URL${NC}"
     echo "   Please ensure the Notebook Analyzer is running"
     exit 1
@@ -104,7 +109,7 @@ echo ""
 
 # Fetch headers from the home page
 echo "🔍 Testing security headers on home page..."
-RESPONSE=$(curl -I -s --max-time $TIMEOUT "$BASE_URL/")
+RESPONSE=$(curl -I -s --max-time $TIMEOUT -L "$BASE_URL")
 
 # Extract headers (handle multi-line headers by joining them)
 CSP_HEADER=$(echo "$RESPONSE" | sed -n '/^[Cc]ontent-[Ss]ecurity-[Pp]olicy:/,/^[A-Za-z-]*:/p' | sed '$d' | tr -d '\r\n' | sed 's/^[Cc]ontent-[Ss]ecurity-[Pp]olicy:[[:space:]]*//' | sed 's/[[:space:]]*$//')
@@ -166,7 +171,7 @@ COEP_SUCCESS=$?
 # Test API endpoint if available
 echo ""
 echo "🔍 Testing headers on health endpoint..."
-API_RESPONSE=$(curl -I -s --max-time $TIMEOUT "$BASE_URL/health" 2>/dev/null || echo "")
+API_RESPONSE=$(curl -I -s --max-time $TIMEOUT -L "$BASE_URL/health" 2>/dev/null || echo "")
 
 if [[ -n "$API_RESPONSE" ]]; then
     # Extract API headers (handle multi-line headers)

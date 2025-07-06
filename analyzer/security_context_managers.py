@@ -254,9 +254,8 @@ class SecurityContextManager:
         # Log process creation
         if self.logger:
             self.logger.log_process_isolation(
-                command=command[0] if command else "unknown",
-                process_id=process.pid,
-                client_ip=self.context.client_ip
+                command=command,
+                process_id=process.pid
             )
         
         # Set up timeout handler

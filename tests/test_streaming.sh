@@ -4,6 +4,11 @@
 
 set -e  # Exit on any error unless explicitly handled
 
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Get the project root directory (parent of tests/)
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
 # Default configuration
 DEFAULT_BASE_URL="http://localhost:8080"
 TIMEOUT=120

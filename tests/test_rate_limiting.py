@@ -82,8 +82,8 @@ def test_client_differentiation():
         from rate_limiter import SlidingWindowRateLimiter, RateLimitConfig
         
         config = RateLimitConfig(
-            requests_per_minute=3,
-            requests_per_hour=10,
+            requests_per_minute=10,
+            requests_per_hour=100,
             burst_limit=2
         )
         limiter = SlidingWindowRateLimiter(config)
@@ -92,14 +92,12 @@ def test_client_differentiation():
         client1 = "192.168.1.1"
         client2 = "192.168.1.2"
         
-        # Both clients should be able to make requests
+        # Client1 should be able to make up to burst_limit requests
         status1a = limiter.check_rate_limit(client1)
         status1b = limiter.check_rate_limit(client1)
-        status2a = limiter.check_rate_limit(client2)
-        status2b = limiter.check_rate_limit(client2)
         
-        if not (status1a.allowed and status1b.allowed and status2a.allowed and status2b.allowed):
-            print(f"❌ Client differentiation failed: {status1a.allowed}, {status1b.allowed}, {status2a.allowed}, {status2b.allowed}")
+        if not (status1a.allowed and status1b.allowed):
+            print(f"❌ Client1 should be allowed 2 requests: {status1a.allowed}, {status1b.allowed}")
             return False
         
         # Third request from client1 should be denied (burst limit)
@@ -108,14 +106,31 @@ def test_client_differentiation():
             print(f"❌ Client1 third request should have been denied")
             return False
         
-        # But client2 should still be able to make requests
+        # Now test that client2 is tracked separately and can still make requests
+        status2a = limiter.check_rate_limit(client2)
+        status2b = limiter.check_rate_limit(client2)
+        
+        if not (status2a.allowed and status2b.allowed):
+            print(f"❌ Client2 should be allowed 2 requests: {status2a.allowed}, {status2b.allowed}")
+            
+            # Debug: Get client stats
+            stats1 = limiter.get_client_stats(client1)
+            stats2 = limiter.get_client_stats(client2)
+            print(f"   Debug - Client1 stats: {stats1}")
+            print(f"   Debug - Client2 stats: {stats2}")
+            
+            return False
+        
+        # Client2's third request should also be denied (burst limit)
         status2c = limiter.check_rate_limit(client2)
         if status2c.allowed:
-            print("✅ Client differentiation works correctly")
-            return True
-        else:
-            print(f"❌ Client2 should still be allowed: {status2c}")
+            print(f"❌ Client2 third request should have been denied")
             return False
+        
+        print("✅ Client differentiation works correctly")
+        print("   - Each client is tracked separately")
+        print("   - Each client has independent burst limits")
+        return True
         
     except Exception as e:
         print(f"❌ Client differentiation test failed: {e}")

@@ -645,11 +645,12 @@ SCORING FRAMEWORK:
 
 
 class LLMAnalyzer:
-    def __init__(self, base_url: str, model: str, api_key: str, gpu_specs: Optional[Dict] = None):
+    def __init__(self, base_url: str, model: str, api_key: str, gpu_specs: Optional[Dict] = None, quiet_mode: bool = False):
         # Remove trailing slashes and /v1 suffix to avoid double /v1 in URLs
         self.base_url = base_url.rstrip('/').rstrip('/v1')
         self.model = model
         self.api_key = api_key
+        self.quiet_mode = quiet_mode
         self.headers = {
             'Authorization': f'Bearer {api_key}',
             'Content-Type': 'application/json'
@@ -663,10 +664,11 @@ class LLMAnalyzer:
         # Get environment-specific configuration
         self.env_config = get_environment_config()
         env_type = self.env_config.get('environment_type', 'unknown')
-        print(f"LLM Analyzer initialized for {env_type} environment")
+        if not self.quiet_mode:
+            print(f"LLM Analyzer initialized for {env_type} environment")
         
         # Debug environment detection
-        if is_production_environment():
+        if is_production_environment() and not self.quiet_mode:
             vercel_env = os.getenv('VERCEL_ENV', 'not_set')
             vercel_plan = os.getenv('VERCEL_PLAN', 'not_set')
             vercel_pro_features = os.getenv('VERCEL_PRO_FEATURES', 'not_set')
@@ -680,15 +682,16 @@ class LLMAnalyzer:
             print(f"🔍 Debug override: DEBUG_DETAILED_PHASES={debug_detailed_phases}")
         
         # Show final configuration
-        print(f"🔧 Configuration: detailed_phases={self.env_config.get('detailed_phases', False)}, self_review_enabled={self.env_config.get('self_review_enabled', False)}")
+        if not self.quiet_mode:
+            print(f"🔧 Configuration: detailed_phases={self.env_config.get('detailed_phases', False)}, self_review_enabled={self.env_config.get('self_review_enabled', False)}")
         
-        if env_type == 'vercel_pro':
+        if env_type == 'vercel_pro' and not self.quiet_mode:
             print("🚀 Vercel Pro features enabled: Full transparency + Smart self-review")
             print(f"🎓 Self-review enabled: {self.env_config.get('self_review_enabled', False)}")
-        elif env_type == 'vercel_free':
+        elif env_type == 'vercel_free' and not self.quiet_mode:
             print("⚡ Vercel Free plan detected: Simplified progress + Self-review disabled")
             print(f"💡 Tip: Set DEBUG_DETAILED_PHASES=true to see detailed progress for debugging")
-        else:
+        elif not self.quiet_mode:
             print(f"⚡ Self-review enabled: {self.env_config.get('self_review_enabled', False)}")
     
     # Runtime utility methods now use module-level functions
@@ -1501,13 +1504,15 @@ Be thorough but decisive. Flag real inconsistencies only."""
                 result = response.json()
                 content = result['choices'][0]['message']['content']
                 
-                # Enhanced debug logging for parsing issues
-                print(f"🔍 DEBUG: Self-review response length: {len(content)}")
+                # Enhanced debug logging for parsing issues (only in non-quiet mode)
+                if not self.quiet_mode:
+                    print(f"🔍 DEBUG: Self-review response length: {len(content)}")
                 # Save the problematic response to a file for analysis
                 try:
                     with open('/tmp/self_review_response.txt', 'w') as f:
                         f.write(content)
-                    print("🔍 DEBUG: Saved response to /tmp/self_review_response.txt")
+                    if not self.quiet_mode:
+                        print("🔍 DEBUG: Saved response to /tmp/self_review_response.txt")
                 except:
                     pass
                 
@@ -2127,7 +2132,8 @@ class GPUAnalyzer:
                 base_url=openai_base_url,
                 model=openai_model,
                 api_key=openai_api_key,
-                gpu_specs=self.gpu_specs
+                gpu_specs=self.gpu_specs,
+                quiet_mode=self.quiet_mode
             )
             if not self.quiet_mode:
                 if 'nvidia.com' in openai_base_url:

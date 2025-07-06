@@ -5,6 +5,11 @@
 
 set -e  # Exit on any error unless explicitly handled
 
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Get the project root directory (parent of tests/)
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
 # Configuration
 QUICK_MODE=false
 VERBOSE=false
@@ -108,11 +113,15 @@ check_dependencies() {
     fi
     
     # Check if analyzer module is importable
+    local current_dir=$(pwd)
+    cd "$PROJECT_ROOT"
     if ! python3 -c "from analyzer.core import GPUAnalyzer" 2>/dev/null; then
         echo -e "${RED}❌ Cannot import analyzer.core module${NC}"
-        echo "Please ensure you're running from the project root directory"
+        echo "Please ensure the analyzer module is available in the project root"
+        cd "$current_dir"
         exit 1
     fi
+    cd "$current_dir"
 }
 
 # Phase 1 Tests: Runtime Function Consolidation

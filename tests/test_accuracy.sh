@@ -6,6 +6,11 @@
 
 set -e  # Exit on any error
 
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Get the project root directory (parent of tests/)
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
 # Color codes for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -14,8 +19,8 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Test configuration
-EXAMPLES_DIR="../examples"
-TEST_RESULTS_DIR="results"
+EXAMPLES_DIR="$PROJECT_ROOT/examples"
+TEST_RESULTS_DIR="$SCRIPT_DIR/results"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 RESULTS_FILE="${TEST_RESULTS_DIR}/accuracy_test_${TIMESTAMP}.json"
 LOG_FILE="${TEST_RESULTS_DIR}/accuracy_test_${TIMESTAMP}.log"
@@ -93,7 +98,7 @@ analyze_notebook() {
     local analysis_exit_code=0
     
     # Use timeout to prevent hanging
-            if timeout $MAX_ANALYSIS_TIME python3 ../notebook-analyzer.py --json "$notebook_path" > /tmp/analysis_output_$$.json 2>/tmp/analysis_error_$$.log; then
+            if timeout $MAX_ANALYSIS_TIME python3 "$PROJECT_ROOT/notebook-analyzer.py" --json "$notebook_path" > /tmp/analysis_output_$$.json 2>/tmp/analysis_error_$$.log; then
         analysis_result=$(cat /tmp/analysis_output_$$.json)
     else
         analysis_exit_code=$?
@@ -236,8 +241,8 @@ check_prerequisites() {
     log_message "INFO" "Checking prerequisites..."
     
     # Check if notebook-analyzer.py exists
-    if [ ! -f "../notebook-analyzer.py" ]; then
-        log_message "ERROR" "notebook-analyzer.py not found in parent directory"
+    if [ ! -f "$PROJECT_ROOT/notebook-analyzer.py" ]; then
+        log_message "ERROR" "notebook-analyzer.py not found in project root"
         exit 1
     fi
     
@@ -297,7 +302,7 @@ main() {
     local notebook_files=()
     while IFS= read -r -d '' file; do
         notebook_files+=("$file")
-    done < <(find "$EXAMPLES_DIR" -name "*.ipynb" -o -name "*.py" -print0 | sort -z)
+    done < <(find "$EXAMPLES_DIR" \( -name "*.ipynb" -o -name "*.py" \) -print0 | sort -z)
     
     if [ ${#notebook_files[@]} -eq 0 ]; then
         log_message "ERROR" "No notebook files found in $EXAMPLES_DIR"
