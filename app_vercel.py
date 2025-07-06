@@ -928,9 +928,6 @@ def filter_and_organize_models(models_list):
     preferred_models = {
         'meta': [
             'meta/llama-3.3-70b-instruct',
-            'meta/llama-3.1-405b-instruct',
-            'meta/llama-3.1-70b-instruct',
-            'meta/llama-3.1-8b-instruct',
             'meta/llama-4-maverick-17b-128e-instruct',
             'meta/llama-4-scout-17b-16e-instruct'
         ],
@@ -939,12 +936,6 @@ def filter_and_organize_models(models_list):
             'mistralai/mistral-medium-3-instruct',
             'mistralai/mistral-small-3.1-24b-instruct-2503'
             # Removed mathstral - not suitable for general notebook analysis
-        ],
-        'deepseek-ai': [
-            'deepseek-ai/deepseek-r1'
-        ],
-        'qwen': [
-            'qwen/qwen2.5-7b-instruct'
         ]
     }
     
@@ -1100,7 +1091,11 @@ def filter_and_organize_models(models_list):
     # Final filtering to remove any unwanted models that slipped through
     final_exclude_patterns = [
         'nemotron-4-340b', 'nemotron-mini', 'gemma', 'codegemma', 
-        'codellama', 'nemotron-super', 'deepseek-coder-6.7b-instruct'
+        'codellama', 'nemotron-super', 'deepseek-coder-6.7b-instruct',
+        'deepseek-ai/deepseek-r1', 'meta/llama3-70b-instruct', 'qwen/qwen2.5-7b-instruct',
+        'meta/llama-3.1-405b-instruct', 'meta/llama-3.1-70b-instruct', 'meta/llama-3.1-8b-instruct',
+        'meta/llama3-8b-instruct', 'mistralai/mamba-codestral-7b-v0.1', 'mistralai/mistral-7b-instruct-v0.2',
+        'mistralai/mistral-small-24b-instruct', 'mistralai/mixtral-8x7b-instruct-v0.1'
     ]
     
     def final_filter(model_list):
@@ -1128,13 +1123,9 @@ def get_fallback_models():
         ],
         'preferred': [
             'meta/llama-3.3-70b-instruct',
-            'meta/llama-3.1-405b-instruct',
-            'meta/llama-3.1-70b-instruct',
             'meta/llama-4-maverick-17b-128e-instruct',
             'meta/llama-4-scout-17b-16e-instruct',
-            'mistralai/mistral-large-2-instruct',
-            'deepseek-ai/deepseek-r1',
-            'qwen/qwen2.5-7b-instruct'
+            'mistralai/mistral-large-2-instruct'
         ],
         'others': []
     }

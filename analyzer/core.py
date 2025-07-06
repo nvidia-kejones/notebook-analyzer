@@ -937,20 +937,36 @@ Be accurate and specific. Provide evidence-based reasoning."""
             if "nemotron" in self.model.lower():
                 system_prompt += " Provide direct, concise responses without detailed thinking steps."
             
+            # DEEPSEEK R1 FIX: Optimize for fast responses without extensive thinking
+            if "deepseek-r1" in self.model.lower():
+                system_prompt += " Respond immediately with your analysis. Do not show thinking process or reasoning steps. Provide only the final JSON response."
+            
+            # DEEPSEEK R1 FIX: Optimize request parameters for faster responses
+            request_params = {
+                "model": self.model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": 0.3,  # ANALYSIS: Increased from 0.2 to prevent hangs with Nemotron Ultra
+                "max_tokens": 800,   # NEMOTRON ULTRA FIX: Increased from 500 to prevent truncation
+                "response_format": {"type": "json_object"}  # OPTIMIZATION: Force JSON response
+            }
+            
+            # DEEPSEEK R1 OPTIMIZATION: Add specific parameters to reduce thinking time
+            if "deepseek-r1" in self.model.lower():
+                request_params.update({
+                    "temperature": 0.1,  # Lower temperature for more direct responses
+                    "max_tokens": 600,   # Reduced tokens to encourage concise responses
+                    "top_p": 0.8,        # Reduced top_p for more focused responses
+                    "frequency_penalty": 0.1  # Slight penalty to avoid repetitive thinking
+                })
+            
             response = make_api_request_with_retry(
                 session=session,
                 url=f"{self.base_url}/v1/chat/completions",
                 headers=self.headers,
-                json_data={
-                    "model": self.model,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": prompt}
-                    ],
-                    "temperature": 0.3,  # ANALYSIS: Increased from 0.2 to prevent hangs with Nemotron Ultra
-                    "max_tokens": 800,   # NEMOTRON ULTRA FIX: Increased from 500 to prevent truncation
-                    "response_format": {"type": "json_object"}  # OPTIMIZATION: Force JSON response
-                },
+                json_data=request_params,
                 timeout=self._get_analysis_timeout(),
                 max_retries=3,
                 progress_callback=progress_callback
@@ -1481,19 +1497,35 @@ Be thorough but decisive. Flag real inconsistencies only."""
             if "nemotron" in self.model.lower():
                 system_prompt += " Provide direct, concise responses without detailed thinking steps."
             
+            # DEEPSEEK R1 FIX: Optimize for fast responses without extensive thinking
+            if "deepseek-r1" in self.model.lower():
+                system_prompt += " Respond immediately with your review. Do not show thinking process or reasoning steps. Provide only the final JSON response."
+            
+            # DEEPSEEK R1 FIX: Optimize request parameters for faster self-review
+            request_params = {
+                "model": self.model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": 0.4,  # SELF-REVIEW: Higher for more creative issue detection
+                "max_tokens": self._get_self_review_max_tokens()
+            }
+            
+            # DEEPSEEK R1 OPTIMIZATION: Add specific parameters to reduce thinking time
+            if "deepseek-r1" in self.model.lower():
+                request_params.update({
+                    "temperature": 0.2,  # Lower temperature for more direct responses
+                    "max_tokens": min(600, self._get_self_review_max_tokens()),  # Cap tokens for efficiency
+                    "top_p": 0.8,        # Reduced top_p for more focused responses
+                    "frequency_penalty": 0.1  # Slight penalty to avoid repetitive thinking
+                })
+            
             response = make_api_request_with_retry(
                 session=session,
                 url=f"{self.base_url}/v1/chat/completions",
                 headers=self.headers,
-                json_data={
-                    "model": self.model,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": prompt}
-                    ],
-                    "temperature": 0.4,  # SELF-REVIEW: Higher for more creative issue detection
-                    "max_tokens": self._get_self_review_max_tokens()
-                },
+                json_data=request_params,
                 timeout=self._get_self_review_timeout(),
                 max_retries=3,
                 progress_callback=progress_callback
@@ -1988,19 +2020,35 @@ Focus on major issues. Be specific and actionable."""
             if "nemotron" in self.model.lower():
                 system_prompt += " Provide direct, concise responses without detailed thinking steps."
             
+            # DEEPSEEK R1 FIX: Optimize for fast responses without extensive thinking
+            if "deepseek-r1" in self.model.lower():
+                system_prompt += " Respond immediately with your evaluation. Do not show thinking process or reasoning steps. Provide only the final JSON response."
+            
+            # DEEPSEEK R1 FIX: Optimize request parameters for faster compliance evaluation
+            request_params = {
+                "model": self.model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": 0.3,  # COMPLIANCE: Increased from 0.1 to prevent hangs with reasoning models
+                "max_tokens": 1200   # NEMOTRON ULTRA FIX: Increased from 800 to prevent truncation
+            }
+            
+            # DEEPSEEK R1 OPTIMIZATION: Add specific parameters to reduce thinking time
+            if "deepseek-r1" in self.model.lower():
+                request_params.update({
+                    "temperature": 0.1,  # Lower temperature for more direct responses
+                    "max_tokens": 800,   # Reduced tokens for efficiency
+                    "top_p": 0.8,        # Reduced top_p for more focused responses
+                    "frequency_penalty": 0.1  # Slight penalty to avoid repetitive thinking
+                })
+            
             response = make_api_request_with_retry(
                 session=session,
                 url=f"{self.base_url}/v1/chat/completions",
                 headers=self.headers,
-                json_data={
-                    "model": self.model,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": prompt}
-                    ],
-                    "temperature": 0.3,  # COMPLIANCE: Increased from 0.1 to prevent hangs with reasoning models
-                    "max_tokens": 1200   # NEMOTRON ULTRA FIX: Increased from 800 to prevent truncation
-                },
+                json_data=request_params,
                 timeout=self._get_compliance_timeout(),
                 max_retries=3,
                 progress_callback=None  # No progress callback for compliance check to avoid UI spam
