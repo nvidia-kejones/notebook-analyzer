@@ -873,7 +873,42 @@ class LLMAnalyzer:
             elif progress_callback:
                 progress_callback("🧠 Preparing AI analysis request...")
             
-            prompt = f"""Analyze this notebook for GPU requirements. Be quick and precise.
+            # Create different prompts for different model types
+            if "instruct" in self.model.lower() and "nemotron" not in self.model.lower():
+                # SIMPLIFIED PROMPT FOR INSTRUCT MODELS
+                prompt = f"""Analyze this notebook for GPU requirements. Return only JSON.
+
+Look for:
+- ML/AI frameworks: torch, tensorflow, transformers
+- GPU operations: .cuda(), .to('cuda'), device='cuda'
+- Model loading: AutoModelForCausalLM, pipeline(), model.from_pretrained()
+- Training: optimizer, loss.backward(), DataLoader
+
+If basic Python only (print, variables, simple data): workload_type="cpu-only", estimated_vram_gb=0
+
+For GPU workloads:
+- Small models (BERT): 4GB
+- Medium models (GPT-2): 8GB  
+- Large models (Llama-7B): 16GB
+- Very large models (Llama-13B+): 24GB+
+
+**Code:**
+{notebook_content}
+
+**JSON Response:**
+{{
+    "workload_type": "cpu-only|inference|training|gpu-computing",
+    "complexity": "simple|moderate|complex",
+    "models_detected": ["model-name"],
+    "estimated_vram_gb": number,
+    "multi_gpu_required": boolean,
+    "memory_optimizations": ["technique"],
+    "confidence": 0.0-1.0,
+    "reasoning": ["evidence 1", "evidence 2"]
+}}"""
+            else:
+                # FULL PROMPT FOR NEMOTRON AND OTHER MODELS
+                prompt = f"""Analyze this notebook for GPU requirements. Be quick and precise.
 
 **STEP 1: CPU-Only Check**
 If this is basic Python (print, variables, simple data analysis, no ML/AI), return workload_type: "cpu-only" and estimated_vram_gb: 0.
@@ -941,6 +976,10 @@ Be accurate and specific. Provide evidence-based reasoning."""
             if "deepseek-r1" in self.model.lower():
                 system_prompt += " Respond immediately with your analysis. Do not show thinking process or reasoning steps. Provide only the final JSON response."
             
+            # INSTRUCT MODELS FIX: Optimize for fast responses without extensive reasoning
+            if "instruct" in self.model.lower() and "nemotron" not in self.model.lower():
+                system_prompt += " Provide direct, concise analysis without detailed reasoning steps. Focus on the essential GPU requirements only."
+            
             # DEEPSEEK R1 FIX: Optimize request parameters for faster responses
             request_params = {
                 "model": self.model,
@@ -950,8 +989,11 @@ Be accurate and specific. Provide evidence-based reasoning."""
                 ],
                 "temperature": 0.3,  # ANALYSIS: Increased from 0.2 to prevent hangs with Nemotron Ultra
                 "max_tokens": 800,   # NEMOTRON ULTRA FIX: Increased from 500 to prevent truncation
-                "response_format": {"type": "json_object"}  # OPTIMIZATION: Force JSON response
             }
+            
+            # Only use JSON response format for non-instruct models
+            if not ("instruct" in self.model.lower() and "nemotron" not in self.model.lower()):
+                request_params["response_format"] = {"type": "json_object"}  # OPTIMIZATION: Force JSON response
             
             # DEEPSEEK R1 OPTIMIZATION: Add specific parameters to reduce thinking time
             if "deepseek-r1" in self.model.lower():
@@ -960,6 +1002,17 @@ Be accurate and specific. Provide evidence-based reasoning."""
                     "max_tokens": 600,   # Reduced tokens to encourage concise responses
                     "top_p": 0.8,        # Reduced top_p for more focused responses
                     "frequency_penalty": 0.1  # Slight penalty to avoid repetitive thinking
+                })
+            
+            # INSTRUCT MODELS OPTIMIZATION: Add specific parameters for faster responses
+            if "instruct" in self.model.lower() and "nemotron" not in self.model.lower():
+                request_params.update({
+                    "temperature": 0.1,  # Very low temperature for direct responses
+                    "max_tokens": 500,   # Significantly reduced tokens to force conciseness
+                    "top_p": 0.8,        # Reduced top_p for more focused responses
+                    "frequency_penalty": 0.1,  # Higher penalty to avoid repetitive reasoning
+                    "presence_penalty": 0.1,    # Additional penalty to encourage brevity
+                    "stop": ["\n\n\n", "---", "###"]  # Stop on multiple newlines or markdown headers
                 })
             
             response = make_api_request_with_retry(
@@ -1426,7 +1479,36 @@ LLM REASONING:
 {chr(10).join(f"• {reason}" for reason in llm_reasoning[:5])}
 """
 
-            prompt = f"""Review this GPU analysis quickly. Focus on key issues only.
+            # Create different prompts for different model types
+            if "instruct" in self.model.lower() and "nemotron" not in self.model.lower():
+                # SIMPLIFIED SELF-REVIEW PROMPT FOR INSTRUCT MODELS
+                prompt = f"""Review this GPU analysis. Return only JSON.
+
+**ANALYSIS:**
+{analysis_summary}
+
+Check:
+1. CPU-only consistency: workload_type="cpu-only" → estimated_vram_gb=0
+2. GPU workload validation: estimated_vram_gb > 0 → workload_type ≠ "cpu-only"
+3. Model-VRAM consistency: detected models match VRAM estimates
+4. Confidence validation: confidence matches evidence strength
+
+**JSON Response:**
+{{
+    "review_passed": true/false,
+    "consistency_issues": ["issue 1", "issue 2"],
+    "recommended_corrections": {{
+        "workload_type": "corrected_type_if_needed",
+        "confidence": integer_0_to_100,
+        "min_gpu_type": "GPU_NAME_or_CPU-only",
+        "estimated_vram_gb": number_if_needed
+    }},
+    "unified_reasoning": ["point 1", "point 2"],
+    "overall_assessment": "brief summary"
+}}"""
+            else:
+                # FULL SELF-REVIEW PROMPT FOR NEMOTRON AND OTHER MODELS
+                prompt = f"""Review this GPU analysis quickly. Focus on key issues only.
 
 **CODE SAMPLE:**
 {notebook_sample}
@@ -1501,6 +1583,10 @@ Be thorough but decisive. Flag real inconsistencies only."""
             if "deepseek-r1" in self.model.lower():
                 system_prompt += " Respond immediately with your review. Do not show thinking process or reasoning steps. Provide only the final JSON response."
             
+            # INSTRUCT MODELS FIX: Optimize for fast responses without extensive reasoning
+            if "instruct" in self.model.lower() and "nemotron" not in self.model.lower():
+                system_prompt += " Provide direct, concise review without detailed reasoning steps. Focus on key consistency issues only."
+            
             # DEEPSEEK R1 FIX: Optimize request parameters for faster self-review
             request_params = {
                 "model": self.model,
@@ -1519,6 +1605,17 @@ Be thorough but decisive. Flag real inconsistencies only."""
                     "max_tokens": min(600, self._get_self_review_max_tokens()),  # Cap tokens for efficiency
                     "top_p": 0.8,        # Reduced top_p for more focused responses
                     "frequency_penalty": 0.1  # Slight penalty to avoid repetitive thinking
+                })
+            
+            # INSTRUCT MODELS OPTIMIZATION: Add specific parameters for faster self-review
+            if "instruct" in self.model.lower() and "nemotron" not in self.model.lower():
+                request_params.update({
+                    "temperature": 0.1,  # Very low temperature for direct responses
+                    "max_tokens": min(400, self._get_self_review_max_tokens()),  # Severely cap tokens for efficiency
+                    "top_p": 0.8,        # Reduced top_p for more focused responses
+                    "frequency_penalty": 0.1,  # Higher penalty to avoid repetitive reasoning
+                    "presence_penalty": 0.1,    # Additional penalty to encourage brevity
+                    "stop": ["\n\n\n", "---", "###"]  # Stop on multiple newlines or markdown headers
                 })
             
             response = make_api_request_with_retry(
@@ -1967,7 +2064,38 @@ Be thorough but decisive. Flag real inconsistencies only."""
             # Get comprehensive guidelines for the prompt
             guidelines_text = self.best_practices.get_guidelines_for_evaluation()
             
-            prompt = f"""Rate this notebook against NVIDIA best practices. Be quick and efficient.
+            # Create different prompts for different model types
+            if "instruct" in self.model.lower() and "nemotron" not in self.model.lower():
+                # SIMPLIFIED COMPLIANCE PROMPT FOR INSTRUCT MODELS
+                prompt = f"""Rate this notebook against NVIDIA best practices. Return only JSON.
+
+Score each area 0-25 points:
+1. Structure: title, introduction, logical flow, conclusion
+2. Content: documentation, explanations, code comments
+3. Technical: requirements.txt, environment setup, reproducibility
+4. NVIDIA: branding, developer messaging, tool usage
+
+**NOTEBOOK:**
+{structure_sample}
+
+**JSON Response:**
+{{
+    "structure_score": 0-25,
+    "content_score": 0-25, 
+    "technical_score": 0-25,
+    "nvidia_score": 0-25,
+    "total_score": 0-100,
+    "structure_issues": ["issue 1"],
+    "content_issues": ["issue 1"],
+    "technical_issues": ["issue 1"],
+    "nvidia_issues": ["issue 1"],
+    "strengths": ["strength 1"],
+    "recommendations": ["rec 1"],
+    "confidence": 0.0-1.0
+}}"""
+            else:
+                # FULL COMPLIANCE PROMPT FOR NEMOTRON AND OTHER MODELS
+                prompt = f"""Rate this notebook against NVIDIA best practices. Be quick and efficient.
 
 **EVALUATE 4 AREAS (25 points each):**
 1. **Structure (25pts)**: Clear title, introduction, logical flow, conclusion
@@ -2024,6 +2152,10 @@ Focus on major issues. Be specific and actionable."""
             if "deepseek-r1" in self.model.lower():
                 system_prompt += " Respond immediately with your evaluation. Do not show thinking process or reasoning steps. Provide only the final JSON response."
             
+            # INSTRUCT MODELS FIX: Optimize for fast responses without extensive reasoning
+            if "instruct" in self.model.lower() and "nemotron" not in self.model.lower():
+                system_prompt += " Provide direct, concise evaluation without detailed reasoning steps. Focus on key compliance issues only."
+            
             # DEEPSEEK R1 FIX: Optimize request parameters for faster compliance evaluation
             request_params = {
                 "model": self.model,
@@ -2042,6 +2174,17 @@ Focus on major issues. Be specific and actionable."""
                     "max_tokens": 800,   # Reduced tokens for efficiency
                     "top_p": 0.8,        # Reduced top_p for more focused responses
                     "frequency_penalty": 0.1  # Slight penalty to avoid repetitive thinking
+                })
+            
+            # INSTRUCT MODELS OPTIMIZATION: Add specific parameters for faster compliance evaluation
+            if "instruct" in self.model.lower() and "nemotron" not in self.model.lower():
+                request_params.update({
+                    "temperature": 0.1,  # Very low temperature for direct responses
+                    "max_tokens": 600,   # Significantly reduced tokens for efficiency
+                    "top_p": 0.8,        # Reduced top_p for more focused responses
+                    "frequency_penalty": 0.1,  # Higher penalty to avoid repetitive reasoning
+                    "presence_penalty": 0.1,    # Additional penalty to encourage brevity
+                    "stop": ["\n\n\n", "---", "###"]  # Stop on multiple newlines or markdown headers
                 })
             
             response = make_api_request_with_retry(

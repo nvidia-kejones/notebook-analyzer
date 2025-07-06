@@ -923,7 +923,9 @@ def filter_and_organize_models(models_list):
     
     preferred_models = {
         'meta': [
-            'meta/llama-3.3-70b-instruct'
+            'meta/llama-3.3-70b-instruct',
+            'meta/llama-4-maverick-17b-128e-instruct',
+            'meta/llama-4-scout-17b-16e-instruct'
         ],
         'mistralai': [
             'mistralai/mistral-medium-3-instruct'
@@ -1090,8 +1092,7 @@ def filter_and_organize_models(models_list):
         'mistralai/mistral-small-24b-instruct', 'mistralai/mixtral-8x7b-instruct-v0.1',
         'nvidia/llama-3.1-nemotron-nano-4b-v1.1', 'nvidia/llama-3.1-nemotron-nano-8b-v1',
         'nvidia/llama-3.1-nemotron-51b-instruct', 'nvidia/llama-3.1-nemotron-70b-instruct',
-        'mistralai/mistral-large-2-instruct', 'mistralai/mistral-small-3.1-24b-instruct-2503',
-        'meta/llama-4-scout-17b-16e-instruct', 'meta/llama-4-maverick-17b-128e-instruct'
+        'mistralai/mistral-large-2-instruct', 'mistralai/mistral-small-3.1-24b-instruct-2503'
     ]
     
     def final_filter(model_list):
@@ -1113,10 +1114,13 @@ def get_fallback_models():
     """Fallback static model list when API is not available."""
     return {
         'nemotron': [
-            'nvidia/llama-3.1-nemotron-ultra-253b-v1'
+            'nvidia/llama-3.1-nemotron-ultra-253b-v1',
+            'nvidia/mistral-nemo-minitron-8b-8k-instruct'
         ],
         'preferred': [
             'meta/llama-3.3-70b-instruct',
+            'meta/llama-4-maverick-17b-128e-instruct',
+            'meta/llama-4-scout-17b-16e-instruct',
             'mistralai/mistral-medium-3-instruct'
         ],
         'others': []
