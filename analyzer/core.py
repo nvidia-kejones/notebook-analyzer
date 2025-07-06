@@ -3520,42 +3520,68 @@ class GPUAnalyzer:
             'runtime': runtime
         }
     
+    def _determine_optimal_gpu(self, workload_type: str, vram_needed: int, quantity: int, 
+                             sxm_required: bool, workload_complexity: str = "moderate") -> tuple:
+        """
+        Context-aware optimal GPU selection that balances performance with practicality.
+        
+        Args:
+            workload_type: Type of workload (training, inference, etc.)
+            vram_needed: Total VRAM requirement in GB
+            quantity: Number of GPUs needed
+            sxm_required: Whether SXM form factor is required
+            workload_complexity: Complexity level of the workload
+            
+        Returns:
+            tuple: (gpu_name, per_gpu_vram, total_quantity)
+        """
+        per_gpu_vram: int = vram_needed // quantity if quantity > 1 else vram_needed
+        
+        # 1. LARGE-SCALE/MULTI-GPU WORKLOADS: Use data center SXM
+        if sxm_required or quantity >= 4:
+            if per_gpu_vram <= 80:
+                return ("H100 SXM", 80, quantity)
+            elif per_gpu_vram <= 141:
+                return ("H200 SXM", 141, quantity)
+            else:
+                return ("B200 SXM", 192, quantity)
+        
+        # 2. RESEARCH/CUTTING-EDGE WORKLOADS: Use latest data center
+        if workload_type in ["research", "cutting_edge"] or workload_complexity == "extreme":
+            if per_gpu_vram <= 80:
+                return ("H100 SXM", 80, min(quantity, 2))
+            elif per_gpu_vram <= 141:
+                return ("H200 SXM", 141, min(quantity, 2))
+            else:
+                return ("B200 SXM", 192, min(quantity, 2))
+        
+        # 3. HIGH VRAM SINGLE-GPU WORKLOADS: Use enterprise PCIe
+        if per_gpu_vram > 48 and quantity <= 2:
+            if per_gpu_vram <= 80:
+                return ("A100 PCIe 80G", 80, quantity)
+            else:
+                return ("H100 PCIe", 80, quantity)
+        
+        # 4. STANDARD WORKLOADS: Use enterprise PCIe (most practical)
+        if per_gpu_vram <= 24:
+            return ("L40S", 48, quantity)  # L40S provides good headroom
+        elif per_gpu_vram <= 48:
+            return ("L40S", 48, quantity)
+        else:
+            return ("A100 PCIe 80G", 80, quantity)
+    
     def _generate_enterprise_recommendation(self, vram_needed: int, quantity: int, workload_type: str, 
                                           sxm_required: bool, llm_runtime_data: Optional[Dict] = None) -> Dict:
-        """Generate enterprise GPU recommendation based on requirements."""
+        """Generate enterprise GPU recommendation using context-aware optimal selection."""
         
-        # Calculate per-GPU VRAM requirement
-        per_gpu_vram = vram_needed // quantity if quantity > 0 else vram_needed
+        # Use the new context-aware optimal GPU selection
+        workload_complexity = "moderate"  # Default complexity, could be enhanced later
+        optimal_gpu, per_gpu_vram, final_quantity = self._determine_optimal_gpu(
+            workload_type, vram_needed, quantity, sxm_required, workload_complexity
+        )
         
-        # Select based on VRAM needs and SXM requirements
-        if sxm_required:
-            # Use SXM GPUs for large-scale workloads
-            if per_gpu_vram <= 80:  # Each GPU needs ≤80GB
-                gpu_type = 'A100 SXM 80G'
-                vram = 80
-            elif per_gpu_vram <= 141:  # Each GPU needs ≤141GB
-                gpu_type = 'H200 SXM'
-                vram = 141
-            else:  # Each GPU needs >141GB
-                gpu_type = 'B200 SXM'
-                vram = 192
-        else:
-            # Use PCIe enterprise GPUs for more moderate scale
-            if per_gpu_vram <= 24:
-                gpu_type = 'L40S'
-                vram = 48
-            elif per_gpu_vram <= 40:
-                gpu_type = 'A100 PCIe 40G'
-                vram = 40
-            elif per_gpu_vram <= 48:
-                gpu_type = 'L40S'
-                vram = 48
-            elif per_gpu_vram <= 80:
-                gpu_type = 'A100 PCIe 80G'
-                vram = 80
-            else:
-                gpu_type = 'H100 PCIe'
-                vram = 80
+        gpu_type = optimal_gpu
+        vram = per_gpu_vram
         
         total_vram = vram * quantity
         
@@ -4965,7 +4991,24 @@ class GPUAnalyzer:
                            workload_type=workload_type, consumer_viable=consumer_viable, vram_headroom=1.3)
 
     def _find_performance_gpu(self, vram_needed, workload_type, consumer_viable=True):
-        """Find high-performance GPU within reasonable cost bounds"""
+        """Find high-performance GPU using context-aware optimal selection"""
+        # Use context-aware selection for optimal performance
+        workload_complexity = "moderate"  # Default complexity
+        sxm_required = False  # For single performance GPU, assume SXM not required
+        quantity = 1  # Performance GPU is typically single GPU
+        
+        optimal_gpu, per_gpu_vram, final_quantity = self._determine_optimal_gpu(
+            workload_type, vram_needed, quantity, sxm_required, workload_complexity
+        )
+        
+        # Return in the expected format (gpu_name, specs, score)
+        if optimal_gpu in self.gpu_specs:
+            specs = self.gpu_specs[optimal_gpu]
+            # Use performance factor as score for consistency
+            score = specs.get('performance_factor', 1.0)
+            return (optimal_gpu, specs, score)
+        
+        # Fallback to original method if optimal GPU not found
         return find_best_gpu(self.gpu_specs, vram_needed, selection_mode='performance', 
                            workload_type=workload_type, consumer_viable=consumer_viable, 
                            vram_headroom=1.5, max_cost_threshold=20.0)
