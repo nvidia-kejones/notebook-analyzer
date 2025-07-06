@@ -745,6 +745,20 @@ class LLMAnalyzer:
             # Default/Vercel Free: Standard limit
             return 1000
     
+    def _get_analysis_timeout(self) -> int:
+        """Get timeout for main analysis calls."""
+        return self.env_config['llm_timeout']  # Standard timeout for analysis
+    
+    def _get_self_review_timeout(self) -> int:
+        """Get timeout for self-review calls."""
+        base_timeout = self.env_config['llm_timeout']
+        return int(base_timeout * 0.8)  # 20% shorter for self-review
+    
+    def _get_compliance_timeout(self) -> int:
+        """Get timeout for compliance calls."""
+        base_timeout = self.env_config['llm_timeout']
+        return int(base_timeout * 0.6)  # 40% shorter for compliance (simpler task)
+    
     def analyze_notebook_context(self, code_cells: List[str], markdown_cells: List[str], progress_callback=None) -> Optional[Dict]:
         """Send notebook to LLM for contextual analysis."""
         try:
@@ -861,12 +875,30 @@ class LLMAnalyzer:
 **STEP 1: CPU-Only Check**
 If this is basic Python (print, variables, simple data analysis, no ML/AI), return workload_type: "cpu-only" and estimated_vram_gb: 0.
 
+**CPU-Only Examples:** Basic Python operations, simple data manipulation, file I/O, small pandas/numpy operations, basic visualization, tutorials with no computational workload.
+
 **STEP 2: GPU Workload Analysis**
 For GPU workloads, identify:
 - Workload type: inference|fine-tuning|training|gpu-computing
-- Models and their VRAM needs
-- Batch sizes and scale
-- Memory optimizations (LoRA, quantization)
+- Models and their VRAM needs (be specific: "llama-7b needs 14GB", "stable-diffusion needs 8GB")
+- Batch sizes and scale indicators
+- Memory optimizations (LoRA, quantization, gradient checkpointing)
+- Multi-GPU indicators (DataParallel, DistributedDataParallel, model.parallel)
+
+**GPU Workload Indicators:**
+- ML/AI frameworks: torch, tensorflow, transformers, diffusers
+- Large model loading: AutoModelForCausalLM, pipeline(), model.from_pretrained()
+- GPU operations: .cuda(), .to('cuda'), device='cuda'
+- Training patterns: optimizer, loss.backward(), DataLoader
+- Inference patterns: model.generate(), model(), predict()
+
+**VRAM Estimation Guidelines:**
+- Small models (BERT, DistilBERT): 2-4GB
+- Medium models (GPT-2, T5-base): 4-8GB  
+- Large models (Llama-7B, GPT-3.5): 14-16GB
+- Very large models (Llama-13B+): 24GB+
+- Add 20-50% overhead for training vs inference
+- Multi-GPU: estimate per-GPU VRAM, not total
 
 **Valid GPUs**: RTX 4060, RTX 4070, RTX 4080, RTX 4090, RTX 5080, RTX 5090, L4, L40, L40S, A100 PCIe 40G, A100 PCIe 80G, A100 SXM 40G, A100 SXM 80G, H100 PCIe, H100 SXM, H100 NVL, H200 SXM, H200 NVL, B200 SXM
 
@@ -877,15 +909,15 @@ For GPU workloads, identify:
 {{
     "workload_type": "cpu-only|inference|fine-tuning|training|gpu-computing",
     "complexity": "simple|moderate|complex",
-    "models_detected": ["model1", "model2"],
+    "models_detected": ["specific-model-name-and-size"],
     "estimated_vram_gb": number,
     "multi_gpu_required": boolean,
     "memory_optimizations": ["technique1"],
     "confidence": 0.0-1.0,
-    "reasoning": ["key reason 1", "key reason 2"]
+    "reasoning": ["specific evidence 1", "specific evidence 2"]
 }}
 
-Focus on accuracy and speed. Avoid overthinking."""
+Be accurate and specific. Provide evidence-based reasoning."""
 
             # Phase 5: AI Analysis Request (simplified in production)
             if progress_callback and self.env_config['detailed_phases']:
@@ -912,10 +944,11 @@ Focus on accuracy and speed. Avoid overthinking."""
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": prompt}
                     ],
-                    "temperature": 0.3,  # NEMOTRON ULTRA FIX: Increased from 0.1 to reduce hanging
-                    "max_tokens": 800    # NEMOTRON ULTRA FIX: Increased from 500 to prevent truncation
+                    "temperature": 0.2,  # ANALYSIS: Lower for more consistent GPU analysis
+                    "max_tokens": 800,   # NEMOTRON ULTRA FIX: Increased from 500 to prevent truncation
+                    "response_format": {"type": "json_object"}  # OPTIMIZATION: Force JSON response
                 },
-                timeout=self.env_config['llm_timeout'],
+                timeout=self._get_analysis_timeout(),
                 max_retries=3,
                 progress_callback=progress_callback
             )
@@ -1377,28 +1410,38 @@ LLM REASONING:
 **ANALYSIS:**
 {analysis_summary}
 
-**QUICK CHECKS:**
-1. CPU-only workload? (basic Python, no ML/AI) → All tiers should be "CPU-only"
-2. GPU workload? → All three tiers need actual GPU recommendations
-3. Tier progression logical? (min ≤ recommended ≤ optimal)
-4. Confidence matches evidence?
+**CRITICAL VALIDATION CHECKS:**
+1. **CPU-only consistency**: If workload_type="cpu-only", then estimated_vram_gb must be 0
+2. **GPU workload validation**: If estimated_vram_gb > 0, workload_type cannot be "cpu-only"  
+3. **Model-VRAM consistency**: Check if detected models match VRAM estimates
+4. **Multi-GPU logic**: If multi_gpu_required=true, explain why in reasoning
+5. **Confidence validation**: Does confidence match the strength of evidence?
+6. **Reasoning quality**: Are reasoning points specific and evidence-based?
+
+**COMMON ERRORS TO CATCH:**
+- Overestimating VRAM for simple inference workloads
+- Missing multi-GPU requirements for large training jobs
+- Inconsistent workload classification
+- Vague reasoning without specific evidence
+- Invalid GPU recommendations
 
 **VALID GPUS:** RTX 4060, RTX 4070, RTX 4080, RTX 4090, RTX 5080, RTX 5090, L4, L40, L40S, A100 PCIe 40G, A100 PCIe 80G, A100 SXM 40G, A100 SXM 80G, H100 PCIe, H100 SXM, H100 NVL, H200 SXM, H200 NVL, B200 SXM
 
 **JSON Response:**
 {{
     "review_passed": true/false,
-    "consistency_issues": ["issue1"],
+    "consistency_issues": ["specific issue 1", "specific issue 2"],
     "recommended_corrections": {{
         "workload_type": "corrected_type_if_needed",
         "confidence": integer_0_to_100,
-        "min_gpu_type": "gpu_if_needed"
+        "min_gpu_type": "gpu_if_needed",
+        "estimated_vram_gb": number_if_needed
     }},
-    "unified_reasoning": ["key point 1", "key point 2"],
+    "unified_reasoning": ["evidence-based point 1", "evidence-based point 2"],
     "overall_assessment": "brief summary"
 }}
 
-Be quick and decisive. Only flag real issues."""
+Be thorough but decisive. Flag real inconsistencies only."""
 
             if progress_callback:
                 progress_callback("🧠 Phase 3: Sending self-review request to AI...")
@@ -1423,10 +1466,10 @@ Be quick and decisive. Only flag real issues."""
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": prompt}
                     ],
-                    "temperature": 0.3,  # NEMOTRON ULTRA FIX: Increased from 0.1 to reduce hanging
+                    "temperature": 0.4,  # SELF-REVIEW: Higher for more creative issue detection
                     "max_tokens": self._get_self_review_max_tokens()
                 },
-                timeout=self.env_config['llm_timeout'],
+                timeout=self._get_self_review_timeout(),
                 max_retries=3,
                 progress_callback=progress_callback
             )
@@ -1825,10 +1868,24 @@ Be quick and decisive. Only flag real issues."""
             prompt = f"""Rate this notebook against NVIDIA best practices. Be quick and efficient.
 
 **EVALUATE 4 AREAS (25 points each):**
-1. **Structure**: Title, intro, navigation, conclusion
-2. **Content**: Documentation, explanations, educational value
-3. **Technical**: Requirements, environment, reproducibility
-4. **NVIDIA**: Branding, messaging, developer focus
+1. **Structure (25pts)**: Clear title, introduction, logical flow, conclusion
+2. **Content (25pts)**: Documentation, explanations, educational value, code comments
+3. **Technical (25pts)**: Requirements.txt, environment setup, reproducibility, error handling
+4. **NVIDIA (25pts)**: Branding, developer messaging, NVIDIA tool usage, community standards
+
+**SCORING GUIDELINES:**
+- **20-25pts**: Excellent - meets/exceeds standards
+- **15-19pts**: Good - minor improvements needed  
+- **10-14pts**: Fair - several issues to address
+- **5-9pts**: Poor - major improvements required
+- **0-4pts**: Inadequate - does not meet standards
+
+**RED FLAGS (automatic point deductions):**
+- Missing title or poor title format (-5pts)
+- No introduction or conclusion (-5pts each)
+- No requirements.txt (-5pts)
+- No code documentation (-10pts)
+- Poor grammar/spelling (-3pts)
 
 **NOTEBOOK:**
 {structure_sample}
@@ -1840,16 +1897,16 @@ Be quick and decisive. Only flag real issues."""
     "technical_score": 0-25,
     "nvidia_score": 0-25,
     "total_score": 0-100,
-    "structure_issues": ["issue1"],
-    "content_issues": ["issue1"],
-    "technical_issues": ["issue1"],
-    "nvidia_issues": ["issue1"],
-    "strengths": ["strength1"],
-    "recommendations": ["rec1"],
+    "structure_issues": ["specific issue 1"],
+    "content_issues": ["specific issue 1"],
+    "technical_issues": ["specific issue 1"],
+    "nvidia_issues": ["specific issue 1"],
+    "strengths": ["specific strength 1"],
+    "recommendations": ["actionable rec 1"],
     "confidence": 0.0-1.0
 }}
 
-Focus on major issues only. Be concise."""
+Focus on major issues. Be specific and actionable."""
 
             # Use robust retry mechanism for API requests (consistent with other LLM calls)
             session = get_http_session()
@@ -1871,10 +1928,10 @@ Focus on major issues only. Be concise."""
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": prompt}
                     ],
-                    "temperature": 0.3,  # NEMOTRON ULTRA FIX: Increased from 0.1 to reduce hanging
+                    "temperature": 0.3,  # COMPLIANCE: Increased from 0.1 to prevent hangs with reasoning models
                     "max_tokens": 1200   # NEMOTRON ULTRA FIX: Increased from 800 to prevent truncation
                 },
-                timeout=self.env_config['llm_timeout'],
+                timeout=self._get_compliance_timeout(),
                 max_retries=3,
                 progress_callback=None  # No progress callback for compliance check to avoid UI spam
             )
@@ -4990,6 +5047,8 @@ class GPUAnalyzer:
                 
                 # Ensure viability is set correctly
                 analysis['consumer_viable'] = False
+
+
 
 # Environment detection for optimization
 def is_production_environment():
